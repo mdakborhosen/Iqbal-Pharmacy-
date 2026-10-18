@@ -4884,9 +4884,10 @@ export function getMedicineSearchMatchScore(m: MedicineCatalogItem, rawQuery: st
   }
 
   // Tier 4: Generic name starts with or contains query
-  let gLow = m.genericName.toLowerCase();
-  if (gLow.startsWith(q)) return 350;
-  if (gLow.includes(q)) return 250;
+  // Tier 4: Generic name starts with or contains query
+const genericLower = m.genericName.toLowerCase();
+if (genericLower.startsWith(q)) return 350;
+if (genericLower.includes(q)) return 250;
 
   // Tier 5: Company, indication, or therapeutic class match
   if (
