@@ -1,4 +1,4 @@
-.import {
+import {
   CartItem,
   InventoryItem,
   MedicineCatalogItem,
