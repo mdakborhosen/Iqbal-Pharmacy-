@@ -1,0 +1,388 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net: Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // Global Hardened Primitives
+    // =========================================================================
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return request.auth != null;
+    }
+
+    // =========================================================================
+    // Entity Validation Blueprints (Shared Pharmacy Workspace)
+    // =========================================================================
+
+    function isValidShop(data) {
+      return data.keys().hasAll([
+        'ownerId', 'shopName', 'licenseNo', 'phone', 'address', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'ownerId', 'shopName', 'licenseNo', 'phone', 'address', 'createdAt', 'updatedAt'
+      ])
+      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+      && data.shopName is string && data.shopName.size() >= 1 && data.shopName.size() <= 120
+      && data.licenseNo is string && data.licenseNo.size() >= 1 && data.licenseNo.size() <= 60
+      && data.phone is string && data.phone.size() >= 1 && data.phone.size() <= 30
+      && data.address is string && data.address.size() >= 1 && data.address.size() <= 250
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
+    function isValidInventoryItem(data) {
+      return data.keys().hasAll([
+        'ownerId', 'medicineId', 'brandName', 'genericName', 'companyName',
+        'strength', 'dosageForm', 'packSize', 'purchasePrice', 'unitPrice',
+        'stripPrice', 'stockQty', 'minStockLevel', 'batchNo', 'expiryDate',
+        'shelfLocation', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'ownerId', 'medicineId', 'brandName', 'genericName', 'companyName',
+        'strength', 'dosageForm', 'packSize', 'purchasePrice', 'unitPrice',
+        'stripPrice', 'stockQty', 'minStockLevel', 'batchNo', 'expiryDate',
+        'shelfLocation', 'createdAt', 'updatedAt'
+      ])
+      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+      && data.medicineId is string && data.medicineId.size() >= 1 && data.medicineId.size() <= 100
+      && data.brandName is string && data.brandName.size() >= 1 && data.brandName.size() <= 120
+      && data.genericName is string && data.genericName.size() >= 1 && data.genericName.size() <= 150
+      && data.companyName is string && data.companyName.size() >= 1 && data.companyName.size() <= 120
+      && data.strength is string && data.strength.size() >= 1 && data.strength.size() <= 60
+      && data.dosageForm is string && data.dosageForm.size() >= 1 && data.dosageForm.size() <= 60
+      && data.packSize is string && data.packSize.size() >= 1 && data.packSize.size() <= 60
+      && data.purchasePrice is number && data.purchasePrice >= 0 && data.purchasePrice <= 1000000
+      && data.unitPrice is number && data.unitPrice >= 0 && data.unitPrice <= 1000000
+      && data.stripPrice is number && data.stripPrice >= 0 && data.stripPrice <= 1000000
+      && data.stockQty is number && data.stockQty >= 0 && data.stockQty <= 10000000
+      && data.minStockLevel is number && data.minStockLevel >= 0 && data.minStockLevel <= 100000
+      && data.batchNo is string && data.batchNo.size() >= 1 && data.batchNo.size() <= 60
+      && data.expiryDate is string && data.expiryDate.size() >= 1 && data.expiryDate.size() <= 30
+      && data.shelfLocation is string && data.shelfLocation.size() >= 1 && data.shelfLocation.size() <= 60
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
+    function isValidCustomer(data) {
+      return data.keys().hasAll([
+        'ownerId', 'name', 'phone', 'address', 'totalPurchased',
+        'totalPaid', 'totalDue', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'ownerId', 'name', 'phone', 'address', 'totalPurchased',
+        'totalPaid', 'totalDue', 'createdAt', 'updatedAt'
+      ])
+      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+      && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+      && data.phone is string && data.phone.size() >= 1 && data.phone.size() <= 30
+      && data.address is string && data.address.size() >= 1 && data.address.size() <= 250
+      && data.totalPurchased is number && data.totalPurchased >= 0 && data.totalPurchased <= 100000000
+      && data.totalPaid is number && data.totalPaid >= 0 && data.totalPaid <= 100000000
+      && data.totalDue is number && data.totalDue >= 0 && data.totalDue <= 100000000
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
+    function isValidTransaction(data) {
+      return data.keys().hasAll([
+        'ownerId', 'txType', 'invoiceNo', 'dateStr', 'partyId',
+        'partyName', 'partyPhone', 'itemsSummary', 'totalCount',
+        'subTotal', 'discount', 'grandTotal', 'paidAmount', 'dueAmount',
+        'paymentMethod', 'staffName', 'staffRole', 'counterName',
+        'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'ownerId', 'txType', 'invoiceNo', 'dateStr', 'partyId',
+        'partyName', 'partyPhone', 'itemsSummary', 'totalCount',
+        'subTotal', 'discount', 'grandTotal', 'paidAmount', 'dueAmount',
+        'paymentMethod', 'staffName', 'staffRole', 'counterName',
+        'createdAt', 'updatedAt'
+      ])
+      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+      && data.txType is string && data.txType.size() <= 20 && data.txType in ['sale', 'purchase', 'due_payment']
+      && data.invoiceNo is string && data.invoiceNo.size() >= 1 && data.invoiceNo.size() <= 60
+      && data.dateStr is string && data.dateStr.size() >= 1 && data.dateStr.size() <= 20
+      && data.partyId is string && data.partyId.size() >= 1 && data.partyId.size() <= 128
+      && data.partyName is string && data.partyName.size() >= 1 && data.partyName.size() <= 120
+      && data.partyPhone is string && data.partyPhone.size() >= 1 && data.partyPhone.size() <= 30
+      && data.itemsSummary is string && data.itemsSummary.size() >= 1 && data.itemsSummary.size() <= 10000
+      && data.totalCount is number && data.totalCount >= 0 && data.totalCount <= 1000000
+      && data.subTotal is number && data.subTotal >= 0 && data.subTotal <= 100000000
+      && data.discount is number && data.discount >= 0 && data.discount <= 100000000
+      && data.grandTotal is number && data.grandTotal >= 0 && data.grandTotal <= 100000000
+      && data.paidAmount is number && data.paidAmount >= 0 && data.paidAmount <= 100000000
+      && data.dueAmount is number && data.dueAmount >= 0 && data.dueAmount <= 100000000
+      && data.paymentMethod is string && data.paymentMethod.size() <= 20 && data.paymentMethod in ['cash', 'bkash', 'nagad', 'card', 'due']
+      && data.staffName is string && data.staffName.size() >= 1 && data.staffName.size() <= 100
+      && data.staffRole is string && data.staffRole.size() <= 20 && data.staffRole in ['owner', 'staff']
+      && data.counterName is string && data.counterName.size() >= 1 && data.counterName.size() <= 60
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
+    function isValidStaffMember(data) {
+      return data.keys().hasAll([
+        'ownerId', 'name', 'roleTitle', 'phone', 'shift',
+        'counterName', 'active', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'ownerId', 'name', 'roleTitle', 'phone', 'email', 'password', 'shift',
+        'counterName', 'active', 'createdAt', 'updatedAt'
+      ])
+      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+      && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
+      && data.roleTitle is string && data.roleTitle.size() <= 30 && data.roleTitle in ['owner', 'manager', 'pharmacist', 'salesman']
+      && data.phone is string && data.phone.size() >= 1 && data.phone.size() <= 30
+      && (!('email' in data) || (data.email is string && data.email.size() <= 120))
+      && (!('password' in data) || (data.password is string && data.password.size() <= 100))
+      && data.shift is string && data.shift.size() >= 1 && data.shift.size() <= 60
+      && data.counterName is string && data.counterName.size() >= 1 && data.counterName.size() <= 60
+      && data.active is bool
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
+    function isValidCustomMedicine(data) {
+      return data.keys().hasAll([
+        'ownerId', 'brandName', 'genericName', 'companyName',
+        'strength', 'dosageForm', 'packSize', 'unitPrice',
+        'stripPrice', 'therapeuticClass', 'indication',
+        'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'ownerId', 'brandName', 'genericName', 'companyName',
+        'strength', 'dosageForm', 'packSize', 'purchasePrice', 'unitPrice',
+        'stripPrice', 'therapeuticClass', 'indication',
+        'createdAt', 'updatedAt'
+      ])
+      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+      && data.brandName is string && data.brandName.size() >= 1 && data.brandName.size() <= 120
+      && data.genericName is string && data.genericName.size() >= 1 && data.genericName.size() <= 150
+      && data.companyName is string && data.companyName.size() >= 1 && data.companyName.size() <= 120
+      && data.strength is string && data.strength.size() >= 1 && data.strength.size() <= 60
+      && data.dosageForm is string && data.dosageForm.size() >= 1 && data.dosageForm.size() <= 60
+      && data.packSize is string && data.packSize.size() >= 1 && data.packSize.size() <= 60
+      && (!('purchasePrice' in data) || (data.purchasePrice is number && data.purchasePrice >= 0 && data.purchasePrice <= 1000000))
+      && data.unitPrice is number && data.unitPrice >= 0 && data.unitPrice <= 1000000
+      && data.stripPrice is number && data.stripPrice >= 0 && data.stripPrice <= 1000000
+      && data.therapeuticClass is string && data.therapeuticClass.size() >= 1 && data.therapeuticClass.size() <= 100
+      && data.indication is string && data.indication.size() >= 1 && data.indication.size() <= 300
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
+    function isValidPriceWatch(data) {
+      return data.keys().hasAll([
+        'ownerId', 'medicineId', 'brandName', 'genericName', 'companyName',
+        'strength', 'baselineUnitPrice', 'currentUnitPrice', 'targetAlertPrice',
+        'notifyOnAnyChange', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'ownerId', 'medicineId', 'brandName', 'genericName', 'companyName',
+        'strength', 'baselineUnitPrice', 'currentUnitPrice', 'targetAlertPrice',
+        'notifyOnAnyChange', 'createdAt', 'updatedAt'
+      ])
+      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+      && data.medicineId is string && data.medicineId.size() >= 1 && data.medicineId.size() <= 100
+      && data.brandName is string && data.brandName.size() >= 1 && data.brandName.size() <= 120
+      && data.genericName is string && data.genericName.size() >= 1 && data.genericName.size() <= 150
+      && data.companyName is string && data.companyName.size() >= 1 && data.companyName.size() <= 120
+      && data.strength is string && data.strength.size() >= 1 && data.strength.size() <= 60
+      && data.baselineUnitPrice is number && data.baselineUnitPrice >= 0 && data.baselineUnitPrice <= 1000000
+      && data.currentUnitPrice is number && data.currentUnitPrice >= 0 && data.currentUnitPrice <= 1000000
+      && data.targetAlertPrice is number && data.targetAlertPrice >= 0 && data.targetAlertPrice <= 1000000
+      && data.notifyOnAnyChange is bool
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
+    function isValidPriceAlert(data) {
+      return data.keys().hasAll([
+        'ownerId', 'medicineId', 'brandName', 'genericName', 'companyName',
+        'strength', 'oldUnitPrice', 'newUnitPrice', 'oldStripPrice',
+        'newStripPrice', 'changedBy', 'dateStr', 'isRead', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'ownerId', 'medicineId', 'brandName', 'genericName', 'companyName',
+        'strength', 'oldUnitPrice', 'newUnitPrice', 'oldStripPrice',
+        'newStripPrice', 'changedBy', 'dateStr', 'isRead', 'createdAt', 'updatedAt'
+      ])
+      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+      && data.medicineId is string && data.medicineId.size() >= 1 && data.medicineId.size() <= 100
+      && data.brandName is string && data.brandName.size() >= 1 && data.brandName.size() <= 120
+      && data.genericName is string && data.genericName.size() >= 1 && data.genericName.size() <= 150
+      && data.companyName is string && data.companyName.size() >= 1 && data.companyName.size() <= 120
+      && data.strength is string && data.strength.size() >= 1 && data.strength.size() <= 60
+      && data.oldUnitPrice is number && data.oldUnitPrice >= 0 && data.oldUnitPrice <= 1000000
+      && data.newUnitPrice is number && data.newUnitPrice >= 0 && data.newUnitPrice <= 1000000
+      && data.oldStripPrice is number && data.oldStripPrice >= 0 && data.oldStripPrice <= 1000000
+      && data.newStripPrice is number && data.newStripPrice >= 0 && data.newStripPrice <= 1000000
+      && data.changedBy is string && data.changedBy.size() >= 1 && data.changedBy.size() <= 100
+      && data.dateStr is string && data.dateStr.size() >= 1 && data.dateStr.size() <= 30
+      && data.isRead is bool
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
+    // =========================================================================
+    // Collection Match Blocks (Shared Pharmacy Access for All Authenticated Staff/Owners)
+    // =========================================================================
+
+    match /shops/{shopId} {
+      allow get: if isSignedIn() && isValidId(shopId);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isVerified() && isValidId(shopId)
+        && isValidShop(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isVerified() && isValidId(shopId)
+        && isValidShop(incoming())
+        && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'ownerId', 'shopName', 'licenseNo', 'phone', 'address', 'createdAt', 'updatedAt'
+        ]);
+      allow delete: if isSignedIn() && isVerified() && isValidId(shopId);
+    }
+
+    match /inventory/{itemId} {
+      allow get: if isSignedIn() && isValidId(itemId);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isVerified() && isValidId(itemId)
+        && isValidInventoryItem(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isVerified() && isValidId(itemId)
+        && isValidInventoryItem(incoming())
+        && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'ownerId', 'medicineId', 'brandName', 'genericName', 'companyName', 'strength', 'dosageForm',
+          'packSize', 'purchasePrice', 'unitPrice', 'stripPrice', 'stockQty',
+          'minStockLevel', 'batchNo', 'expiryDate', 'shelfLocation', 'createdAt', 'updatedAt'
+        ]);
+      allow delete: if isSignedIn() && isVerified() && isValidId(itemId);
+    }
+
+    match /customers/{customerId} {
+      allow get: if isSignedIn() && isValidId(customerId);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isVerified() && isValidId(customerId)
+        && isValidCustomer(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isVerified() && isValidId(customerId)
+        && isValidCustomer(incoming())
+        && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'ownerId', 'name', 'phone', 'address', 'totalPurchased', 'totalPaid', 'totalDue', 'createdAt', 'updatedAt'
+        ]);
+      allow delete: if isSignedIn() && isVerified() && isValidId(customerId);
+    }
+
+    match /transactions/{transactionId} {
+      allow get: if isSignedIn() && isValidId(transactionId);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isVerified() && isValidId(transactionId)
+        && isValidTransaction(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isVerified() && isValidId(transactionId)
+        && isValidTransaction(incoming())
+        && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'ownerId', 'txType', 'invoiceNo', 'dateStr', 'partyId', 'partyName', 'partyPhone', 'itemsSummary',
+          'totalCount', 'subTotal', 'discount', 'grandTotal', 'paidAmount',
+          'dueAmount', 'paymentMethod', 'staffName', 'staffRole', 'counterName', 'createdAt', 'updatedAt'
+        ]);
+      allow delete: if isSignedIn() && isVerified() && isValidId(transactionId);
+    }
+
+    match /staff/{staffId} {
+      allow get: if isSignedIn() && isValidId(staffId);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isVerified() && isValidId(staffId)
+        && isValidStaffMember(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isVerified() && isValidId(staffId)
+        && isValidStaffMember(incoming())
+        && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'ownerId', 'name', 'roleTitle', 'phone', 'email', 'password', 'shift', 'counterName', 'active', 'createdAt', 'updatedAt'
+        ]);
+      allow delete: if isSignedIn() && isVerified() && isValidId(staffId);
+    }
+
+    match /custom_medicines/{medId} {
+      allow get: if isSignedIn() && isValidId(medId);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isVerified() && isValidId(medId)
+        && isValidCustomMedicine(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isVerified() && isValidId(medId)
+        && isValidCustomMedicine(incoming())
+        && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'ownerId', 'brandName', 'genericName', 'companyName', 'strength', 'dosageForm',
+          'packSize', 'purchasePrice', 'unitPrice', 'stripPrice', 'therapeuticClass', 'indication', 'createdAt', 'updatedAt'
+        ]);
+      allow delete: if isSignedIn() && isVerified() && isValidId(medId);
+    }
+
+    match /price_watches/{watchId} {
+      allow get: if isSignedIn() && isValidId(watchId);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isVerified() && isValidId(watchId)
+        && isValidPriceWatch(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isVerified() && isValidId(watchId)
+        && isValidPriceWatch(incoming())
+        && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'ownerId', 'medicineId', 'brandName', 'genericName', 'companyName',
+          'strength', 'baselineUnitPrice', 'currentUnitPrice', 'targetAlertPrice', 'notifyOnAnyChange', 'createdAt', 'updatedAt'
+        ]);
+      allow delete: if isSignedIn() && isVerified() && isValidId(watchId);
+    }
+
+    match /price_alerts/{alertId} {
+      allow get: if isSignedIn() && isValidId(alertId);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isVerified() && isValidId(alertId)
+        && isValidPriceAlert(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isVerified() && isValidId(alertId)
+        && isValidPriceAlert(incoming())
+        && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'ownerId', 'medicineId', 'brandName', 'genericName', 'companyName',
+          'strength', 'oldUnitPrice', 'newUnitPrice', 'oldStripPrice',
+          'newStripPrice', 'changedBy', 'dateStr', 'isRead', 'createdAt', 'updatedAt'
+        ]);
+      allow delete: if isSignedIn() && isVerified() && isValidId(alertId);
+    }
+  }
+}

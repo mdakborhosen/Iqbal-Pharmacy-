@@ -1,0 +1,6 @@
+{
+  "name": "OshudhBazar & PharmaPOS BD",
+  "description": "বাংলাদেশের সকল কোম্পানির ওষুধের মূল্য যাচাই, একই জেনেরিক গ্রুপের বিকল্প ওষুধের দাম তুলনা, ফার্মেসি ইনভেন্টরি, দৈনিক ক্রয়-বিক্রয় হিসাব এবং কাস্টমার লেজার ম্যানেজমেন্ট সিস্টেম।",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

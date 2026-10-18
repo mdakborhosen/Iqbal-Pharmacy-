@@ -1,0 +1,672 @@
+{
+  "entities": {
+    "Shop": {
+      "title": "Shop",
+      "description": "Pharmacy shop profile owned by the user",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the pharmacy owner",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "shopName": {
+          "type": "string",
+          "description": "Name of the pharmacy shop",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "licenseNo": {
+          "type": "string",
+          "description": "DGDA Drug License number",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "phone": {
+          "type": "string",
+          "description": "Shop contact phone number",
+          "minLength": 1,
+          "maxLength": 30
+        },
+        "address": {
+          "type": "string",
+          "description": "Physical address of the pharmacy",
+          "minLength": 1,
+          "maxLength": 250
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp"
+        }
+      },
+      "required": ["ownerId", "shopName", "licenseNo", "phone", "address", "createdAt", "updatedAt"]
+    },
+    "InventoryItem": {
+      "title": "InventoryItem",
+      "description": "Medicine stock item in the pharmacy inventory",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "medicineId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "brandName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "genericName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "companyName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "strength": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "dosageForm": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "packSize": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "purchasePrice": {
+          "type": "number",
+          "description": "Unit purchase cost in BDT"
+        },
+        "unitPrice": {
+          "type": "number",
+          "description": "Unit MRP selling price in BDT"
+        },
+        "stripPrice": {
+          "type": "number",
+          "description": "Strip MRP selling price in BDT"
+        },
+        "stockQty": {
+          "type": "number",
+          "description": "Available quantity in units"
+        },
+        "minStockLevel": {
+          "type": "number",
+          "description": "Low stock alert threshold"
+        },
+        "batchNo": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "expiryDate": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 30
+        },
+        "shelfLocation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "medicineId",
+        "brandName",
+        "genericName",
+        "companyName",
+        "strength",
+        "dosageForm",
+        "packSize",
+        "purchasePrice",
+        "unitPrice",
+        "stripPrice",
+        "stockQty",
+        "minStockLevel",
+        "batchNo",
+        "expiryDate",
+        "shelfLocation",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Pharmacy customer ledger profile",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "phone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 30
+        },
+        "address": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 250
+        },
+        "totalPurchased": {
+          "type": "number"
+        },
+        "totalPaid": {
+          "type": "number"
+        },
+        "totalDue": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "name",
+        "phone",
+        "address",
+        "totalPurchased",
+        "totalPaid",
+        "totalDue",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Daily sales memo, company purchase voucher, or customer due payment transaction",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "txType": {
+          "type": "string",
+          "enum": ["sale", "purchase", "due_payment"]
+        },
+        "invoiceNo": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "dateStr": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20
+        },
+        "partyId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "partyName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "partyPhone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 30
+        },
+        "itemsSummary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600
+        },
+        "totalCount": {
+          "type": "number"
+        },
+        "subTotal": {
+          "type": "number"
+        },
+        "discount": {
+          "type": "number"
+        },
+        "grandTotal": {
+          "type": "number"
+        },
+        "paidAmount": {
+          "type": "number"
+        },
+        "dueAmount": {
+          "type": "number"
+        },
+        "paymentMethod": {
+          "type": "string",
+          "enum": ["cash", "bkash", "nagad", "card", "due"]
+        },
+        "staffName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "staffRole": {
+          "type": "string",
+          "enum": ["owner", "staff"]
+        },
+        "counterName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "txType",
+        "invoiceNo",
+        "dateStr",
+        "partyId",
+        "partyName",
+        "partyPhone",
+        "itemsSummary",
+        "totalCount",
+        "subTotal",
+        "discount",
+        "grandTotal",
+        "paidAmount",
+        "dueAmount",
+        "paymentMethod",
+        "staffName",
+        "staffRole",
+        "counterName",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "StaffMember": {
+      "title": "StaffMember",
+      "description": "Pharmacy owner or sales staff profile for separate counter sale entry",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "roleTitle": {
+          "type": "string",
+          "enum": ["owner", "manager", "pharmacist", "salesman"]
+        },
+        "phone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 30
+        },
+        "shift": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "counterName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "name",
+        "roleTitle",
+        "phone",
+        "shift",
+        "counterName",
+        "active",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CustomMedicine": {
+      "title": "CustomMedicine",
+      "description": "Custom or updated Bangladeshi brand medicine entry added by the pharmacy",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "brandName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "genericName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "companyName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "strength": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "dosageForm": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "packSize": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "purchasePrice": {
+          "type": "number",
+          "description": "Unit purchase cost in BDT"
+        },
+        "unitPrice": {
+          "type": "number"
+        },
+        "stripPrice": {
+          "type": "number"
+        },
+        "therapeuticClass": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "indication": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "brandName",
+        "genericName",
+        "companyName",
+        "strength",
+        "dosageForm",
+        "packSize",
+        "unitPrice",
+        "stripPrice",
+        "therapeuticClass",
+        "indication",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PriceWatch": {
+      "title": "PriceWatch",
+      "description": "Tracked medicine item for automatic price change monitoring and alerts",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "medicineId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "brandName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "genericName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "companyName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "strength": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "baselineUnitPrice": {
+          "type": "number"
+        },
+        "currentUnitPrice": {
+          "type": "number"
+        },
+        "targetAlertPrice": {
+          "type": "number"
+        },
+        "notifyOnAnyChange": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "medicineId",
+        "brandName",
+        "genericName",
+        "companyName",
+        "strength",
+        "baselineUnitPrice",
+        "currentUnitPrice",
+        "targetAlertPrice",
+        "notifyOnAnyChange",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PriceAlert": {
+      "title": "PriceAlert",
+      "description": "Automatic notification record generated when a medicine price changes",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "medicineId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "brandName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "genericName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "companyName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "strength": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "oldUnitPrice": {
+          "type": "number"
+        },
+        "newUnitPrice": {
+          "type": "number"
+        },
+        "oldStripPrice": {
+          "type": "number"
+        },
+        "newStripPrice": {
+          "type": "number"
+        },
+        "changedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "dateStr": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 30
+        },
+        "isRead": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "medicineId",
+        "brandName",
+        "genericName",
+        "companyName",
+        "strength",
+        "oldUnitPrice",
+        "newUnitPrice",
+        "oldStripPrice",
+        "newStripPrice",
+        "changedBy",
+        "dateStr",
+        "isRead",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/shops/{shopId}": {
+      "schema": { "$ref": "#/entities/Shop" },
+      "description": "Pharmacy shop profile settings"
+    },
+    "/inventory/{itemId}": {
+      "schema": { "$ref": "#/entities/InventoryItem" },
+      "description": "Pharmacy medicine stock and batch tracking"
+    },
+    "/customers/{customerId}": {
+      "schema": { "$ref": "#/entities/Customer" },
+      "description": "Pharmacy customer ledger profiles and balances"
+    },
+    "/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/Transaction" },
+      "description": "Daily sales, purchases, and customer due payment history"
+    },
+    "/staff/{staffId}": {
+      "schema": { "$ref": "#/entities/StaffMember" },
+      "description": "Owner and staff profiles for counter sales entry"
+    },
+    "/custom_medicines/{medId}": {
+      "schema": { "$ref": "#/entities/CustomMedicine" },
+      "description": "Custom or price-updated medicines added by the pharmacy"
+    },
+    "/price_watches/{watchId}": {
+      "schema": { "$ref": "#/entities/PriceWatch" },
+      "description": "Tracked medicines for price monitoring"
+    },
+    "/price_alerts/{alertId}": {
+      "schema": { "$ref": "#/entities/PriceAlert" },
+      "description": "Price change notifications and audit alerts"
+    }
+  }
+}
