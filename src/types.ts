@@ -83,6 +83,36 @@ export interface Customer {
   updatedAtMs?: number;
 }
 
+export type InvoiceSealType = 'iqbal_pharmacy' | 'dental_care_1' | 'dental_care_2';
+
+export interface PharmacyClinicalDetails {
+  bp?: string; // Blood Pressure e.g. 120/80
+  pulse?: string; // Pulse rate e.g. 74
+  sugar?: string; // Blood Sugar e.g. 6.2 mmol/L
+  temp?: string; // Temperature e.g. 98.6 F
+  spo2?: string; // Oxygen level e.g. 98%
+  weight?: string; // Weight e.g. 68 kg
+  symptoms?: string; // Symptoms / Chief complaints
+  advice?: string; // Medical advice
+  inv?: string; // Investigation tests
+}
+
+export interface DentalClinicalDetails {
+  pereocoronaties?: string;
+  pulpitis?: string;
+  calculus?: string;
+  gingivitis?: string;
+  caries?: string;
+  scaling?: string;
+  filling?: string;
+  rct?: string;
+  cap?: string;
+  bridge?: string;
+  ext?: string;
+  others?: string;
+  inv?: string;
+}
+
 export interface Transaction {
   id: string;
   ownerId: string;
@@ -92,6 +122,10 @@ export interface Transaction {
   partyId: string;
   partyName: string;
   partyPhone: string;
+  patientAge?: string;
+  patientSex?: string;
+  dentalClinical?: Record<string, string>;
+  selectedSeal?: InvoiceSealType;
   itemsSummary: string;
   totalCount: number;
   subTotal: number;
@@ -119,6 +153,7 @@ export interface StaffMember {
   shift: string;
   counterName: string;
   active: boolean;
+  lastLoginAt?: number;
   createdAt?: unknown;
   updatedAt?: unknown;
   updatedAtMs?: number;
@@ -195,6 +230,8 @@ export interface CartItem {
   qty: number;
   availableStock: number;
   updateStock?: boolean; // When true (default), decreases inventory stock; when false, only appears in invoice without touching stock
+  dosageSchedule?: string; // e.g. "1+0+1" or "1+1+1"
+  dosageDuration?: string; // e.g. "10 Day", "7 Day", "খাওয়ার পর"
 }
 
 export type PurchasePackUnit = 'piece' | 'strip' | 'box' | 'cartoon';

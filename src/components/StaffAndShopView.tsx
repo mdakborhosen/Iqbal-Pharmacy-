@@ -2,12 +2,14 @@ import React, { useMemo, useState } from 'react';
 import {
   Building2,
   Check,
+  Clock,
   Cloud,
   Copy,
   Edit3,
   Eye,
   EyeOff,
   Key,
+  Lock,
   LogIn,
   LogOut,
   Plus,
@@ -303,7 +305,7 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
                   <th className="py-2.5 px-3">লগইন পাসওয়ার্ড</th>
                   <th className="py-2.5 px-3">কাউন্টার ও শিফট</th>
                   <th className="py-2.5 px-3 text-right">মোট বিক্রি ও আদায় (৳)</th>
-                  <th className="py-2.5 px-4 text-right">লগইন তথ্য / সুইচ / অ্যাকশন</th>
+                  <th className="py-2.5 px-4 text-right">লগইন স্ট্যাটাস ও অ্যাকশন</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 text-sm">
@@ -313,6 +315,14 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
                   const isPwVisible = Boolean(visiblePasswords[st.id]);
                   const hasPw = Boolean(st.password);
                   const isCopied = copiedStaffId === st.id;
+                  const isCurrentUserOwner =
+                    cloudSession?.operatorRole === 'owner' || activeStaff.roleTitle === 'owner';
+                  const canViewThisPassword = isCurrentUserOwner || st.id === activeStaff.id;
+                  const isCurrentlyLoggedIn =
+                    isCurrent ||
+                    cloudSession?.staffId === st.id ||
+                    (cloudSession?.operatorRole === 'owner' && st.roleTitle === 'owner');
+
                   const perf = staffPerformance.get(displayName) || {
                     memoCount: 0,
                     totalSaleAmount: 0,
@@ -321,7 +331,7 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
                   return (
                     <tr
                       key={st.id}
-                      className={isCurrent ? 'bg-teal-50/60' : 'hover:bg-slate-50'}
+                      className={isCurrentlyLoggedIn ? 'bg-teal-50/60' : 'hover:bg-slate-50'}
                     >
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-2">
@@ -357,27 +367,39 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
                       </td>
 
                       <td className="py-3 px-3 text-xs">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-mono font-medium text-slate-800 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                            {isPwVisible
-                              ? st.password || '123456'
-                              : hasPw
-                              ? '••••••••'
-                              : '123456'}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => toggleTablePassword(st.id)}
-                            className="p-1 text-slate-400 hover:text-slate-700 rounded cursor-pointer"
-                            title={isPwVisible ? 'পাসওয়ার্ড লুকান' : 'পাসওয়ার্ড দেখুন'}
+                        {canViewThisPassword ? (
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-mono font-medium text-slate-800 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                              {isPwVisible
+                                ? st.password || '123456'
+                                : hasPw
+                                ? '••••••••'
+                                : '123456'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => toggleTablePassword(st.id)}
+                              className="p-1 text-slate-400 hover:text-slate-700 rounded cursor-pointer"
+                              title={isPwVisible ? 'পাসওয়ার্ড লুকান' : 'পাসওয়ার্ড দেখুন'}
+                            >
+                              {isPwVisible ? (
+                                <EyeOff className="w-3.5 h-3.5" />
+                              ) : (
+                                <Eye className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          </div>
+                        ) : (
+                          <div
+                            className="flex items-center gap-1.5 text-slate-400"
+                            title="গোপনীয় পাসওয়ার্ড (শুধুমাত্র Owner দেখতে পারবেন)"
                           >
-                            {isPwVisible ? (
-                              <EyeOff className="w-3.5 h-3.5" />
-                            ) : (
-                              <Eye className="w-3.5 h-3.5" />
-                            )}
-                          </button>
-                        </div>
+                            <span className="font-mono font-medium text-slate-400 bg-slate-50 px-2 py-0.5 rounded border border-slate-200 select-none">
+                              ••••••••
+                            </span>
+                            <Lock className="w-3.5 h-3.5 text-slate-400" />
+                          </div>
+                        )}
                       </td>
 
                       <td className="py-3 px-3 text-xs text-slate-600">
@@ -396,49 +418,79 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
 
                       <td className="py-3 px-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => handleCopyStaffCredentials(st)}
-                            className={`p-1.5 rounded transition-colors cursor-pointer border ${
-                              isCopied
-                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border-slate-200'
-                            }`}
-                            title="স্টাফের লগইন আইডি ও পাসওয়ার্ড কপি করুন"
-                          >
-                            {isCopied ? (
-                              <Check className="w-3.5 h-3.5 text-emerald-700" />
-                            ) : (
-                              <Copy className="w-3.5 h-3.5" />
-                            )}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => onSelectActiveStaff(st)}
-                            className={`px-2.5 py-1 text-xs font-semibold rounded transition-colors inline-flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer ${
-                              isCurrent
-                                ? 'bg-slate-900 text-white'
-                                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                            }`}
-                            title="এই অপারেটর হিসেবে বিল তৈরি করুন"
-                          >
-                            {isCurrent ? (
-                              <>
-                                <UserCheck className="w-3.5 h-3.5" /> সক্রিয়
-                              </>
-                            ) : (
-                              'সুইচ করুন'
-                            )}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openEditStaffModal(st)}
-                            className="p-1.5 text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded cursor-pointer"
-                            title="তথ্য ও পাসওয়ার্ড এডিট করুন"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                          {staffList.length > 1 && (
+                          {/* লাস্ট লগইন অথবা এখন লগইন আছে স্ট্যাটাস */}
+                          {isCurrentlyLoggedIn ? (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-md whitespace-nowrap shadow-2xs">
+                              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                              এখন লগইন আছে
+                            </span>
+                          ) : (
+                            <span
+                              className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 bg-slate-100 px-2 py-1 rounded border border-slate-200 whitespace-nowrap"
+                              title={
+                                st.lastLoginAt
+                                  ? new Date(st.lastLoginAt).toLocaleString('bn-BD')
+                                  : undefined
+                              }
+                            >
+                              <Clock className="w-3 h-3 text-slate-400" />
+                              {st.lastLoginAt ? (
+                                <>
+                                  লাস্ট:{' '}
+                                  {new Date(st.lastLoginAt).toDateString() ===
+                                  new Date().toDateString()
+                                    ? `আজ ${new Date(st.lastLoginAt).toLocaleTimeString('bn-BD', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                      })}`
+                                    : `${new Date(st.lastLoginAt).toLocaleDateString('bn-BD', {
+                                        day: 'numeric',
+                                        month: 'short',
+                                      })}, ${new Date(st.lastLoginAt).toLocaleTimeString('bn-BD', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                      })}`}
+                                </>
+                              ) : (
+                                <>লগইন রেকর্ড নেই</>
+                              )}
+                            </span>
+                          )}
+
+                          {/* Credentials copy button (only allowed for Owner or own account) */}
+                          {canViewThisPassword && (
+                            <button
+                              type="button"
+                              onClick={() => handleCopyStaffCredentials(st)}
+                              className={`p-1.5 rounded transition-colors cursor-pointer border ${
+                                isCopied
+                                  ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border-slate-200'
+                              }`}
+                              title="স্টাফের লগইন আইডি ও পাসওয়ার্ড কপি করুন"
+                            >
+                              {isCopied ? (
+                                <Check className="w-3.5 h-3.5 text-emerald-700" />
+                              ) : (
+                                <Copy className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          )}
+
+                          {/* Edit button (allowed for Owner or own profile) */}
+                          {(isCurrentUserOwner || st.id === activeStaff.id) && (
+                            <button
+                              type="button"
+                              onClick={() => openEditStaffModal(st)}
+                              className="p-1.5 text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded cursor-pointer"
+                              title="তথ্য ও পাসওয়ার্ড এডিট করুন"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+
+                          {/* Delete button (only Owner can delete, cannot delete owner) */}
+                          {isCurrentUserOwner && staffList.length > 1 && st.roleTitle !== 'owner' && (
                             <button
                               type="button"
                               onClick={() => onDeleteStaffMember(st.id)}

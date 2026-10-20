@@ -4857,6 +4857,7 @@ export function getMedicineSearchMatchScore(m: MedicineCatalogItem, rawQuery: st
     return 600;
   }
 
+  const shortForm = getShortDosageForm(m.dosageForm);
   const compositeText = `${m.brandName} ${m.strength} ${m.dosageForm} ${shortForm} ${m.genericName} ${m.companyName}`.toLowerCase();
   const normComposite = normalizePharmaSearchText(compositeText);
 
@@ -4882,12 +4883,6 @@ export function getMedicineSearchMatchScore(m: MedicineCatalogItem, rawQuery: st
       return hasFormMatch ? 650 : 450;
     }
   }
-
-  // Tier 4: Generic name starts with or contains query
-  // Tier 4: Generic name starts with or contains query
-const genericLower = m.genericName.toLowerCase();
-if (genericLower.startsWith(q)) return 350;
-if (genericLower.includes(q)) return 250;
 
   // Tier 5: Company, indication, or therapeutic class match
   if (
@@ -5051,6 +5046,8 @@ export function formatCartItemInvoiceLine(
     unitPrice: number;
     qty: number;
     updateStock?: boolean;
+    dosageSchedule?: string;
+    dosageDuration?: string;
   },
   index: number
 ): string {
@@ -5062,7 +5059,19 @@ export function formatCartItemInvoiceLine(
     item.strength && item.strength.trim() !== 'Standard' ? item.strength.trim() : '';
   const nameAndStrength = cleanStrength ? `${cleanBrand} ${cleanStrength}` : cleanBrand;
   const stockTag = item.updateStock === false ? ' [নন-স্টক/শুধু-বিল]' : '';
-  return `${index + 1}.${prefix}.${nameAndStrength} (৳${unitStr}) × ${item.qty}=${totalStr}${stockTag}`;
+  
+  const schedule = (item.dosageSchedule || '').trim();
+  const duration = (item.dosageDuration || '').trim();
+  let doseTag = '';
+  if (schedule && duration) {
+    doseTag = ` {${schedule} ---------- ${duration}}`;
+  } else if (schedule) {
+    doseTag = ` {${schedule}}`;
+  } else if (duration) {
+    doseTag = ` {${duration}}`;
+  }
+
+  return `${index + 1}.${prefix}.${nameAndStrength} (৳${unitStr}) × ${item.qty}=${totalStr}${stockTag}${doseTag}`;
 }
 
 export function formatPurchaseItemInvoiceLine(
@@ -5126,6 +5135,7 @@ export interface ParsedInvoiceItem {
   brandAndStrength: string;
   cleanName?: string;
   packDetail?: string;
+  dosageInstruction?: string;
   unitPrice: number;
   qty: number;
   lineTotal: number;
@@ -5189,8 +5199,17 @@ export function formatTransactionItemsList(
         .filter(Boolean);
 
   return rawLines.map((part, idx) => {
+    // Check if curly brace tag is present
+    let doseSuffix = '';
+    let partClean = part;
+    const doseBrace = part.match(/\{([^}]+)\}/);
+    if (doseBrace) {
+      doseSuffix = ` {${doseBrace[1].trim()}}`;
+      partClean = part.replace(/\{[^}]+\}/, '').trim();
+    }
+
     // Already formatted: 1.cap.Seclo 20 mg (৳6) × 10=60
-    const fullMatch = part.match(
+    const fullMatch = partClean.match(
       /^(\d+)\.([a-z\s/]+)\.(.+?)\s*\(৳([\d.]+)\)\s*[×x*]\s*(\d+)\s*=\s*([\d.]+)(.*)$/i
     );
     if (fullMatch) {
@@ -5200,11 +5219,11 @@ export function formatTransactionItemsList(
       const qtyNum = parseInt(fullMatch[5], 10) || 1;
       const totalStr = formatCleanMoney(parseFloat(fullMatch[6]));
       const tail = fullMatch[7] || '';
-      return `${idx + 1}.${prefix}.${nameStr} (৳${unitStr}) × ${qtyNum}=${totalStr}${tail}`;
+      return `${idx + 1}.${prefix}.${nameStr} (৳${unitStr}) × ${qtyNum}=${totalStr}${tail}${doseSuffix}`;
     }
 
     // Has price & qty: Seclo 20 mg (৳6) × 10 [optional =60]
-    const priceQtyMatch = part.match(
+    const priceQtyMatch = partClean.match(
       /^(?:(\d+)\.\s*)?(?:([a-z\s/]+)\.\s*)?(.+?)\s*\(৳([\d.]+)\)\s*[×x*]\s*(\d+)(?:\s*=\s*([\d.]+))?(.*)$/i
     );
     if (priceQtyMatch) {
@@ -5216,11 +5235,11 @@ export function formatTransactionItemsList(
       const tail = priceQtyMatch[7] || '';
       const matchedMed = findCatalogMedicineByText(nameStr, catalog);
       const prefix = explicitPrefix || (matchedMed ? getInvoiceFormPrefix(matchedMed.dosageForm) : 'tab');
-      return `${idx + 1}.${prefix}.${nameStr} (৳${formatCleanMoney(unitNum)}) × ${qtyNum}=${formatCleanMoney(totalNum)}${tail}`;
+      return `${idx + 1}.${prefix}.${nameStr} (৳${formatCleanMoney(unitNum)}) × ${qtyNum}=${formatCleanMoney(totalNum)}${tail}${doseSuffix}`;
     }
 
     // Legacy without unit price: Seclo 20mg × 20 [pcs]
-    const legacyQtyMatch = part.match(
+    const legacyQtyMatch = partClean.match(
       /^(?:(\d+)\.\s*)?(?:([a-z\s/]+)\.\s*)?(.+?)\s*[×x*]\s*(\d+)(?:\s*pcs)?(.*)$/i
     );
     if (legacyQtyMatch) {
@@ -5233,7 +5252,7 @@ export function formatTransactionItemsList(
         const prefix = explicitPrefix || getInvoiceFormPrefix(matchedMed.dosageForm);
         const unitNum = matchedMed.unitPrice;
         const displayName = `${matchedMed.brandName} ${matchedMed.strength}`;
-        return `${idx + 1}.${prefix}.${displayName} (৳${formatCleanMoney(unitNum)}) × ${qtyNum}=${formatCleanMoney(unitNum * qtyNum)}${tail}`;
+        return `${idx + 1}.${prefix}.${displayName} (৳${formatCleanMoney(unitNum)}) × ${qtyNum}=${formatCleanMoney(unitNum * qtyNum)}${tail}${doseSuffix}`;
       }
     }
 
@@ -5247,7 +5266,15 @@ export function parseTransactionItemsDetailed(
 ): ParsedInvoiceItem[] {
   const formattedLines = formatTransactionItemsList(itemsSummary, catalog);
   return formattedLines.map((line, idx) => {
-    const match = line.match(
+    let dosageInstruction = '';
+    let lineToParse = line;
+    const doseMatch = line.match(/\{([^}]+)\}/);
+    if (doseMatch) {
+      dosageInstruction = doseMatch[1].trim();
+      lineToParse = line.replace(/\{[^}]+\}/, '').trim();
+    }
+
+    const match = lineToParse.match(
       /^(\d+)\.([a-z\s/]+)\.(.+?)\s*\(৳([\d.]+)\)\s*[×x*]\s*(\d+)\s*=\s*([\d.]+)(.*)$/i
     );
     if (match) {
@@ -5272,6 +5299,7 @@ export function parseTransactionItemsDetailed(
         brandAndStrength,
         cleanName: cleanBrandAndStrength,
         packDetail,
+        dosageInstruction,
         unitPrice,
         qty,
         lineTotal,
@@ -5284,7 +5312,8 @@ export function parseTransactionItemsDetailed(
     return {
       serial: idx + 1,
       formPrefix: 'item',
-      brandAndStrength: line,
+      brandAndStrength: lineToParse,
+      dosageInstruction,
       unitPrice: 0,
       qty: 1,
       lineTotal: 0,

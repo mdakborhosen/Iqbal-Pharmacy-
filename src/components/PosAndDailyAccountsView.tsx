@@ -1,10 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Activity,
   ArrowDownRight,
   ArrowUpRight,
   Camera,
+  CreditCard,
   Edit3,
   FileText,
+  Heart,
   Info,
   Minus,
   Package,
@@ -14,6 +17,8 @@ import {
   Printer,
   Search,
   ShoppingCart,
+  Stethoscope,
+  Thermometer,
   Trash2,
   Truck,
   UserCheck,
@@ -37,7 +42,9 @@ import { getTodayDateStr } from '../data/demoSeedData';
 import {
   CartItem,
   Customer,
+  DentalClinicalDetails,
   InventoryItem,
+  InvoiceSealType,
   MedicineCatalogItem,
   PurchaseCartItem,
   PurchasePackUnit,
@@ -79,6 +86,10 @@ interface PosAndDailyAccountsViewProps {
     customerId: string;
     customerName: string;
     customerPhone: string;
+    patientAge?: string;
+    patientSex?: string;
+    dentalClinical?: Record<string, string>;
+    selectedSeal?: InvoiceSealType;
     discount: number;
     paidAmount: number;
     paymentMethod: Transaction['paymentMethod'];
@@ -180,6 +191,12 @@ interface PosAndDailyAccountsViewProps {
       paymentMethod: Transaction['paymentMethod'];
     }
   ) => Promise<void>;
+  onPayInvoiceDue?: (params: {
+    invoiceTx: Transaction;
+    paymentAmount: number;
+    paymentMethod: Transaction['paymentMethod'];
+    note?: string;
+  }) => Promise<Transaction | null>;
   onDeleteTransaction: (tx: Transaction) => Promise<void>;
   shopProfile: ShopProfile;
   onSaveMedicineCatalog?: (
@@ -249,11 +266,13 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
   onStartEditInvoice,
   onCancelEditInvoice,
   onEditTransaction,
+  onPayInvoiceDue,
   onDeleteTransaction,
   onSaveMedicineCatalog,
   onOpenScanner,
 }) => {
   const invoiceBuilderRef = useRef<HTMLDivElement | null>(null);
+  const saleSearchInputRef = useRef<HTMLInputElement | null>(null);
   const saleCustomNameInputRef = useRef<HTMLInputElement | null>(null);
   const saleCustomPriceInputRef = useRef<HTMLInputElement | null>(null);
   const purCustomNameInputRef = useRef<HTMLInputElement | null>(null);
@@ -341,6 +360,49 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     }
   }, [entryTab, editingInvoiceTx]);
 
+  // Patient Info & Clinical fields
+  const [patientAge, setPatientAge] = useState<string>('');
+  const [patientSex, setPatientSex] = useState<string>('Male');
+  const [selectedSeal, setSelectedSeal] = useState<InvoiceSealType>('iqbal_pharmacy');
+  const [activeInvoiceSeal, setActiveInvoiceSeal] = useState<InvoiceSealType>('iqbal_pharmacy');
+  const [dentalFindings, setDentalFindings] = useState<Record<string, string>>({
+    Pereocoronaties: '',
+    Pulpitis: '',
+    Calculus: '',
+    Gingivitis: '',
+    Caries: '',
+    Scaling: '',
+    Filling: '',
+    RCT: '',
+    Cap: '',
+    Bridge: '',
+    EXT: '',
+    Others: '',
+    'Inv.': '',
+  });
+
+  const [pharmacyFindings, setPharmacyFindings] = useState<Record<string, string>>({
+    'রক্তচাপ (BP)': '',
+    'ডায়াবেটিস (RBS)': '',
+    'তাপমাত্রা (Temp)': '',
+    'ওজন (Weight)': '',
+    'নাড়ির গতি (Pulse)': '',
+    'প্রধান লক্ষণ (Symptoms)': '',
+    'প্রাথমিক পরামর্শ (Advice)': '',
+    'পরীক্ষা-নিরীক্ষা (Inv.)': '',
+  });
+
+  const [showClinicalPanel, setShowClinicalPanel] = useState<boolean>(true);
+
+  // Payment Now Modal states (for Full or Partial payment of any invoice with Due)
+  const [showPaymentModal, setShowPaymentModal] = useState<boolean>(false);
+  const [selectedPaymentInvoice, setSelectedPaymentInvoice] = useState<Transaction | null>(null);
+  const [isFullPayment, setIsFullPayment] = useState<boolean>(true);
+  const [paymentAmountInput, setPaymentAmountInput] = useState<string>('');
+  const [paymentMethodChoice, setPaymentMethodChoice] = useState<Transaction['paymentMethod']>('cash');
+  const [paymentNoteInput, setPaymentNoteInput] = useState<string>('');
+  const [submittingPayment, setSubmittingPayment] = useState<boolean>(false);
+
   // Daily Cashbook Filter states
   const [dateFilter, setDateFilter] = useState<string>(getTodayDateStr());
   const [showAllDates, setShowAllDates] = useState<boolean>(true);
@@ -350,6 +412,12 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
   const [staffRoleFilter, setStaffRoleFilter] = useState<'ALL' | 'owner' | 'staff'>('ALL');
   const [previewInvoice, setPreviewInvoice] = useState<Transaction | null>(null);
   const [invoicePrintWithPrice, setInvoicePrintWithPrice] = useState<boolean>(true);
+
+  useEffect(() => {
+    if (previewInvoice?.selectedSeal) {
+      setActiveInvoiceSeal(previewInvoice.selectedSeal);
+    }
+  }, [previewInvoice]);
 
   // Edit Due Payment Modal states (only used for due_payment entries; sale & purchase invoices use the full New-Invoice Builder)
   const [editingTx, setEditingTx] = useState<Transaction | null>(null);
@@ -390,6 +458,15 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
       setDiscountStr(String(editingInvoiceTx.discount));
       setPaidAmountStr(String(editingInvoiceTx.paidAmount));
       setPaymentMethod(editingInvoiceTx.paymentMethod);
+      if (editingInvoiceTx.patientAge) setPatientAge(editingInvoiceTx.patientAge);
+      if (editingInvoiceTx.patientSex) setPatientSex(editingInvoiceTx.patientSex);
+      if (editingInvoiceTx.selectedSeal) {
+        setSelectedSeal(editingInvoiceTx.selectedSeal);
+        setActiveInvoiceSeal(editingInvoiceTx.selectedSeal);
+      }
+      if (editingInvoiceTx.dentalClinical) {
+        setDentalFindings((prev) => ({ ...prev, ...editingInvoiceTx.dentalClinical }));
+      }
     } else if (editingInvoiceTx.txType === 'purchase') {
       setEntryTab('purchase_entry');
       setPurInvoiceNo(editingInvoiceTx.invoiceNo);
@@ -555,6 +632,34 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     setSelectedCustomerId('walk-in');
     setWalkInName('সাধারণ ক্রেতা (Walk-in)');
     setWalkInPhone('N/A');
+    setPatientAge('');
+    setPatientSex('Male');
+    setSelectedSeal('iqbal_pharmacy');
+    setDentalFindings({
+      Pereocoronaties: '',
+      Pulpitis: '',
+      Calculus: '',
+      Gingivitis: '',
+      Caries: '',
+      Scaling: '',
+      Filling: '',
+      RCT: '',
+      Cap: '',
+      Bridge: '',
+      EXT: '',
+      Others: '',
+      'Inv.': '',
+    });
+    setPharmacyFindings({
+      'রক্তচাপ (BP)': '',
+      'ডায়াবেটিস (RBS)': '',
+      'তাপমাত্রা (Temp)': '',
+      'ওজন (Weight)': '',
+      'নাড়ির গতি (Pulse)': '',
+      'প্রধান লক্ষণ (Symptoms)': '',
+      'প্রাথমিক পরামর্শ (Advice)': '',
+      'পরীক্ষা-নিরীক্ষা (Inv.)': '',
+    });
     setDiscountStr('0');
     setPaidAmountStr('');
     setPaymentMethod('cash');
@@ -586,10 +691,17 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
           ? makeFreshSaleInvoiceNo()
           : saleInvoiceNo.trim() || makeFreshSaleInvoiceNo();
 
+      const activeClinical =
+        selectedSeal === 'iqbal_pharmacy' ? pharmacyFindings : dentalFindings;
+
       const createdTx = await onCompleteSale({
         customerId: selectedCustomerId,
         customerName: cName,
         customerPhone: cPhone,
+        patientAge: patientAge.trim() || undefined,
+        patientSex: patientSex || 'Male',
+        dentalClinical: activeClinical,
+        selectedSeal: selectedSeal,
         discount: discountVal,
         paidAmount: effectivePaidAmount,
         paymentMethod: dueAmount > 0 && effectivePaidAmount === 0 ? 'due' : paymentMethod,
@@ -598,9 +710,23 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
         dateStr: saleDateStr.trim() || getTodayDateStr(),
         editingTxId: !asBrandNewInvoice && isEditingSale ? editingInvoiceTx?.id : undefined,
       });
+
+      // Store current patient info and clinical options before resetting the form
+      const finalAge = patientAge.trim();
+      const finalSex = patientSex;
+      const finalClinical = { ...activeClinical };
+      const finalSeal = selectedSeal;
+
       resetSaleFormToFresh();
       if (createdTx) {
-        setPreviewInvoice(createdTx);
+        setPreviewInvoice({
+          ...createdTx,
+          patientAge: finalAge || createdTx.patientAge,
+          patientSex: finalSex || createdTx.patientSex,
+          dentalClinical: finalClinical || createdTx.dentalClinical,
+          selectedSeal: finalSeal || createdTx.selectedSeal,
+        });
+        setActiveInvoiceSeal(finalSeal || 'iqbal_pharmacy');
       }
     } finally {
       setSubmittingSale(false);
@@ -1363,6 +1489,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                   <div className="relative flex-1">
                     <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
+                      ref={saleSearchInputRef}
                       type="text"
                       value={medSearch}
                       onChange={(e) => setMedSearch(e.target.value)}
@@ -1459,14 +1586,22 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                         <div className="flex items-center gap-1">
                           <button
                             type="button"
-                            onClick={() => onAddToCart(med, 1)}
+                            onClick={() => {
+                              onAddToCart(med, 1);
+                              setMedSearch('');
+                              setTimeout(() => saleSearchInputRef.current?.focus(), 50);
+                            }}
                             className="px-2 py-1 text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-800 rounded cursor-pointer"
                           >
                             +১ পিস
                           </button>
                           <button
                             type="button"
-                            onClick={() => onAddToCart(med, med.unitsPerStrip || 10)}
+                            onClick={() => {
+                              onAddToCart(med, med.unitsPerStrip || 10);
+                              setMedSearch('');
+                              setTimeout(() => saleSearchInputRef.current?.focus(), 50);
+                            }}
                             className="px-2 py-1 text-xs font-medium bg-teal-700 hover:bg-teal-800 text-white rounded cursor-pointer flex items-center gap-1"
                           >
                             <ShoppingCart className="w-3 h-3" />
@@ -1474,7 +1609,11 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                           </button>
                           <button
                             type="button"
-                            onClick={() => onAddToPurchaseCart(med, med.unitsPerStrip || 10)}
+                            onClick={() => {
+                              onAddToPurchaseCart(med, med.unitsPerStrip || 10);
+                              setMedSearch('');
+                              setTimeout(() => saleSearchInputRef.current?.focus(), 50);
+                            }}
                             title="ক্রয় কার্ট / Purchase Cart-এ যোগ করুন"
                             className="px-2 py-1 text-xs font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 rounded cursor-pointer flex items-center gap-1"
                           >
@@ -1667,6 +1806,65 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                       (পূর্বের বিক্রয় দর: ৳{item.originalUnitPrice?.toFixed(2)})
                                     </span>
                                   )}
+                                </div>
+
+                                {/* Dosage Schedule & Duration Inputs (Screenshot 3 & 4) */}
+                                <div className="flex flex-wrap items-center gap-1.5 mt-1.5 bg-rose-50/70 p-1.5 rounded border border-rose-200">
+                                  <span className="text-[10px] font-bold text-rose-900">ডোজ ও নিয়ম:</span>
+                                  <input
+                                    type="text"
+                                    value={item.dosageSchedule || ''}
+                                    onChange={(e) =>
+                                      onUpdateCartItemDetails(item.medicineId, {
+                                        dosageSchedule: e.target.value,
+                                      })
+                                    }
+                                    placeholder="ডোজ (যেমন: 1+0+1)"
+                                    className="w-24 px-1.5 py-0.5 text-xs font-mono font-bold text-red-600 bg-white border border-rose-200 rounded focus:border-red-500 focus:outline-none"
+                                    title="খাওয়ার ডোজ (যেমন: 1+0+1, 1+1+1)"
+                                  />
+                                  <input
+                                    type="text"
+                                    value={item.dosageDuration || ''}
+                                    onChange={(e) =>
+                                      onUpdateCartItemDetails(item.medicineId, {
+                                        dosageDuration: e.target.value,
+                                      })
+                                    }
+                                    placeholder="মেয়াদ (যেমন: 7 Days)"
+                                    className="w-28 px-1.5 py-0.5 text-xs font-mono text-slate-800 bg-white border border-rose-200 rounded focus:border-red-500 focus:outline-none"
+                                    title="কত দিন চলবে (যেমন: 7 Days, 10 Day)"
+                                  />
+                                  <div className="flex flex-wrap items-center gap-1">
+                                    {['1+0+1', '1+1+1', '1+0+0', '0+0+1'].map((preset) => (
+                                      <button
+                                        key={preset}
+                                        type="button"
+                                        onClick={() =>
+                                          onUpdateCartItemDetails(item.medicineId, {
+                                            dosageSchedule: preset,
+                                          })
+                                        }
+                                        className="px-1 py-0.5 text-[9.5px] font-mono font-bold bg-white hover:bg-rose-100 text-rose-700 border border-rose-300 rounded cursor-pointer"
+                                      >
+                                        {preset}
+                                      </button>
+                                    ))}
+                                    {['7 Days', '10 Day', '14 Days'].map((preset) => (
+                                      <button
+                                        key={preset}
+                                        type="button"
+                                        onClick={() =>
+                                          onUpdateCartItemDetails(item.medicineId, {
+                                            dosageDuration: preset,
+                                          })
+                                        }
+                                        className="px-1 py-0.5 text-[9.5px] font-mono bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded cursor-pointer"
+                                      >
+                                        {preset}
+                                      </button>
+                                    ))}
+                                  </div>
                                 </div>
 
                                 <div className="flex flex-wrap items-center gap-2 mt-1">
@@ -1913,22 +2111,260 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                   </div>
                 </div>
 
-                {selectedCustomerId === 'walk-in' && (
-                  <div className="grid grid-cols-2 gap-3">
-                    <input
-                      type="text"
-                      value={walkInName}
-                      onChange={(e) => setWalkInName(e.target.value)}
-                      placeholder="ক্রেতার নাম (ঐচ্ছিক)"
-                      className="px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md"
-                    />
-                    <input
-                      type="text"
-                      value={walkInPhone}
-                      onChange={(e) => setWalkInPhone(e.target.value)}
-                      placeholder="মোবাইল নম্বর"
-                      className="px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md"
-                    />
+                {/* Patient Information & Clinical Bar (Pink/Rose Theme as per Memo) */}
+                <div className="p-3 bg-pink-50/70 border border-pink-200 rounded-lg space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-pink-950 flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-pink-700" />
+                      রোগীর তথ্য (Patient Info - প্রেসক্রিপশন মেমো):
+                    </span>
+                    <span className="text-[11px] font-mono text-pink-800">
+                      তারিখ: {saleDateStr} (স্বয়ংক্রিয় আজকের তারিখ)
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    {selectedCustomerId === 'walk-in' ? (
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                          Name (রোগীর নাম):
+                        </label>
+                        <input
+                          type="text"
+                          value={walkInName}
+                          onChange={(e) => setWalkInName(e.target.value)}
+                          placeholder="রোগী / ক্রেতার নাম"
+                          className="w-full px-2.5 py-1.5 text-xs bg-white border border-pink-300 rounded focus:border-pink-600 focus:outline-none"
+                        />
+                      </div>
+                    ) : (
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                          Name (রোগীর নাম):
+                        </label>
+                        <div className="px-2.5 py-1.5 text-xs bg-white border border-pink-200 rounded font-semibold text-slate-900 truncate">
+                          {customers.find((c) => c.id === selectedCustomerId)?.name || 'নাম'}
+                        </div>
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                        Age (বয়স):
+                      </label>
+                      <input
+                        type="text"
+                        value={patientAge}
+                        onChange={(e) => setPatientAge(e.target.value)}
+                        placeholder="যেমন: 28Y / ৩০ বছর"
+                        className="w-full px-2.5 py-1.5 text-xs bg-white border border-pink-300 rounded focus:border-pink-600 focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                        Sex (লিঙ্গ):
+                      </label>
+                      <select
+                        value={patientSex}
+                        onChange={(e) => setPatientSex(e.target.value)}
+                        className="w-full px-2.5 py-1.5 text-xs bg-white border border-pink-300 rounded focus:border-pink-600 focus:outline-none"
+                      >
+                        <option value="Male">পুরুষ (Male)</option>
+                        <option value="Female">মহিলা (Female)</option>
+                        <option value="Other">অন্যান্য (Other)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Seal Selection: ৩টি সিল থেকে নির্বাচন (সঠিক ঠিকানা সহ) */}
+                  <div className="pt-2 border-t border-pink-200">
+                    <label className="block text-[11px] font-bold text-slate-800 mb-1.5">
+                      নিচের সিল ও চেম্বার নির্বাচন করুন (মেমোতে প্রদর্শিত ঠিকানা):
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <label
+                        className={`flex items-center gap-2 p-2 rounded-md border cursor-pointer text-xs transition-colors ${
+                          selectedSeal === 'iqbal_pharmacy'
+                            ? 'bg-teal-50 border-teal-600 text-teal-950 font-bold shadow-2xs'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="invoiceSeal"
+                          value="iqbal_pharmacy"
+                          checked={selectedSeal === 'iqbal_pharmacy'}
+                          onChange={() => setSelectedSeal('iqbal_pharmacy')}
+                          className="text-teal-700 focus:ring-teal-600"
+                        />
+                        <div>
+                          <div>১. ইকবাল ফার্মেসী</div>
+                          <div className="text-[10px] text-slate-500 font-normal">নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর</div>
+                        </div>
+                      </label>
+
+                      <label
+                        className={`flex items-center gap-2 p-2 rounded-md border cursor-pointer text-xs transition-colors ${
+                          selectedSeal === 'dental_care_1'
+                            ? 'bg-teal-50 border-teal-600 text-teal-950 font-bold shadow-2xs'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="invoiceSeal"
+                          value="dental_care_1"
+                          checked={selectedSeal === 'dental_care_1'}
+                          onChange={() => setSelectedSeal('dental_care_1')}
+                          className="text-teal-700 focus:ring-teal-600"
+                        />
+                        <div>
+                          <div>২. ইকবাল ডেন্টাল কেয়ার-১</div>
+                          <div className="text-[10px] text-slate-500 font-normal">নতুনহাট, পশ্চিম বাজার, চন্দ্রগঞ্জ, লক্ষ্মীপুর</div>
+                        </div>
+                      </label>
+
+                      <label
+                        className={`flex items-center gap-2 p-2 rounded-md border cursor-pointer text-xs transition-colors ${
+                          selectedSeal === 'dental_care_2'
+                            ? 'bg-teal-50 border-teal-600 text-teal-950 font-bold shadow-2xs'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="invoiceSeal"
+                          value="dental_care_2"
+                          checked={selectedSeal === 'dental_care_2'}
+                          onChange={() => setSelectedSeal('dental_care_2')}
+                          className="text-teal-700 focus:ring-teal-600"
+                        />
+                        <div>
+                          <div>৩. ইকবাল ডেন্টাল কেয়ার-২ (ওয়ানস্পট ডেন্টাল কেয়ার)</div>
+                          <div className="text-[10px] text-slate-500 font-normal">মল্লাহাট, মিয়ার বাজার, ভুলুয়া রোড (বেড়ী রোড), নোয়াখালী</div>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ক্লিনিক্যাল অপশন: ফার্মেসীর জন্য ফার্মেসী ক্লিনিক্যাল ও ডেন্টালের জন্য ডেন্টাল ক্লিনিক্যাল অপশন (Screenshot 2) */}
+                {selectedSeal === 'iqbal_pharmacy' ? (
+                  <div className="p-3 bg-teal-50/70 border border-teal-300 rounded-lg space-y-2">
+                    <div className="flex items-center justify-between">
+                      <button
+                        type="button"
+                        onClick={() => setShowClinicalPanel(!showClinicalPanel)}
+                        className="text-xs font-bold text-teal-950 flex items-center gap-1.5 cursor-pointer hover:underline"
+                      >
+                        <Stethoscope className="w-3.5 h-3.5 text-teal-700" />
+                        <span>ফার্মেসী ক্লিনিক্যাল অপশন (রক্তচাপ, সুগার/RBS, জ্বর, ওজন, লক্ষণ ও পরামর্শ):</span>
+                        <span className="text-[11px] text-teal-700 font-normal">
+                          {showClinicalPanel ? '[- সংক্ষেপ করুন]' : '[+ তথ্য যুক্ত করতে ক্লিক করুন]'}
+                        </span>
+                      </button>
+                      <span className="text-[10px] text-slate-500">
+                        রোগীর প্রাথমিক পর্যবেক্ষণ মেমোতে যুক্ত থাকবে
+                      </span>
+                    </div>
+
+                    {showClinicalPanel && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 pt-2">
+                        {[
+                          { key: 'রক্তচাপ (BP)', icon: Activity, placeholder: 'যেমন: 120/80 mmHg' },
+                          { key: 'ডায়াবেটিস (RBS)', icon: Heart, placeholder: 'যেমন: 6.5 mmol/L' },
+                          { key: 'তাপমাত্রা (Temp)', icon: Thermometer, placeholder: 'যেমন: 98.6 °F' },
+                          { key: 'ওজন (Weight)', placeholder: 'যেমন: 65 kg' },
+                          { key: 'নাড়ির গতি (Pulse)', placeholder: 'যেমন: 72 bpm' },
+                          { key: 'প্রধান লক্ষণ (Symptoms)', placeholder: 'যেমন: সর্দি, কাশি, গ্যাস্ট্রিক' },
+                          { key: 'প্রাথমিক পরামর্শ (Advice)', placeholder: 'যেমন: পর্যাপ্ত পানি ও বিশ্রাম' },
+                          { key: 'পরীক্ষা-নিরীক্ষা (Inv.)', placeholder: 'যেমন: CBC, RBS, Urine R/E' },
+                        ].map((field) => {
+                          const val = pharmacyFindings[field.key] || '';
+                          const IconComp = field.icon;
+                          return (
+                            <div key={field.key} className="bg-white p-2 rounded border border-teal-200 shadow-2xs">
+                              <label className="block text-[11px] font-bold text-slate-800 mb-1 flex items-center gap-1">
+                                {IconComp && <IconComp className="w-3 h-3 text-teal-600" />}
+                                <span>{field.key}:</span>
+                              </label>
+                              <input
+                                type="text"
+                                value={val}
+                                onChange={(e) =>
+                                  setPharmacyFindings((prev) => ({
+                                    ...prev,
+                                    [field.key]: e.target.value,
+                                  }))
+                                }
+                                placeholder={field.placeholder}
+                                className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:border-teal-600 focus:outline-none"
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-3 bg-amber-50/70 border border-amber-300 rounded-lg space-y-2">
+                    <div className="flex items-center justify-between">
+                      <button
+                        type="button"
+                        onClick={() => setShowClinicalPanel(!showClinicalPanel)}
+                        className="text-xs font-bold text-amber-950 flex items-center gap-1.5 cursor-pointer hover:underline"
+                      >
+                        <span>🦷 ডেন্টাল ক্লিনিক্যাল অপশন (Pereocoronaties, Pulpitis, RCT, ইত্যাদি):</span>
+                        <span className="text-[11px] text-amber-700 font-normal">
+                          {showClinicalPanel ? '[- সংক্ষেপ করুন]' : '[+ তথ্য যুক্ত করতে ক্লিক করুন]'}
+                        </span>
+                      </button>
+                      <span className="text-[10px] text-slate-500">
+                        অপশন সিলেক্ট করে টেক্সট লিখুন (মেমোর বাম কলামে প্রদর্শিত হবে)
+                      </span>
+                    </div>
+
+                    {showClinicalPanel && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 pt-2">
+                        {[
+                          'Pereocoronaties',
+                          'Pulpitis',
+                          'Calculus',
+                          'Gingivitis',
+                          'Caries',
+                          'Scaling',
+                          'Filling',
+                          'RCT',
+                          'Cap',
+                          'Bridge',
+                          'EXT',
+                          'Others',
+                          'Inv.',
+                        ].map((itemKey) => {
+                          const val = dentalFindings[itemKey] || '';
+                          return (
+                            <div key={itemKey} className="bg-white p-2 rounded border border-amber-200 shadow-2xs">
+                              <label className="block text-[11px] font-bold text-slate-800 mb-1">
+                                {itemKey}:
+                              </label>
+                              <input
+                                type="text"
+                                value={val}
+                                onChange={(e) =>
+                                  setDentalFindings((prev) => ({
+                                    ...prev,
+                                    [itemKey]: e.target.value,
+                                  }))
+                                }
+                                placeholder={`${itemKey} বিবরণ / দাঁতের নং...`}
+                                className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:border-amber-600 focus:outline-none"
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -3565,13 +4001,87 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
       {previewInvoice && (
         <div id="printable-invoice-modal" className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4 overflow-y-auto">
           <div id="printable-invoice-receipt" className="bg-white border border-slate-200 rounded-lg max-w-2xl w-full p-6 shadow-xl my-auto">
+            {/* Sales Invoice Mode Switcher (no-print) */}
+            {previewInvoice.txType === 'sale' && (
+              <div className="mb-3 p-2.5 bg-slate-100 border border-slate-300 rounded-lg flex flex-wrap items-center justify-between gap-2 no-print shadow-2xs">
+                <div className="flex items-center gap-1.5 text-xs text-slate-900 font-bold">
+                  <Printer className="w-3.5 h-3.5 text-teal-700" />
+                  <span>মেমো প্রিন্ট মোড:</span>
+                </div>
+                <div className="inline-flex rounded-md border border-slate-300 p-0.5 bg-white shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={() => setInvoicePrintWithPrice(true)}
+                    className={`px-3 py-1 text-xs font-bold rounded cursor-pointer transition-colors ${
+                      invoicePrintWithPrice
+                        ? 'bg-teal-700 text-white shadow-xs'
+                        : 'text-slate-700 hover:text-slate-900'
+                    }`}
+                  >
+                    ✓ দাম সহ মেমো
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInvoicePrintWithPrice(false)}
+                    className={`px-3 py-1 text-xs font-bold rounded cursor-pointer transition-colors ${
+                      !invoicePrintWithPrice
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'text-slate-700 hover:text-slate-900'
+                    }`}
+                  >
+                    ✓ দাম ছাড়া মেমো
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                  <span className="font-bold text-slate-800">সিল নির্বাচন:</span>
+                  <div className="inline-flex rounded-md border border-slate-300 p-0.5 bg-white shadow-2xs">
+                    <button
+                      type="button"
+                      onClick={() => setActiveInvoiceSeal('iqbal_pharmacy')}
+                      className={`px-2.5 py-1 text-xs font-bold rounded cursor-pointer transition-colors ${
+                        activeInvoiceSeal === 'iqbal_pharmacy'
+                          ? 'bg-teal-700 text-white shadow-xs'
+                          : 'text-slate-700 hover:text-slate-900'
+                      }`}
+                    >
+                      🏢 ১. ইকবাল ফার্মেসী
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveInvoiceSeal('dental_care_1')}
+                      className={`px-2.5 py-1 text-xs font-bold rounded cursor-pointer transition-colors ${
+                        activeInvoiceSeal === 'dental_care_1'
+                          ? 'bg-blue-800 text-white shadow-xs'
+                          : 'text-slate-700 hover:text-slate-900'
+                      }`}
+                    >
+                      🦷 ২. ইকবাল ডেন্টাল কেয়ার-১
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveInvoiceSeal('dental_care_2')}
+                      className={`px-2.5 py-1 text-xs font-bold rounded cursor-pointer transition-colors ${
+                        activeInvoiceSeal === 'dental_care_2'
+                          ? 'bg-indigo-800 text-white shadow-xs'
+                          : 'text-slate-700 hover:text-slate-900'
+                      }`}
+                    >
+                      🦷 ৩. ইকবাল ডেন্টাল কেয়ার-২
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Distinct Top Invoice Type Banner */}
             <div
               className={`mb-4 px-4 py-2.5 rounded-md border flex flex-wrap items-center justify-between gap-2 ${
                 previewInvoice.txType === 'purchase'
                   ? 'bg-indigo-50 border-indigo-300 text-indigo-950'
                   : previewInvoice.txType === 'sale'
-                  ? 'bg-teal-50 border-teal-300 text-teal-950'
+                  ? invoicePrintWithPrice
+                    ? 'bg-teal-50 border-teal-300 text-teal-950'
+                    : 'bg-amber-50 border-amber-300 text-amber-950'
                   : 'bg-emerald-50 border-emerald-300 text-emerald-950'
               }`}
             >
@@ -3585,7 +4095,9 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                   {previewInvoice.txType === 'purchase'
                     ? 'প্রডাক্ট ক্রয় ইনভয়েস / স্টক-ইন চালান (PURCHASE INVOICE)'
                     : previewInvoice.txType === 'sale'
-                    ? 'প্রডাক্ট বিক্রয় ইনভয়েস / ক্যাশ মেমো (SALES INVOICE)'
+                    ? invoicePrintWithPrice
+                      ? 'প্রডাক্ট বিক্রয় ইনভয়েস / ক্যাশ মেমো (SALES INVOICE - WITH PRICE)'
+                      : 'প্রডাক্ট ডেলিভারি চালান / প্রেসক্রিপশন মেমো (DELIVERY MEMO - WITHOUT PRICE)'
                     : 'বকেয়া আদায় মানি রিসিট (DUE COLLECTION RECEIPT)'}
                 </span>
               </div>
@@ -3595,7 +4107,9 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                   previewInvoice.txType === 'purchase'
                     ? 'bg-white border-indigo-300 text-emerald-700'
                     : previewInvoice.txType === 'sale'
-                    ? 'bg-white border-teal-300 text-amber-800'
+                    ? invoicePrintWithPrice
+                      ? 'bg-white border-teal-300 text-amber-800'
+                      : 'bg-white border-amber-300 text-amber-900'
                     : 'bg-white border-emerald-300 text-emerald-800'
                 }`}
               >
@@ -3620,70 +4134,186 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
               </span>
             </div>
 
-            {/* Top Header: Left Corner Pharmacy Identity & Chamber Hours + Right Corner Invoice Meta */}
-            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b-2 border-slate-800 pb-4">
-              {/* বাম কোনে ইকবাল ফার্মেসী ও রোগী দেখার সময় */}
-              <div className="text-left space-y-0.5">
-                <h3 className="text-xl font-extrabold text-teal-900 tracking-tight">
-                  ইকবাল ফার্মেসী
-                </h3>
-                <p className="text-xs font-bold text-slate-900">
-                  ইকবাল মাহমুদ (DMTD DENTAL,LMF,RMP,Pharmasist)
-                </p>
-                <p className="text-xs text-slate-800">
-                  ঠিকানা:- নতুনহাট,ইসলামিয়া মাদ্রাসা-৩৮০৯,চন্দ্রগঞ্জ,লক্ষীপুর।
-                </p>
-                <p className="text-xs font-mono font-bold text-slate-900">
-                  মোবাইল:- 01812-358839
-                </p>
-                <div className="text-[11px] text-slate-700 pt-1 leading-snug space-y-0.5">
-                  <div>
-                    <span className="font-semibold text-slate-900">রোগী দেখার সময়:-</span> সকাল ৮টা-১০টা এবং সন্ধ্যা ৬টা-রাত ১০টা (শনি,রবি,সোম,বুধ,বৃহস্পতি)
-                  </div>
-                  <div>
-                    সকাল ৮টা-১০টা এবং দুপুর ৩টা-রাত ১০টা (মঙ্গল) এবং শুক্রবার সারাদিন।
-                  </div>
-                </div>
-              </div>
+            {/* Top Header: Dynamic Chamber Identity & Doctor Qualifications */}
+            {(() => {
+              const currentSeal = activeInvoiceSeal || previewInvoice.selectedSeal || 'iqbal_pharmacy';
+              const sealMap = {
+                iqbal_pharmacy: {
+                  title: 'ইকবাল ফার্মেসী',
+                  sub: 'ইকবাল মাহমুদ (DMTD DENTAL, LMF, RMP, Pharmacist)',
+                  address: 'ঠিকানা:- নতুনহাট, ইসলামিয়া মাদ্রাসা-৩৮০৯, চন্দ্রগঞ্জ, লক্ষ্মীপুর।',
+                  mobile: 'মোবাইল:- 01812-358839',
+                  location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
+                },
+                dental_care_1: {
+                  title: 'ইকবাল ডেন্টাল কেয়ার-১',
+                  sub: 'ইকবাল মাহমুদ (DMTD DENTAL, LMF, RMP, ডেন্টাল প্র্যাকটিশনার ও সার্জন)',
+                  address: 'ঠিকানা:- নতুনহাট, পশ্চিম বাজার, চন্দ্রগঞ্জ, লক্ষ্মীপুর।',
+                  mobile: 'মোবাইল:- 01812-358839',
+                  location: 'নতুনহাট, পশ্চিম বাজার, লক্ষ্মীপুর',
+                },
+                dental_care_2: {
+                  title: 'ইকবাল ডেন্টাল কেয়ার-২',
+                  sub: 'ইকবাল মাহমুদ (DMTD DENTAL, LMF, RMP, ডেন্টাল টেকনোলজিস্ট ও সার্জন)',
+                  address: 'ঠিকানা:- মোল্লাহাট, অলুয়া, নোয়াখালী।',
+                  mobile: 'মোবাইল:- 01812-358839',
+                  location: 'মোল্লাহাট, অলুয়া, নোয়াখালী',
+                },
+              };
+              const sealConfig = sealMap[currentSeal] || sealMap.iqbal_pharmacy;
 
-              {/* ডান পাশে ক্রয় অথবা বিক্রয় ইনভয়েসের নির্দিষ্ট তথ্য */}
-              <div className="text-left sm:text-right text-xs space-y-1 shrink-0 sm:border-l sm:border-slate-200 sm:pl-4">
-                <div>
-                  <span className="text-slate-500">
-                    {previewInvoice.txType === 'purchase'
-                      ? 'ক্রয় ইনভয়েস নং: '
-                      : 'বিক্রয় মেমো নং: '}
-                  </span>
-                  <span className="font-mono font-bold text-slate-900">
-                    {previewInvoice.invoiceNo}
-                  </span>
+              return (
+                <div className="space-y-3 border-b-2 border-slate-800 pb-3 mb-3">
+                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                    {/* বাম কোনে নির্বাচিত ফার্মেসী / ডেন্টাল কেয়ার পরিচয় */}
+                    <div className="text-left space-y-0.5">
+                      <h3 className="text-xl font-extrabold text-teal-900 tracking-tight">
+                        {sealConfig.title}
+                      </h3>
+                      <p className="text-xs font-bold text-slate-900">
+                        {sealConfig.sub}
+                      </p>
+                      <p className="text-xs text-slate-800">
+                        {sealConfig.address}
+                      </p>
+                      <p className="text-xs font-mono font-bold text-slate-900">
+                        {sealConfig.mobile}
+                      </p>
+                      <div className="text-[11px] text-slate-700 pt-1 leading-snug space-y-0.5">
+                        <div>
+                          <span className="font-semibold text-slate-900">রোগী দেখার সময়:-</span> সকাল ৮টা-১০টা এবং সন্ধ্যা ৬টা-রাত ১০টা (শনি,রবি,সোম,বুধ,বৃহস্পতি)
+                        </div>
+                        <div>
+                          সকাল ৮টা-১০টা এবং দুপুর ৩টা-রাত ১০টা (মঙ্গল) এবং শুক্রবার সারাদিন।
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ডান পাশে মেমো ও চালান নম্বর */}
+                    <div className="text-left sm:text-right text-xs space-y-1 shrink-0 sm:border-l sm:border-slate-200 sm:pl-4">
+                      <div>
+                        <span className="text-slate-500">
+                          {previewInvoice.txType === 'purchase'
+                            ? 'ক্রয় ইনভয়েস নং: '
+                            : previewInvoice.txType === 'sale' && !invoicePrintWithPrice
+                            ? 'ডেলিভারি মেমো নং: '
+                            : 'বিক্রয় মেমো নং: '}
+                        </span>
+                        <span className="font-mono font-bold text-slate-900">
+                          {previewInvoice.invoiceNo}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">তারিখ: </span>
+                        <span className="font-mono font-bold text-slate-900">
+                          {previewInvoice.dateStr || getTodayDateStr()}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">অপারেটর: </span>
+                        <span className="text-slate-800 font-semibold">
+                          {previewInvoice.staffRole === 'owner' ? 'Owner' : previewInvoice.staffName}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* রোগীর তথ্য বার (তারিখ, নাম, লিঙ্গ, বয়স ইত্যাদি) */}
+                  <div className="p-2.5 bg-slate-50 border border-slate-300 rounded-md grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                    <div>
+                      <span className="text-slate-500 block text-[10px]">
+                        {previewInvoice.txType === 'purchase' ? 'সরবরাহকারী কোম্পানি:' : 'রোগী / ক্রেতার নাম:'}
+                      </span>
+                      <span className="font-bold text-slate-900 truncate block">
+                        {previewInvoice.partyName || '—'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[10px]">মোবাইল নং:</span>
+                      <span className="font-mono font-semibold text-slate-800 block">
+                        {previewInvoice.partyPhone || '—'}
+                      </span>
+                    </div>
+                    {previewInvoice.txType === 'sale' ? (
+                      <>
+                        <div>
+                          <span className="text-slate-500 block text-[10px]">বয়স (Age):</span>
+                          <span className="font-semibold text-slate-900 block">
+                            {previewInvoice.patientAge ? `${previewInvoice.patientAge}` : '—'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-slate-500 block text-[10px]">লিঙ্গ (Sex):</span>
+                          <span className="font-semibold text-slate-900 block">
+                            {previewInvoice.patientSex === 'Female'
+                              ? 'মহিলা (Female)'
+                              : previewInvoice.patientSex === 'Other'
+                              ? 'অন্যান্য'
+                              : 'পুরুষ (Male)'}
+                          </span>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="col-span-2">
+                        <span className="text-slate-500 block text-[10px]">চালান প্রকার:</span>
+                        <span className="font-semibold text-slate-900 block">কোম্পানি সরবরাহ চালান</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ডেন্টাল ক্লিনিক্যাল হিস্ট্রি ও পর্যবেক্ষণ (Pereocoronaties, Pulpitis, Calculus, etc.) */}
+                  {previewInvoice.txType === 'sale' && (
+                    <div className="p-2.5 border border-amber-300 rounded-md bg-amber-50/40">
+                      <div className="flex items-center justify-between text-xs font-bold text-amber-950 pb-1.5 border-b border-amber-200 mb-2">
+                        <span className="flex items-center gap-1.5">
+                          🦷 ডেন্টাল ও ক্লিনিক্যাল পর্যবেক্ষণ (Clinical Findings & Dental Examination):
+                        </span>
+                        <span className="text-[10px] text-amber-800 font-normal">
+                          দাঁতের লক্ষণ ও চিকিৎসা পর্যবেক্ষণ
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 text-xs">
+                        {[
+                          'Pereocoronaties',
+                          'Pulpitis',
+                          'Calculus',
+                          'Gingivitis',
+                          'Caries',
+                          'Scaling',
+                          'Filling',
+                          'RCT',
+                          'Cap',
+                          'Bridge',
+                          'EXT',
+                          'Others',
+                        ].map((key) => {
+                          const val = previewInvoice.dentalClinical?.[key];
+                          const hasVal = Boolean(val && val.trim().length > 0);
+                          return (
+                            <div
+                              key={key}
+                              className={`p-1.5 rounded border text-[11px] leading-tight ${
+                                hasVal
+                                  ? 'bg-white border-amber-400 text-amber-950 shadow-2xs font-semibold'
+                                  : 'bg-transparent border-dashed border-slate-300 text-slate-700'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-slate-900">{key}:</span>
+                                {hasVal && <span className="text-emerald-700 text-[10px] font-bold">✓</span>}
+                              </div>
+                              <div className="text-[10.5px] mt-0.5 truncate text-slate-800 font-mono">
+                                {hasVal ? val : '...................'}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <span className="text-slate-500">তারিখ: </span>
-                  <span className="font-mono text-slate-800">{previewInvoice.dateStr}</span>
-                </div>
-                <div>
-                  <span className="text-slate-500">
-                    {previewInvoice.txType === 'purchase'
-                      ? 'সরবরাহকারী কোম্পানি: '
-                      : 'ক্রেতার নাম: '}
-                  </span>
-                  <span className="font-semibold text-slate-900">{previewInvoice.partyName}</span>
-                </div>
-                <div>
-                  <span className="text-slate-500">
-                    {previewInvoice.txType === 'purchase' ? 'ডিপো / মোবাইল: ' : 'মোবাইল: '}
-                  </span>
-                  <span className="font-mono text-slate-800">{previewInvoice.partyPhone}</span>
-                </div>
-                <div>
-                  <span className="text-slate-500">অপারেটর: </span>
-                  <span className="text-slate-800 font-semibold">
-                    {previewInvoice.staffRole === 'owner' ? 'Owner' : previewInvoice.staffName}
-                  </span>
-                </div>
-              </div>
-            </div>
+              );
+            })()}
 
             {/* Items & Stock Impact Section */}
             <div className="py-4 border-b border-slate-200">
@@ -3691,11 +4321,15 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                 <span>
                   {previewInvoice.txType === 'purchase'
                     ? 'ক্রয়কৃত প্রডাক্টের তালিকা ও স্টক বৃদ্ধি বিবরণ:'
+                    : previewInvoice.txType === 'sale' && !invoicePrintWithPrice
+                    ? 'বিতরণকৃত ওষুধের তালিকা (দাম ছাড়া ডেলিভারি চালান):'
                     : 'বিক্রয়কৃত প্রডাক্টের তালিকা ও স্টক হ্রাস বিবরণ:'}
                 </span>
                 <span className="font-mono text-slate-500">
                   {previewInvoice.txType === 'purchase'
                     ? 'ক্রয় দর × পরিমাণ = মোট'
+                    : previewInvoice.txType === 'sale' && !invoicePrintWithPrice
+                    ? 'ওষুধ ও পরিমাণের তালিকা'
                     : 'বিক্রয় দর × পরিমাণ = মোট'}
                 </span>
               </div>
@@ -3707,6 +4341,8 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                       className={
                         previewInvoice.txType === 'purchase'
                           ? 'bg-indigo-50/70 border-b border-slate-200 text-indigo-950 font-sans'
+                          : previewInvoice.txType === 'sale' && !invoicePrintWithPrice
+                          ? 'bg-amber-50/70 border-b border-slate-200 text-amber-950 font-sans'
                           : 'bg-teal-50/70 border-b border-slate-200 text-teal-950 font-sans'
                       }
                     >
@@ -3716,14 +4352,20 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                             ? 'ওষুধের বিবরণ ও প্যাক হিসাব'
                             : 'ওষুধের বিবরণ (হিসাব লাইন)'}
                         </th>
-                        <th className="py-2 px-2 text-center">
-                          {previewInvoice.txType === 'purchase' ? 'ক্রয় দর (৳)' : 'একক দর (৳)'}
-                        </th>
+                        {/* Only show Unit Price when not in without-price mode */}
+                        {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
+                          <th className="py-2 px-2 text-center">
+                            {previewInvoice.txType === 'purchase' ? 'ক্রয় দর (৳)' : 'একক দর (৳)'}
+                          </th>
+                        )}
                         <th className="py-2 px-2 text-center">পরিমাণ</th>
                         <th className="py-2 px-2 text-center">স্টক পরিবর্তন</th>
-                        <th className="py-2 px-3 text-right">
-                          {previewInvoice.txType === 'purchase' ? 'মোট ক্রয় মূল্য (৳)' : 'মোট (৳)'}
-                        </th>
+                        {/* Only show Total Price when not in without-price mode */}
+                        {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
+                          <th className="py-2 px-3 text-right">
+                            {previewInvoice.txType === 'purchase' ? 'মোট ক্রয় মূল্য (৳)' : 'মোট (৳)'}
+                          </th>
+                        )}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 bg-slate-50/50">
@@ -3746,9 +4388,11 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                               pItem.rawLine
                             )}
                           </td>
-                          <td className="py-2 px-2 text-center text-slate-700">
-                            ৳{formatCleanMoney(pItem.unitPrice)}
-                          </td>
+                          {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
+                            <td className="py-2 px-2 text-center text-slate-700">
+                              ৳{formatCleanMoney(pItem.unitPrice)}
+                            </td>
+                          )}
                           <td className="py-2 px-2 text-center font-bold text-slate-900">
                             {pItem.qty} পিস
                           </td>
@@ -3767,9 +4411,11 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                               </span>
                             )}
                           </td>
-                          <td className="py-2 px-3 text-right font-bold text-slate-900">
-                            ৳{formatCleanMoney(pItem.lineTotal)}
-                          </td>
+                          {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
+                            <td className="py-2 px-3 text-right font-bold text-slate-900">
+                              ৳{formatCleanMoney(pItem.lineTotal)}
+                            </td>
+                          )}
                         </tr>
                       ))}
                     </tbody>
@@ -3784,44 +4430,129 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
               )}
             </div>
 
-            {/* Financial Totals */}
-            <div className="py-3.5 space-y-1.5 text-sm font-mono tabular-nums">
-              <div className="flex justify-between text-xs text-slate-600">
-                <span>
-                  {previewInvoice.txType === 'purchase'
-                    ? 'মোট ক্রয় বিল (Sub-total):'
-                    : 'মোট বিক্রয় বিল (Sub-total):'}
-                </span>
-                <span>৳{previewInvoice.subTotal.toFixed(2)}</span>
+            {/* Financial Totals OR Non-Price Summary */}
+            {previewInvoice.txType === 'sale' && !invoicePrintWithPrice ? (
+              <div className="py-3 px-3.5 my-2 bg-amber-50/60 border border-amber-200 rounded-md text-xs space-y-2">
+                <div className="flex justify-between font-semibold text-amber-950">
+                  <span>মোট ওষুধের আইটেম:</span>
+                  <span className="font-mono font-bold">{parsedPreviewItems.length} টি</span>
+                </div>
+                <div className="flex justify-between font-semibold text-amber-950">
+                  <span>মোট বিতরণকৃত পরিমাণ:</span>
+                  <span className="font-mono font-bold">
+                    {parsedPreviewItems.reduce((acc, curr) => acc + curr.qty, 0)} পিস
+                  </span>
+                </div>
+                <div className="text-[11px] text-slate-600 pt-1 border-t border-amber-200">
+                  * এটি মূল্যবিহীন ডেলিভারি ও রিসিট চালান। ওষুধ ব্যবহারের নিয়ম ডাক্তার ও ফার্মাসিস্টের পরামর্শ অনুযায়ী মেনে চলুন।
+                </div>
               </div>
-              <div className="flex justify-between text-xs text-slate-600">
-                <span>ছাড় / ডিসকাউন্ট (Discount):</span>
-                <span>-৳{previewInvoice.discount.toFixed(2)}</span>
+            ) : (
+              <div className="py-3.5 space-y-1.5 text-sm font-mono tabular-nums">
+                <div className="flex justify-between text-xs text-slate-600">
+                  <span>
+                    {previewInvoice.txType === 'purchase'
+                      ? 'মোট ক্রয় বিল (Sub-total):'
+                      : 'মোট বিক্রয় বিল (Sub-total):'}
+                  </span>
+                  <span>৳{previewInvoice.subTotal.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-xs text-slate-600">
+                  <span>ছাড় / ডিসকাউন্ট (Discount):</span>
+                  <span>-৳{previewInvoice.discount.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between font-bold text-slate-900 pt-1 border-t border-slate-200">
+                  <span>
+                    {previewInvoice.txType === 'purchase'
+                      ? 'নিট ক্রয় বিল (Grand Total):'
+                      : 'নিট বিক্রয় বিল (Grand Total):'}
+                  </span>
+                  <span>৳{previewInvoice.grandTotal.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-emerald-700 font-semibold">
+                  <span>
+                    {previewInvoice.txType === 'purchase' ? 'নগদ পরিশোধ' : 'নগদ জমা'} (
+                    {previewInvoice.paymentMethod.toUpperCase()}):
+                  </span>
+                  <span>৳{previewInvoice.paidAmount.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-red-600 font-semibold">
+                  <span>
+                    {previewInvoice.txType === 'purchase'
+                      ? 'কোম্পানি বাকি (Supplier Due):'
+                      : 'কাস্টমার বাকি (Customer Due):'}
+                  </span>
+                  <span>৳{previewInvoice.dueAmount.toFixed(2)}</span>
+                </div>
               </div>
-              <div className="flex justify-between font-bold text-slate-900 pt-1 border-t border-slate-200">
-                <span>
-                  {previewInvoice.txType === 'purchase'
-                    ? 'নিট ক্রয় বিল (Grand Total):'
-                    : 'নিট বিক্রয় বিল (Grand Total):'}
-                </span>
-                <span>৳{previewInvoice.grandTotal.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between text-emerald-700 font-semibold">
-                <span>
-                  {previewInvoice.txType === 'purchase' ? 'নগদ পরিশোধ' : 'নগদ জমা'} (
-                  {previewInvoice.paymentMethod.toUpperCase()}):
-                </span>
-                <span>৳{previewInvoice.paidAmount.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between text-red-600 font-semibold">
-                <span>
-                  {previewInvoice.txType === 'purchase'
-                    ? 'কোম্পানি বাকি (Supplier Due):'
-                    : 'কাস্টমার বাকি (Customer Due):'}
-                </span>
-                <span>৳{previewInvoice.dueAmount.toFixed(2)}</span>
-              </div>
-            </div>
+            )}
+            {/* নিচের ৩টি সিল ও স্বাক্ষর সেকশন (Official Seal & Doctor Signature) */}
+            {(() => {
+              const currentSeal = activeInvoiceSeal || previewInvoice.selectedSeal || 'iqbal_pharmacy';
+              const sealMap = {
+                iqbal_pharmacy: {
+                  title: 'ইকবাল ফার্মেসী',
+                  location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
+                },
+                dental_care_1: {
+                  title: 'ইকবাল ডেন্টাল কেয়ার-১',
+                  location: 'নতুনহাট, পশ্চিম বাজার, লক্ষ্মীপুর',
+                },
+                dental_care_2: {
+                  title: 'ইকবাল ডেন্টাল কেয়ার-২',
+                  location: 'মোল্লাহাট, অলুয়া, নোয়াখালী',
+                },
+              };
+              const sealConfig = sealMap[currentSeal] || sealMap.iqbal_pharmacy;
+
+              return (
+                <div className="pt-4 pb-2 my-2 border-t-2 border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-6">
+                  {/* The Selected Circular Rubber Stamp */}
+                  <div className="flex flex-col items-center">
+                    <div className="w-36 h-36 rounded-full border-4 border-dashed border-blue-900 p-1 flex items-center justify-center relative select-none shadow-xs rotate-[-2deg] print:rotate-0 bg-blue-50/25">
+                      <div className="w-full h-full rounded-full border-2 border-solid border-blue-900 flex flex-col items-center justify-center text-center p-1.5 text-blue-950">
+                        <div className="text-[9.5px] font-black uppercase tracking-wide text-blue-950 leading-tight">
+                          ★ {sealConfig.title} ★
+                        </div>
+                        <div className="w-16 h-px bg-blue-800 my-0.5" />
+                        <div className="text-[9px] font-bold text-blue-950">
+                          ইকবাল মাহমুদ
+                        </div>
+                        <div className="text-[7.5px] font-semibold text-blue-900 leading-tight">
+                          DMTD (DENTAL), LMF, RMP
+                        </div>
+                        <div className="text-[8px] font-extrabold text-blue-900 tracking-wider border-y border-blue-700 py-0.5 my-0.5">
+                          ★ VERIFIED & APPROVED ★
+                        </div>
+                        <div className="text-[7.5px] font-mono font-bold text-blue-950">
+                          {previewInvoice.dateStr || getTodayDateStr()}
+                        </div>
+                        <div className="text-[7px] text-blue-800 font-semibold leading-tight">
+                          {sealConfig.location}
+                        </div>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-bold text-blue-950 mt-1">
+                      {sealConfig.title} (অফিসিয়াল সিল)
+                    </span>
+                  </div>
+
+                  {/* Doctor Signature Block */}
+                  <div className="text-center sm:text-right space-y-1">
+                    <div className="w-48 border-b-2 border-slate-900 mx-auto sm:ml-auto sm:mr-0 mb-1" />
+                    <div className="text-xs font-bold text-slate-900">
+                      স্বাক্ষর ও সিল (Doctor's Signature & Seal)
+                    </div>
+                    <div className="text-[11px] font-semibold text-slate-800">
+                      ইকবাল মাহমুদ (DMTD DENTAL, LMF, RMP)
+                    </div>
+                    <div className="text-[10px] text-slate-600">
+                      ডেন্টাল প্র্যাকটিশনার ও ফার্মাসিস্ট · {sealConfig.title}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* ইনভয়েস এর ফুটার (ছোট করে লেখা) */}
             <div className="pt-2.5 pb-1 border-t border-dashed border-slate-300 text-center space-y-0.5">
@@ -3844,16 +4575,43 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                   ইনভয়েস এডিট করুন
                 </button>
               )}
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="px-4 py-2 text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-md flex items-center gap-1.5 cursor-pointer"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                {previewInvoice.txType === 'purchase'
-                  ? 'ক্রয় ইনভয়েস প্রিন্ট করুন'
-                  : 'বিক্রয় ইনভয়েস প্রিন্ট করুন'}
-              </button>
+              {previewInvoice.txType === 'sale' ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInvoicePrintWithPrice(true);
+                      setTimeout(() => window.print(), 100);
+                    }}
+                    className="px-4 py-2 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-md flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    দাম সহ প্রিন্ট করুন
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInvoicePrintWithPrice(false);
+                      setTimeout(() => window.print(), 100);
+                    }}
+                    className="px-4 py-2 text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-md flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    দাম ছাড়া প্রিন্ট করুন
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="px-4 py-2 text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-md flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  {previewInvoice.txType === 'purchase'
+                    ? 'ক্রয় ইনভয়েস প্রিন্ট করুন'
+                    : 'ইনভয়েস প্রিন্ট করুন'}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setPreviewInvoice(null)}

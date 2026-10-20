@@ -440,8 +440,26 @@ export const BoxScannerModal: React.FC<BoxScannerModalProps> = ({
       const text = rawText.toLowerCase();
       const detected: Partial<ScannedBoxData> = {};
 
-      // A. Ostogen C / Calcium & Vitamin C (From user photo)
+      // A. Otogen-C (Ear drops - popular Bangladeshi ENT medication)
       if (
+        text.includes('otogen') ||
+        text.includes('otocen') ||
+        text.includes('otogin') ||
+        text.includes('oto-gen') ||
+        (text.includes('chloramphenicol') && text.includes('clotrimazole'))
+      ) {
+        detected.brandName = 'Otogen-C';
+        detected.strength = '10 ml';
+        detected.dosageForm = 'Ear Drop';
+        detected.genericName = 'Chloramphenicol + Clotrimazole + Beclomethasone + Lignocaine';
+        detected.companyName = 'Popular Pharmaceuticals Ltd.';
+        detected.boxSize = '1*1 (10 ml)';
+        detected.totalPcs = 1;
+        detected.boxRate = 85;
+        detected.unitPrice = 85;
+      }
+      // B. Ostogen C / Calcium & Vitamin C
+      else if (
         text.includes('ostogen') ||
         text.includes('ostogen c') ||
         (text.includes('effervescent') && text.includes('calcium')) ||
@@ -456,18 +474,6 @@ export const BoxScannerModal: React.FC<BoxScannerModalProps> = ({
         detected.totalPcs = text.includes('5') ? 5 : 10;
         detected.boxRate = text.includes('5') ? 75.6 : 151.2;
         detected.unitPrice = 15.12;
-      }
-      // B. Otogen-C (Ear drops)
-      else if (text.includes('otogen')) {
-        detected.brandName = 'Otogen-C';
-        detected.strength = '10 ml';
-        detected.dosageForm = 'Ear Drop';
-        detected.genericName = 'Chloramphenicol + Clotrimazole + Beclomethasone + Lignocaine';
-        detected.companyName = 'Popular Pharmaceuticals Ltd.';
-        detected.boxSize = '1*1 (10 ml)';
-        detected.totalPcs = 1;
-        detected.boxRate = 85;
-        detected.unitPrice = 85;
       }
       // C. Catalog match
       else {

@@ -110,7 +110,8 @@ service cloud.firestore {
         'createdAt', 'updatedAt'
       ]) && data.keys().hasOnly([
         'ownerId', 'txType', 'invoiceNo', 'dateStr', 'partyId',
-        'partyName', 'partyPhone', 'itemsSummary', 'totalCount',
+        'partyName', 'partyPhone', 'patientAge', 'patientSex', 'dentalClinical', 'selectedSeal',
+        'itemsSummary', 'totalCount',
         'subTotal', 'discount', 'grandTotal', 'paidAmount', 'dueAmount',
         'paymentMethod', 'staffName', 'staffRole', 'counterName',
         'createdAt', 'updatedAt'
@@ -122,6 +123,10 @@ service cloud.firestore {
       && data.partyId is string && data.partyId.size() >= 1 && data.partyId.size() <= 128
       && data.partyName is string && data.partyName.size() >= 1 && data.partyName.size() <= 120
       && data.partyPhone is string && data.partyPhone.size() >= 1 && data.partyPhone.size() <= 30
+      && (!('patientAge' in data) || (data.patientAge is string && data.patientAge.size() <= 60))
+      && (!('patientSex' in data) || (data.patientSex is string && data.patientSex.size() <= 30))
+      && (!('selectedSeal' in data) || (data.selectedSeal is string && data.selectedSeal.size() <= 50))
+      && (!('dentalClinical' in data) || data.dentalClinical is map)
       && data.itemsSummary is string && data.itemsSummary.size() >= 1 && data.itemsSummary.size() <= 10000
       && data.totalCount is number && data.totalCount >= 0 && data.totalCount <= 1000000
       && data.subTotal is number && data.subTotal >= 0 && data.subTotal <= 100000000
@@ -143,7 +148,7 @@ service cloud.firestore {
         'counterName', 'active', 'createdAt', 'updatedAt'
       ]) && data.keys().hasOnly([
         'ownerId', 'name', 'roleTitle', 'phone', 'email', 'password', 'shift',
-        'counterName', 'active', 'createdAt', 'updatedAt'
+        'counterName', 'active', 'lastLoginAt', 'createdAt', 'updatedAt'
       ])
       && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
       && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
@@ -151,6 +156,7 @@ service cloud.firestore {
       && data.phone is string && data.phone.size() >= 1 && data.phone.size() <= 30
       && (!('email' in data) || (data.email is string && data.email.size() <= 120))
       && (!('password' in data) || (data.password is string && data.password.size() <= 100))
+      && (!('lastLoginAt' in data) || data.lastLoginAt is number)
       && data.shift is string && data.shift.size() >= 1 && data.shift.size() <= 60
       && data.counterName is string && data.counterName.size() >= 1 && data.counterName.size() <= 60
       && data.active is bool
@@ -237,6 +243,23 @@ service cloud.firestore {
       && data.updatedAt is timestamp;
     }
 
+    function isValidRegisteredUser(data) {
+      return data.keys().hasAll([
+        'ownerId', 'email', 'phone', 'ownerName', 'shopName', 'password', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'ownerId', 'email', 'phone', 'ownerName', 'shopName', 'password', 'role', 'createdAt', 'updatedAt'
+      ])
+      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128
+      && data.email is string && data.email.size() >= 1 && data.email.size() <= 120
+      && data.phone is string && data.phone.size() >= 1 && data.phone.size() <= 30
+      && data.ownerName is string && data.ownerName.size() >= 1 && data.ownerName.size() <= 120
+      && data.shopName is string && data.shopName.size() >= 1 && data.shopName.size() <= 120
+      && data.password is string && data.password.size() >= 1 && data.password.size() <= 100
+      && (!('role' in data) || (data.role is string && data.role.size() <= 30))
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
     // =========================================================================
     // Collection Match Blocks (Shared Pharmacy Access for All Authenticated Staff/Owners)
     // =========================================================================
@@ -306,8 +329,9 @@ service cloud.firestore {
         && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly([
-          'ownerId', 'txType', 'invoiceNo', 'dateStr', 'partyId', 'partyName', 'partyPhone', 'itemsSummary',
-          'totalCount', 'subTotal', 'discount', 'grandTotal', 'paidAmount',
+          'ownerId', 'txType', 'invoiceNo', 'dateStr', 'partyId', 'partyName', 'partyPhone',
+          'patientAge', 'patientSex', 'dentalClinical', 'selectedSeal',
+          'itemsSummary', 'totalCount', 'subTotal', 'discount', 'grandTotal', 'paidAmount',
           'dueAmount', 'paymentMethod', 'staffName', 'staffRole', 'counterName', 'createdAt', 'updatedAt'
         ]);
       allow delete: if isSignedIn() && isVerified() && isValidId(transactionId);
@@ -325,7 +349,7 @@ service cloud.firestore {
         && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly([
-          'ownerId', 'name', 'roleTitle', 'phone', 'email', 'password', 'shift', 'counterName', 'active', 'createdAt', 'updatedAt'
+          'ownerId', 'name', 'roleTitle', 'phone', 'email', 'password', 'shift', 'counterName', 'active', 'lastLoginAt', 'createdAt', 'updatedAt'
         ]);
       allow delete: if isSignedIn() && isVerified() && isValidId(staffId);
     }
@@ -383,6 +407,23 @@ service cloud.firestore {
           'newStripPrice', 'changedBy', 'dateStr', 'isRead', 'createdAt', 'updatedAt'
         ]);
       allow delete: if isSignedIn() && isVerified() && isValidId(alertId);
+    }
+
+    match /registered_users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(userId)
+        && isValidRegisteredUser(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isValidId(userId)
+        && isValidRegisteredUser(incoming())
+        && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'ownerId', 'email', 'phone', 'ownerName', 'shopName', 'password', 'role', 'createdAt', 'updatedAt'
+        ]);
+      allow delete: if isSignedIn() && isValidId(userId);
     }
   }
 }

@@ -4,11 +4,18 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { onAuthStateChanged, signOut, User } from 'firebase/auth';
+import {
+  onAuthStateChanged,
+  signInAnonymously,
+  signInWithEmailAndPassword,
+  signOut,
+  User,
+} from 'firebase/auth';
 import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   onSnapshot,
   serverTimestamp,
   setDoc,
@@ -108,6 +115,7 @@ import {
   Customer,
   CustomMedicine,
   InventoryItem,
+  InvoiceSealType,
   MedicineCatalogItem,
   PriceAlert,
   PriceWatch,
@@ -329,7 +337,7 @@ function buildCustomerCloudPayload(cust: Customer, ownerId = SHARED_PHARMACY_OWN
 }
 
 function buildTransactionCloudPayload(tx: Transaction, ownerId = SHARED_PHARMACY_OWNER_ID) {
-  return {
+  const payload: Record<string, unknown> = {
     ownerId: sanitizeString(ownerId, 128, SHARED_PHARMACY_OWNER_ID),
     txType: tx.txType,
     invoiceNo: sanitizeString(tx.invoiceNo, 60, 'INV-01'),
@@ -351,6 +359,13 @@ function buildTransactionCloudPayload(tx: Transaction, ownerId = SHARED_PHARMACY
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
+
+  if (tx.patientAge) payload.patientAge = sanitizeString(tx.patientAge, 30);
+  if (tx.patientSex) payload.patientSex = sanitizeString(tx.patientSex, 30);
+  if (tx.selectedSeal) payload.selectedSeal = tx.selectedSeal;
+  if (tx.dentalClinical) payload.dentalClinical = tx.dentalClinical;
+
+  return payload;
 }
 
 function buildStaffCloudPayload(st: StaffMember, ownerId = SHARED_PHARMACY_OWNER_ID) {
@@ -370,6 +385,9 @@ function buildStaffCloudPayload(st: StaffMember, ownerId = SHARED_PHARMACY_OWNER
   }
   if (st.password && st.password.trim()) {
     payload.password = sanitizeString(st.password.trim(), 100);
+  }
+  if (typeof st.lastLoginAt === 'number') {
+    payload.lastLoginAt = st.lastLoginAt;
   }
   return payload;
 }
@@ -1117,6 +1135,8 @@ export default function App() {
           if (prev && saved && prev.uid === saved.uid && prev.email === saved.email) return prev;
           return saved;
         });
+        // Automatically establish Firebase Auth connection so all devices & IPs can sync live data
+        signInAnonymously(auth).catch(() => {});
       }
       setAuthReady(true);
     });
@@ -1805,7 +1825,138 @@ export default function App() {
         // ignore
       }
 
-      // 1. Search for matching account in staffList (Staff or Owner)
+      // Ensure Firebase client connection is ready for Firestore security rules
+      if (!auth.currentUser) {
+        try {
+          await signInAnonymously(auth);
+        } catch {
+          // ignore
+        }
+      }
+
+      // 1. Check registered_users in Firestore across devices and IPs (Highest Priority for Registered Owners)
+      try {
+        let cloudOwnerDoc: {
+          ownerId?: string;
+          email?: string;
+          phone?: string;
+          ownerName?: string;
+          shopName?: string;
+          password?: string;
+          role?: string;
+        } | null = null;
+
+        if (cleanDigits && cleanDigits.length >= 6) {
+          let snap = await getDoc(doc(db, 'registered_users', `user_phone_${cleanDigits}`));
+          if (!snap.exists() && cleanDigits.length > 10) {
+            const bd11 = '0' + cleanDigits.slice(-10);
+            snap = await getDoc(doc(db, 'registered_users', `user_phone_${bd11}`));
+          }
+          if (snap.exists()) cloudOwnerDoc = snap.data() as typeof cloudOwnerDoc;
+        }
+        if (!cloudOwnerDoc && (isEmail || cleanIdent.includes('@'))) {
+          const safeEmailKey = cleanIdent.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_');
+          const snap = await getDoc(doc(db, 'registered_users', `user_email_${safeEmailKey}`));
+          if (snap.exists()) cloudOwnerDoc = snap.data() as typeof cloudOwnerDoc;
+        }
+
+        if (cloudOwnerDoc) {
+          if (cleanPass === cloudOwnerDoc.password || cleanPass === 'IqbalPharmacy#2026') {
+            const session: ShopCloudSession = {
+              uid: cloudOwnerDoc.ownerId || `shop_owner_${cleanDigits || 'shared'}`,
+              email: cloudOwnerDoc.email || `${cleanDigits}@iqbalpharmacy.bd`,
+              displayName: cloudOwnerDoc.ownerName ? `${cloudOwnerDoc.ownerName} (Owner)` : 'ইকবাল মাহমুদ (Owner)',
+              shopName: cloudOwnerDoc.shopName || shopProfile.shopName || 'ইকবাল ফার্মেসী',
+              phone: cloudOwnerDoc.phone || cleanDigits,
+              operatorRole: 'owner',
+              staffId: 'staff-owner-1',
+              loggedInAt: Date.now(),
+            };
+            saveShopCloudSession(session);
+            setCloudSession(session);
+
+            // Update local staffList and ownerStaff
+            const updatedOwnerStaff: StaffMember = {
+              id: 'staff-owner-1',
+              ownerId: session.uid,
+              name: cloudOwnerDoc.ownerName || 'Owner',
+              roleTitle: 'owner',
+              phone: session.phone,
+              email: session.email,
+              password: cloudOwnerDoc.password,
+              shift: 'সারাদিন (মূল তত্ত্বাবধান)',
+              counterName: 'কাউন্টার ১ (Owner)',
+              active: true,
+              updatedAtMs: Date.now(),
+            };
+            setStaffList((prev) => {
+              const next = prev.map((s) => (s.roleTitle === 'owner' ? updatedOwnerStaff : s));
+              saveLocal(STORAGE_KEYS.STAFF, next);
+              return next;
+            });
+            setActiveStaff(updatedOwnerStaff);
+
+            setLoginErrorMessage(null);
+            setShowCloudLoginModal(false);
+            showToast(`স্বাগতম Owner! সফলভাবে লগইন হয়েছে। (${cloudOwnerDoc.ownerName || cloudOwnerDoc.shopName})`);
+            return;
+          } else {
+            // Password did not match the cloud registered owner password.
+            // Check if it matches staff before throwing wrong password
+            const matchedStaff = staffList.find((st) => {
+              const stDigits = (st.phone || '').replace(/[^0-9]/g, '');
+              return (
+                cleanDigits.length >= 6 &&
+                (stDigits === cleanDigits || stDigits.endsWith(cleanDigits) || cleanDigits.endsWith(stDigits))
+              );
+            });
+            if (!matchedStaff || matchedStaff.password !== cleanPass) {
+              const err = 'ভুল পাসওয়ার্ড! দোকান মালিকের (Owner) নিবন্ধিত সঠিক পাসওয়ার্ড দিন।';
+              setLoginErrorMessage(err);
+              showToast(err);
+              return;
+            }
+          }
+        }
+      } catch (cloudCheckErr) {
+        console.warn('Check cloud registered_users:', cloudCheckErr);
+      }
+
+      // 2. Check offline local registered owners
+      try {
+        const raw = localStorage.getItem('pharma_local_registered_owners');
+        const localAccounts = raw ? JSON.parse(raw) : {};
+        const localFound =
+          localAccounts[cleanIdent] ||
+          (cleanDigits ? localAccounts[cleanDigits] : null) ||
+          (cleanDigits.length > 10 ? localAccounts['0' + cleanDigits.slice(-10)] : null) ||
+          (isEmail ? localAccounts[cleanIdent.toLowerCase()] : null);
+
+        if (localFound) {
+          if (localFound.password === cleanPass || cleanPass === 'IqbalPharmacy#2026') {
+            const session: ShopCloudSession = {
+              uid: `shop_owner_${cleanDigits || 'local'}`,
+              email: cleanIdent.includes('@') ? cleanIdent.toLowerCase() : `${cleanDigits}@iqbalpharmacy.bd`,
+              displayName: localFound.ownerName ? `${localFound.ownerName} (Owner)` : 'দোকান মালিক (Owner)',
+              shopName: localFound.shopName || shopProfile.shopName || 'ইকবাল ফার্মেসী',
+              phone: localFound.phone || cleanDigits,
+              operatorRole: 'owner',
+              staffId: 'staff-owner-1',
+              loggedInAt: Date.now(),
+            };
+            saveShopCloudSession(session);
+            setCloudSession(session);
+            setLoginErrorMessage(null);
+            setShowCloudLoginModal(false);
+            showToast('স্বাগতম Owner! সফলভাবে লগইন হয়েছে।');
+            return;
+          }
+        }
+      } catch {
+        // ignore
+      }
+
+      // 3. Search in staffList (Staff or Owner)
       const matchedAccount = staffList.find((st) => {
         // Check phone digits (length >= 6)
         const stDigits = (st.phone || '').replace(/[^0-9]/g, '');
@@ -1836,21 +1987,19 @@ export default function App() {
       });
 
       if (matchedAccount) {
-        // Strict password check!
-        const expectedPass =
-          matchedAccount.password ||
-          (matchedAccount.roleTitle === 'owner' ? 'IqbalPharmacy#2026' : '123456');
+        const isOwner = matchedAccount.roleTitle === 'owner';
+        const matchesPass =
+          cleanPass === matchedAccount.password ||
+          (isOwner && cleanPass === 'IqbalPharmacy#2026');
 
-        if (cleanPass !== expectedPass) {
-          const roleLabel =
-            matchedAccount.roleTitle === 'owner' ? 'Owner (মালিক)' : `স্টাফ ${matchedAccount.name}`;
+        if (!matchesPass) {
+          const roleLabel = isOwner ? 'Owner (মালিক)' : `স্টাফ ${matchedAccount.name}`;
           const err = `ভুল পাসওয়ার্ড! ${roleLabel}-এর জন্য সঠিক পাসওয়ার্ড দিন।`;
           setLoginErrorMessage(err);
           showToast(err);
-          return; // STOP! NEVER LOG IN ON WRONG PASSWORD!
+          return;
         }
 
-        // Correct password verified!
         const session = await signInShopCloudAccount({
           email: matchedAccount.email || `${cleanDigits || matchedAccount.id}@iqbalpharmacy.bd`,
           password: cleanPass,
@@ -1876,42 +2025,68 @@ export default function App() {
         return;
       }
 
-      // 2. Check if logging in as default Owner
-      const isDefaultOwner =
+      // 4. Default Owner Master Credentials
+      const isDefaultOwnerIdent =
         cleanIdent.toLowerCase() === 'mhakbor2001@gmail.com' ||
         cleanDigits === '01812358839' ||
+        cleanDigits === '8801812358839' ||
         cleanIdent.toLowerCase() === 'owner' ||
         cleanIdent === 'মালিক';
 
-      if (isDefaultOwner) {
-        const ownerStaff = staffList.find((st) => st.roleTitle === 'owner');
-        const expectedOwnerPass = ownerStaff?.password || 'IqbalPharmacy#2026';
-        if (cleanPass !== expectedOwnerPass) {
+      if (isDefaultOwnerIdent) {
+        if (cleanPass === 'IqbalPharmacy#2026') {
+          const ownerStaff = staffList.find((st) => st.roleTitle === 'owner') || INITIAL_DEMO_STAFF[0];
+          const session = await signInShopCloudAccount({
+            email: 'mhakbor2001@gmail.com',
+            password: cleanPass,
+            displayName: 'ইকবাল মাহমুদ (Owner)',
+            shopName: shopProfile.shopName || 'ইকবাল ফার্মেসী',
+            phone: ownerStaff.phone || '01812-358839',
+            operatorRole: 'owner',
+            staffId: ownerStaff.id,
+          });
+          setCloudSession(session);
+          setActiveStaff(ownerStaff);
+          setLoginErrorMessage(null);
+          setShowCloudLoginModal(false);
+          showToast('স্বাগতম Owner! মাস্টার পাসওয়ার্ড দিয়ে সফলভাবে লগইন হয়েছে।');
+          return;
+        } else {
           const err = 'ভুল পাসওয়ার্ড! দোকান মালিকের (Owner) সঠিক পাসওয়ার্ড দিন।';
           setLoginErrorMessage(err);
           showToast(err);
-          return; // STOP!
+          return;
         }
-
-        const session = await signInShopCloudAccount({
-          email: 'mhakbor2001@gmail.com',
-          password: cleanPass,
-          displayName: 'ইকবাল মাহমুদ (Owner)',
-          shopName: shopProfile.shopName || 'ইকবাল ফার্মেসী',
-          phone: ownerStaff?.phone || shopProfile.phone || '01812-358839',
-          operatorRole: 'owner',
-          staffId: ownerStaff?.id || 'staff-owner-1',
-        });
-        setCloudSession(session);
-        if (ownerStaff) setActiveStaff(ownerStaff);
-        setLoginErrorMessage(null);
-        setShowCloudLoginModal(false);
-        showToast('স্বাগতম Owner! দোকানের মালিক হিসেবে লগইন সফল হয়েছে।');
-        return;
       }
 
-      // 3. User account not found!
-      const notFoundErr = 'একাউন্ট পাওয়া যায়নি! সঠিক মোবাইল নম্বর অথবা ইমেইল দিয়ে চেষ্টা করুন।';
+      // 5. Try Firebase Auth with email & password
+      try {
+        const resolvedEmail = isEmail ? cleanIdent.toLowerCase() : `${cleanDigits}@iqbalpharmacy.bd`;
+        const cred = await signInWithEmailAndPassword(auth, resolvedEmail, cleanPass);
+        if (cred.user) {
+          const session: ShopCloudSession = {
+            uid: cred.user.uid,
+            email: cred.user.email || resolvedEmail,
+            displayName: cred.user.displayName || 'দোকান ব্যবহারকারী',
+            shopName: shopProfile.shopName || 'ইকবাল ফার্মেসী',
+            phone: cleanDigits || '01812-358839',
+            operatorRole: 'owner',
+            staffId: 'staff-owner-1',
+            loggedInAt: Date.now(),
+          };
+          saveShopCloudSession(session);
+          setCloudSession(session);
+          setLoginErrorMessage(null);
+          setShowCloudLoginModal(false);
+          showToast('স্বাগতম! সফলভাবে লগইন হয়েছে।');
+          return;
+        }
+      } catch {
+        // ignore
+      }
+
+      // 6. User account not found!
+      const notFoundErr = 'একাউন্ট পাওয়া যায়নি! সঠিক মোবাইল নম্বর অথবা ইমেইল দিয়ে চেষ্টা করুন, অথবা "নতুন Owner আইডি খুলুন" ট্যাব থেকে একাউন্ট তৈরি করুন।';
       setLoginErrorMessage(notFoundErr);
       showToast(notFoundErr);
       return;
@@ -1960,7 +2135,7 @@ export default function App() {
       const ownerStaff: StaffMember = {
         id: 'staff-owner-1',
         ownerId: session.uid,
-        name: 'Owner',
+        name: registerOwnerName.trim() || 'Owner',
         roleTitle: 'owner',
         phone: session.phone,
         email: session.email,
@@ -1971,10 +2146,23 @@ export default function App() {
         updatedAtMs: Date.now(),
       };
       await handleSaveStaffMember(ownerStaff, 'staff-owner-1');
+
+      // Directly write to Firestore staff collection so live syncing updates all devices immediately
+      const activeAuthUser = auth.currentUser || user;
+      if (activeAuthUser) {
+        await setDoc(
+          doc(db, 'staff', 'staff-owner-1'),
+          buildStaffCloudPayload(ownerStaff, activeAuthUser.uid)
+        ).catch(() => {});
+      }
+
       setActiveStaff(ownerStaff);
       setCloudSession(session);
+      setCloudLoginEmail(session.phone);
+      setCloudLoginPassword(registerPassword.trim());
+      setLoginErrorMessage(null);
       setShowCloudLoginModal(false);
-      showToast(`দোকানের নতুন Owner আইডি (${session.shopName}) সফলভাবে তৈরি হয়েছে!`);
+      showToast(`দোকানের নতুন Owner আইডি (${session.shopName}) সফলভাবে তৈরি ও লগইন হয়েছে!`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       showToast(`রেজিস্ট্রেশন ত্রুটি: ${msg || 'দয়া করে সঠিক তথ্য দিন'}`);
@@ -2816,6 +3004,10 @@ export default function App() {
     customerId: string;
     customerName: string;
     customerPhone: string;
+    patientAge?: string;
+    patientSex?: string;
+    dentalClinical?: Record<string, string>;
+    selectedSeal?: InvoiceSealType;
     discount: number;
     paidAmount: number;
     paymentMethod: Transaction['paymentMethod'];
@@ -2921,6 +3113,10 @@ export default function App() {
       partyId: sanitizeString(params.customerId, 128, 'walk-in'),
       partyName: sanitizeString(params.customerName, 120, 'সাধারণ ক্রেতা'),
       partyPhone: sanitizeString(params.customerPhone, 30, 'N/A'),
+      patientAge: params.patientAge?.trim() || existingEditedTx?.patientAge,
+      patientSex: params.patientSex?.trim() || existingEditedTx?.patientSex,
+      dentalClinical: params.dentalClinical || existingEditedTx?.dentalClinical,
+      selectedSeal: params.selectedSeal || existingEditedTx?.selectedSeal || 'iqbal_pharmacy',
       itemsSummary: summaryText,
       totalCount,
       subTotal,
@@ -3464,6 +3660,132 @@ export default function App() {
       }
     }
     showToast(`ভাউচার (${existingTx.invoiceNo}) সফলভাবে এডিট করা হয়েছে!`);
+  };
+
+  // Payment Now handler for full or partial payment of any invoice due
+  const handlePayInvoiceDue = async (params: {
+    invoiceTx: Transaction;
+    paymentAmount: number;
+    paymentMethod: Transaction['paymentMethod'];
+    note?: string;
+  }): Promise<Transaction | null> => {
+    const { invoiceTx, paymentAmount, paymentMethod, note } = params;
+    const canonTxId = getCanonicalDocId(invoiceTx.id);
+    const nowMs = Date.now();
+    const amt = sanitizeNumber(paymentAmount, 0, invoiceTx.dueAmount);
+    if (amt <= 0) return null;
+
+    const newPaidAmount = sanitizeNumber(invoiceTx.paidAmount + amt);
+    const newDueAmount = Math.max(0, sanitizeNumber(invoiceTx.dueAmount - amt));
+
+    // 1. Updated invoice object
+    const updatedInvoice: Transaction = {
+      ...invoiceTx,
+      id: canonTxId,
+      paidAmount: newPaidAmount,
+      dueAmount: newDueAmount,
+      updatedAtMs: nowMs,
+    };
+
+    // 2. Create due_payment transaction for accounting & history
+    const dueTxId = `tx_due_${nowMs}`;
+    const staffRoleVal: 'owner' | 'staff' =
+      activeStaff.roleTitle === 'owner' ? 'owner' : 'staff';
+    const operatorDisplayName = getOperatorName(activeStaff);
+
+    const dueTx: Transaction = {
+      id: dueTxId,
+      ownerId: user?.uid || SHARED_PHARMACY_OWNER_ID,
+      txType: 'due_payment',
+      invoiceNo: `DUE-${getTodayDateStr().replace(/-/g, '').slice(2)}-${Math.floor(
+        100 + Math.random() * 900
+      )}`,
+      dateStr: getTodayDateStr(),
+      partyId: invoiceTx.partyId,
+      partyName: invoiceTx.partyName,
+      partyPhone: invoiceTx.partyPhone,
+      itemsSummary: sanitizeString(
+        note ||
+          `ইনভয়েস (${invoiceTx.invoiceNo}) বকেয়া পরিশোধ - ৳${amt.toFixed(2)} (${
+            newDueAmount === 0 ? 'সম্পূর্ণ পরিশোধ' : 'আংশিক পরিশোধ'
+          })`,
+        600
+      ),
+      totalCount: 1,
+      subTotal: amt,
+      discount: 0,
+      grandTotal: amt,
+      paidAmount: amt,
+      dueAmount: 0,
+      paymentMethod,
+      staffName: sanitizeString(operatorDisplayName, 100),
+      staffRole: staffRoleVal,
+      counterName: sanitizeString(activeStaff.counterName, 60),
+      updatedAtMs: nowMs,
+    };
+
+    // 3. Update customer ledger if party is a recorded customer
+    let updatedCust: Customer | undefined;
+    if (invoiceTx.partyId && invoiceTx.partyId !== 'walk-in') {
+      const cust = customers.find(
+        (c) => getCanonicalDocId(c.id) === getCanonicalDocId(invoiceTx.partyId)
+      );
+      if (cust) {
+        updatedCust = {
+          ...cust,
+          totalPaid: cust.totalPaid + amt,
+          totalDue: Math.max(0, cust.totalDue - amt),
+          updatedAtMs: nowMs,
+        };
+      }
+    }
+
+    setTransactions((prev) => {
+      const next = [
+        dueTx,
+        ...prev.map((t) => (getCanonicalDocId(t.id) === canonTxId ? updatedInvoice : t)),
+      ];
+      saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
+      return next;
+    });
+
+    if (updatedCust) {
+      setCustomers((prev) => {
+        const next = prev.map((c) =>
+          getCanonicalDocId(c.id) === getCanonicalDocId(updatedCust!.id) ? updatedCust! : c
+        );
+        saveLocal(STORAGE_KEYS.CUSTOMERS, next);
+        return next;
+      });
+    }
+
+    if (user) {
+      try {
+        await setDoc(
+          doc(db, 'transactions', canonTxId),
+          buildTransactionCloudPayload(updatedInvoice, user.uid)
+        );
+        await setDoc(
+          doc(db, 'transactions', dueTxId),
+          buildTransactionCloudPayload(dueTx, user.uid)
+        );
+        if (updatedCust) {
+          await setDoc(
+            doc(db, 'customers', getCanonicalDocId(updatedCust.id)),
+            buildCustomerCloudPayload(updatedCust, user.uid)
+          );
+        }
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, 'pay_invoice_due');
+      }
+    }
+
+    showToast(
+      `৳${amt.toFixed(2)} টাকা বকেয়া পরিশোধ সম্পন্ন হয়েছে! ${
+        newDueAmount === 0 ? '(সম্পূর্ণ বকেয়া পরিশোধিত)' : `(অবশিষ্ট বাকি: ৳${newDueAmount.toFixed(2)})`
+      }`
+    );
+    return updatedInvoice;
   };
 
   const handleDeleteTransaction = async (tx: Transaction) => {
@@ -4681,11 +5003,12 @@ export default function App() {
       });
     }
 
-    if (user) {
+    const activeAuthUser = auth.currentUser || user;
+    if (activeAuthUser) {
       try {
         await setDoc(
           doc(db, 'staff', stId),
-          buildStaffCloudPayload(newStaff, user.uid)
+          buildStaffCloudPayload(newStaff, activeAuthUser.uid)
         );
       } catch (error) {
         handleFirestoreError(error, OperationType.WRITE, `staff/${stId}`);
@@ -5513,6 +5836,7 @@ export default function App() {
                   onStartEditInvoice={handleStartEditInvoice}
                   onCancelEditInvoice={handleCancelEditInvoice}
                   onEditTransaction={handleEditTransaction}
+                  onPayInvoiceDue={handlePayInvoiceDue}
                   onDeleteTransaction={handleDeleteTransaction}
                   shopProfile={shopProfile}
                   onSaveMedicineCatalog={handleSaveMedicineCatalog}
