@@ -822,6 +822,42 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     }
   };
 
+  // Payment Now Modal Handlers
+  const openPaymentModal = (tx: Transaction) => {
+    setSelectedPaymentInvoice(tx);
+    setIsFullPayment(true);
+    setPaymentAmountInput(tx.dueAmount.toString());
+    setPaymentMethodChoice('cash');
+    setPaymentNoteInput('');
+    setShowPaymentModal(true);
+  };
+
+  const handleConfirmPaymentNow = async () => {
+    if (!selectedPaymentInvoice || !onPayInvoiceDue) return;
+    const due = selectedPaymentInvoice.dueAmount;
+    const enteredAmt = isFullPayment
+      ? due
+      : parseFloat(paymentAmountInput) || 0;
+    if (enteredAmt <= 0) return;
+    const finalAmt = Math.min(due, enteredAmt);
+    setSubmittingPayment(true);
+    try {
+      const updatedTx = await onPayInvoiceDue({
+        invoiceTx: selectedPaymentInvoice,
+        paymentAmount: finalAmt,
+        paymentMethod: paymentMethodChoice,
+        note: paymentNoteInput.trim() || undefined,
+      });
+      if (updatedTx && previewInvoice && previewInvoice.id === selectedPaymentInvoice.id) {
+        setPreviewInvoice(updatedTx);
+      }
+      setShowPaymentModal(false);
+      setSelectedPaymentInvoice(null);
+    } finally {
+      setSubmittingPayment(false);
+    }
+  };
+
   // Filtered Daily Transactions
   const filteredTransactions = useMemo(() => {
     return transactions.filter((tx) => {
@@ -2241,8 +2277,8 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                           className="text-teal-700 focus:ring-teal-600"
                         />
                         <div>
-                          <div>৩. ইকবাল ডেন্টাল কেয়ার-২ (ওয়ানস্পট ডেন্টাল কেয়ার)</div>
-                          <div className="text-[10px] text-slate-500 font-normal">মল্লাহাট, মিয়ার বাজার, ভুলুয়া রোড (বেড়ী রোড), নোয়াখালী</div>
+                          <div>৩. ইকবাল ডেন্টাল কেয়ার-২ (ওয়াসেক ডেন্টাল কেয়ার)</div>
+                          <div className="text-[10px] text-slate-500 font-normal">পশ্চিম বাজার, মূল রোডের (ডেল্টা মোড়), অলুয়া, বেগমগঞ্জ, নোয়াখালী</div>
                         </div>
                       </label>
                     </div>
@@ -3783,9 +3819,20 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                       </td>
                       <td className="py-2.5 px-3 text-right font-mono tabular-nums">
                         {tx.dueAmount > 0 ? (
-                          <span className="text-red-600 font-semibold">
-                            ৳{tx.dueAmount.toFixed(2)}
-                          </span>
+                          <div className="flex flex-col items-end">
+                            <span className="text-red-600 font-semibold">
+                              ৳{tx.dueAmount.toFixed(2)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => openPaymentModal(tx)}
+                              className="mt-1 px-2 py-0.5 text-[10px] font-bold text-white bg-red-600 hover:bg-red-700 rounded shadow-2xs cursor-pointer whitespace-nowrap flex items-center gap-1"
+                              title="বকেয়া পরিশোধ করুন (Full বা Partial Payment)"
+                            >
+                              <CreditCard className="w-2.5 h-2.5" />
+                              <span>Payment Now</span>
+                            </button>
+                          </div>
                         ) : (
                           <span className="text-slate-400">৳0.00</span>
                         )}
@@ -4134,7 +4181,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
               </span>
             </div>
 
-            {/* Top Header: Dynamic Chamber Identity & Doctor Qualifications */}
+            {/* Top Header: Dynamic Chamber Identity & Doctor Qualifications (Screenshot 3) */}
             {(() => {
               const currentSeal = activeInvoiceSeal || previewInvoice.selectedSeal || 'iqbal_pharmacy';
               const sealMap = {
@@ -4142,174 +4189,238 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                   title: 'ইকবাল ফার্মেসী',
                   sub: 'ইকবাল মাহমুদ (DMTD DENTAL, LMF, RMP, Pharmacist)',
                   address: 'ঠিকানা:- নতুনহাট, ইসলামিয়া মাদ্রাসা-৩৮০৯, চন্দ্রগঞ্জ, লক্ষ্মীপুর।',
-                  mobile: 'মোবাইল:- 01812-358839',
+                  mobile: 'মোবাইল:- 01812-358839, 01315645076',
                   location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
                 },
                 dental_care_1: {
                   title: 'ইকবাল ডেন্টাল কেয়ার-১',
-                  sub: 'ইকবাল মাহমুদ (DMTD DENTAL, LMF, RMP, ডেন্টাল প্র্যাকটিশনার ও সার্জন)',
+                  sub: 'ডেন্টিস্ট: ইকবাল মাহমুদ (ডি.এইচ.ডি.টি ফেনী, এস.ডি.এফ ঢাকা, এস.ডি.এস.পি ঢাকা)',
                   address: 'ঠিকানা:- নতুনহাট, পশ্চিম বাজার, চন্দ্রগঞ্জ, লক্ষ্মীপুর।',
-                  mobile: 'মোবাইল:- 01812-358839',
-                  location: 'নতুনহাট, পশ্চিম বাজার, লক্ষ্মীপুর',
+                  mobile: 'মোবাইল:- 01812-358839, 01315645076',
+                  location: 'নতুনহাট, পশ্চিম বাজার, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
                 },
                 dental_care_2: {
-                  title: 'ইকবাল ডেন্টাল কেয়ার-২',
-                  sub: 'ইকবাল মাহমুদ (DMTD DENTAL, LMF, RMP, ডেন্টাল টেকনোলজিস্ট ও সার্জন)',
-                  address: 'ঠিকানা:- মোল্লাহাট, অলুয়া, নোয়াখালী।',
-                  mobile: 'মোবাইল:- 01812-358839',
-                  location: 'মোল্লাহাট, অলুয়া, নোয়াখালী',
+                  title: 'ইকবাল ডেন্টাল কেয়ার-২ (ওয়াসেক ডেন্টাল কেয়ার)',
+                  sub: 'ডেন্টিস্ট: ইকবাল মাহমুদ (ডি.এইচ.ডি.টি ফেনী, এস.ডি.এফ ঢাকা, এস.ডি.এস.পি ঢাকা)',
+                  address: 'ঠিকানা:- পশ্চিম বাজার, মূল রোডের (ডেল্টা মোড়), অলুয়া, বেগমগঞ্জ, নোয়াখালী।',
+                  mobile: 'মোবাইল:- 01812-358839, 01315645076',
+                  location: 'পশ্চিম বাজার, মূল রোডের (ডেল্টা মোড়), অলুয়া, বেগমগঞ্জ, নোয়াখালী',
                 },
               };
               const sealConfig = sealMap[currentSeal] || sealMap.iqbal_pharmacy;
 
               return (
                 <div className="space-y-3 border-b-2 border-slate-800 pb-3 mb-3">
-                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                    {/* বাম কোনে নির্বাচিত ফার্মেসী / ডেন্টাল কেয়ার পরিচয় */}
-                    <div className="text-left space-y-0.5">
-                      <h3 className="text-xl font-extrabold text-teal-900 tracking-tight">
-                        {sealConfig.title}
+                  {/* Header Row: Doctor Qualifications (Left) & Chamber Box (Right) per Screenshot 3 */}
+                  <div className="flex flex-col sm:flex-row sm:items-stretch justify-between gap-3 bg-white">
+                    {/* Left Doctor Info */}
+                    <div className="text-left space-y-0.5 sm:max-w-[45%]">
+                      <h3 className="text-lg font-black text-rose-900 tracking-tight">
+                        ডেন্টিস্ট: ইকবাল মাহমুদ
                       </h3>
-                      <p className="text-xs font-bold text-slate-900">
-                        {sealConfig.sub}
-                      </p>
-                      <p className="text-xs text-slate-800">
-                        {sealConfig.address}
-                      </p>
-                      <p className="text-xs font-mono font-bold text-slate-900">
-                        {sealConfig.mobile}
-                      </p>
-                      <div className="text-[11px] text-slate-700 pt-1 leading-snug space-y-0.5">
-                        <div>
-                          <span className="font-semibold text-slate-900">রোগী দেখার সময়:-</span> সকাল ৮টা-১০টা এবং সন্ধ্যা ৬টা-রাত ১০টা (শনি,রবি,সোম,বুধ,বৃহস্পতি)
-                        </div>
-                        <div>
-                          সকাল ৮টা-১০টা এবং দুপুর ৩টা-রাত ১০টা (মঙ্গল) এবং শুক্রবার সারাদিন।
+                      <div className="text-[11px] font-semibold text-slate-800 leading-snug space-y-0.5">
+                        <div>ডি.এইচ.ডি.টি (ফেনী)</div>
+                        <div>এস.ডি.এফ (ঢাকা)</div>
+                        <div>এস.ডি.এস.পি (ঢাকা)</div>
+                        <div className="text-teal-900 font-bold pt-0.5">ফার্মাসিস্ট:</div>
+                        <div>চেম্বার এন্ড ডেন্টাল টেকনোলজিস্ট</div>
+                        <div className="font-mono font-bold text-slate-900 pt-0.5">
+                          মোবাইল: 01812-358839, 01315645076
                         </div>
                       </div>
                     </div>
 
-                    {/* ডান পাশে মেমো ও চালান নম্বর */}
-                    <div className="text-left sm:text-right text-xs space-y-1 shrink-0 sm:border-l sm:border-slate-200 sm:pl-4">
-                      <div>
-                        <span className="text-slate-500">
-                          {previewInvoice.txType === 'purchase'
-                            ? 'ক্রয় ইনভয়েস নং: '
-                            : previewInvoice.txType === 'sale' && !invoicePrintWithPrice
-                            ? 'ডেলিভারি মেমো নং: '
-                            : 'বিক্রয় মেমো নং: '}
-                        </span>
-                        <span className="font-mono font-bold text-slate-900">
-                          {previewInvoice.invoiceNo}
-                        </span>
+                    {/* Right Chambers Box (Screenshot 3 Dark Teal/Cyan Box) */}
+                    <div className="bg-[#2a6d70] text-white p-2.5 rounded-md flex-1 text-xs space-y-1.5 shadow-xs">
+                      <div className="text-center font-bold text-sm text-amber-200 border-b border-teal-600/60 pb-1">
+                        চেম্বার:
                       </div>
-                      <div>
-                        <span className="text-slate-500">তারিখ: </span>
-                        <span className="font-mono font-bold text-slate-900">
-                          {previewInvoice.dateStr || getTodayDateStr()}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-slate-500">অপারেটর: </span>
-                        <span className="text-slate-800 font-semibold">
-                          {previewInvoice.staffRole === 'owner' ? 'Owner' : previewInvoice.staffName}
-                        </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10.5px] leading-tight">
+                        {/* Chamber 2 */}
+                        <div className="border-b sm:border-b-0 sm:border-r border-teal-500/50 pb-1.5 sm:pb-0 sm:pr-2">
+                          <div className="font-bold text-emerald-100">ইকবাল ডেন্টাল কেয়ার-২</div>
+                          <div className="text-[9.5px] text-teal-100">(ওয়াসেক ডেন্টাল কেয়ার)</div>
+                          <div className="mt-0.5 text-teal-100">
+                            পশ্চিম বাজার, মূল রোডের (ডেল্টা মোড়), অলুয়া, বেগমগঞ্জ, নোয়াখালী।
+                          </div>
+                          <div className="mt-1 font-semibold text-amber-200 text-[9.5px]">
+                            রোগী দেখার সময়ঃ প্রতিদিন সকাল ১০টা থেকে মাগরিব পর্যন্ত। প্রতি শুক্রবার চেম্বার বন্ধ।
+                          </div>
+                        </div>
+
+                        {/* Chamber 1 */}
+                        <div className="sm:pl-1">
+                          <div className="font-bold text-emerald-100">ইকবাল ডেন্টাল কেয়ার-১</div>
+                          <div className="mt-0.5 text-teal-100">
+                            নতুনহাট, পশ্চিম বাজার, চন্দ্রগঞ্জ, লক্ষ্মীপুর।
+                          </div>
+                          <div className="mt-1 font-semibold text-amber-200 text-[9.5px]">
+                            রোগী দেখার সময়ঃ সকাল ৯টা থেকে দুপুর ১টা এবং মাগরিব থেকে রাত ৯.০০টা।
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
 
-                  {/* রোগীর তথ্য বার (তারিখ, নাম, লিঙ্গ, বয়স ইত্যাদি) */}
-                  <div className="p-2.5 bg-slate-50 border border-slate-300 rounded-md grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                  {/* Invoice / Memo Info Strip */}
+                  <div className="flex flex-wrap items-center justify-between text-xs py-1 px-2.5 bg-slate-100 border border-slate-200 rounded">
                     <div>
-                      <span className="text-slate-500 block text-[10px]">
-                        {previewInvoice.txType === 'purchase' ? 'সরবরাহকারী কোম্পানি:' : 'রোগী / ক্রেতার নাম:'}
+                      <span className="text-slate-500">
+                        {previewInvoice.txType === 'purchase'
+                          ? 'ক্রয় চালান নং: '
+                          : previewInvoice.txType === 'sale' && !invoicePrintWithPrice
+                          ? 'ডেলিভারি মেমো নং: '
+                          : 'বিক্রয় মেমো নং: '}
                       </span>
-                      <span className="font-bold text-slate-900 truncate block">
+                      <span className="font-mono font-bold text-slate-900">
+                        {previewInvoice.invoiceNo}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">অপারেটর: </span>
+                      <span className="text-slate-800 font-semibold">
+                        {previewInvoice.staffRole === 'owner' ? 'Owner' : previewInvoice.staffName}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* রোগীর তথ্য বার (Screenshot 3 Pink Bar) */}
+                  <div className="py-2 px-3 bg-[#fce4ec] border border-[#f8bbd0] rounded-md grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-[#880e4f] font-semibold italic">
+                    <div>
+                      <span className="not-italic text-slate-600 font-normal block text-[10px]">
+                        Name (নাম):
+                      </span>
+                      <span className="font-bold text-slate-900 truncate block not-italic">
                         {previewInvoice.partyName || '—'}
                       </span>
                     </div>
                     <div>
-                      <span className="text-slate-500 block text-[10px]">মোবাইল নং:</span>
-                      <span className="font-mono font-semibold text-slate-800 block">
-                        {previewInvoice.partyPhone || '—'}
+                      <span className="not-italic text-slate-600 font-normal block text-[10px]">
+                        Age (বয়স):
+                      </span>
+                      <span className="font-bold text-slate-900 block not-italic">
+                        {previewInvoice.patientAge ? `${previewInvoice.patientAge}` : '—'}
                       </span>
                     </div>
-                    {previewInvoice.txType === 'sale' ? (
-                      <>
-                        <div>
-                          <span className="text-slate-500 block text-[10px]">বয়স (Age):</span>
-                          <span className="font-semibold text-slate-900 block">
-                            {previewInvoice.patientAge ? `${previewInvoice.patientAge}` : '—'}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-slate-500 block text-[10px]">লিঙ্গ (Sex):</span>
-                          <span className="font-semibold text-slate-900 block">
-                            {previewInvoice.patientSex === 'Female'
-                              ? 'মহিলা (Female)'
-                              : previewInvoice.patientSex === 'Other'
-                              ? 'অন্যান্য'
-                              : 'পুরুষ (Male)'}
-                          </span>
-                        </div>
-                      </>
-                    ) : (
-                      <div className="col-span-2">
-                        <span className="text-slate-500 block text-[10px]">চালান প্রকার:</span>
-                        <span className="font-semibold text-slate-900 block">কোম্পানি সরবরাহ চালান</span>
-                      </div>
-                    )}
+                    <div>
+                      <span className="not-italic text-slate-600 font-normal block text-[10px]">
+                        Sex (লিঙ্গ):
+                      </span>
+                      <span className="font-bold text-slate-900 block not-italic">
+                        {previewInvoice.patientSex === 'Female'
+                          ? 'Female (মহিলা)'
+                          : previewInvoice.patientSex === 'Other'
+                          ? 'Other'
+                          : 'Male (পুরুষ)'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="not-italic text-slate-600 font-normal block text-[10px]">
+                        Date (তারিখ):
+                      </span>
+                      <span className="font-mono font-bold text-slate-900 block not-italic">
+                        {previewInvoice.dateStr || getTodayDateStr()}
+                      </span>
+                    </div>
                   </div>
 
-                  {/* ডেন্টাল ক্লিনিক্যাল হিস্ট্রি ও পর্যবেক্ষণ (Pereocoronaties, Pulpitis, Calculus, etc.) */}
+                  {/* ক্লিনিক্যাল পর্যবেক্ষণ: ফার্মেসীর জন্য ফার্মেসী ক্লিনিক্যাল ও ডেন্টালের জন্য ডেন্টাল ক্লিনিক্যাল অপশন (Screenshot 2 & 3) */}
                   {previewInvoice.txType === 'sale' && (
-                    <div className="p-2.5 border border-amber-300 rounded-md bg-amber-50/40">
-                      <div className="flex items-center justify-between text-xs font-bold text-amber-950 pb-1.5 border-b border-amber-200 mb-2">
-                        <span className="flex items-center gap-1.5">
-                          🦷 ডেন্টাল ও ক্লিনিক্যাল পর্যবেক্ষণ (Clinical Findings & Dental Examination):
-                        </span>
-                        <span className="text-[10px] text-amber-800 font-normal">
-                          দাঁতের লক্ষণ ও চিকিৎসা পর্যবেক্ষণ
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 text-xs">
-                        {[
-                          'Pereocoronaties',
-                          'Pulpitis',
-                          'Calculus',
-                          'Gingivitis',
-                          'Caries',
-                          'Scaling',
-                          'Filling',
-                          'RCT',
-                          'Cap',
-                          'Bridge',
-                          'EXT',
-                          'Others',
-                        ].map((key) => {
-                          const val = previewInvoice.dentalClinical?.[key];
-                          const hasVal = Boolean(val && val.trim().length > 0);
-                          return (
-                            <div
-                              key={key}
-                              className={`p-1.5 rounded border text-[11px] leading-tight ${
-                                hasVal
-                                  ? 'bg-white border-amber-400 text-amber-950 shadow-2xs font-semibold'
-                                  : 'bg-transparent border-dashed border-slate-300 text-slate-700'
-                              }`}
-                            >
-                              <div className="flex items-center justify-between">
-                                <span className="font-bold text-slate-900">{key}:</span>
-                                {hasVal && <span className="text-emerald-700 text-[10px] font-bold">✓</span>}
+                    currentSeal === 'iqbal_pharmacy' ? (
+                      <div className="p-2.5 border border-teal-300 rounded-md bg-teal-50/50">
+                        <div className="flex items-center justify-between text-xs font-bold text-teal-950 pb-1.5 border-b border-teal-200 mb-2">
+                          <span className="flex items-center gap-1.5">
+                            <Stethoscope className="w-3.5 h-3.5 text-teal-700" />
+                            ফার্মেসী ক্লিনিক্যাল পর্যবেক্ষণ (Clinical Findings & Vitals):
+                          </span>
+                          <span className="text-[10px] text-teal-800 font-normal">
+                            রক্তচাপ, সুগার, তাপমাত্রা ও সাধারণ লক্ষণ
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                          {[
+                            'রক্তচাপ (BP)',
+                            'ডায়াবেটিস (RBS)',
+                            'তাপমাত্রা (Temp)',
+                            'ওজন (Weight)',
+                            'নাড়ির গতি (Pulse)',
+                            'প্রধান লক্ষণ (Symptoms)',
+                            'প্রাথমিক পরামর্শ (Advice)',
+                            'পরীক্ষা-নিরীক্ষা (Inv.)',
+                          ].map((key) => {
+                            const val = previewInvoice.dentalClinical?.[key];
+                            const hasVal = Boolean(val && val.trim().length > 0);
+                            return (
+                              <div
+                                key={key}
+                                className={`p-1.5 rounded border text-[11px] leading-tight ${
+                                  hasVal
+                                    ? 'bg-white border-teal-400 text-teal-950 shadow-2xs font-semibold'
+                                    : 'bg-transparent border-dashed border-slate-300 text-slate-600'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold text-slate-900">{key}:</span>
+                                  {hasVal && <span className="text-teal-700 text-[10px] font-bold">✓</span>}
+                                </div>
+                                <div className="text-[10.5px] mt-0.5 truncate text-slate-800 font-mono">
+                                  {hasVal ? val : '...................'}
+                                </div>
                               </div>
-                              <div className="text-[10.5px] mt-0.5 truncate text-slate-800 font-mono">
-                                {hasVal ? val : '...................'}
-                              </div>
-                            </div>
-                          );
-                        })}
+                            );
+                          })}
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="p-2.5 border border-amber-300 rounded-md bg-amber-50/40">
+                        <div className="flex items-center justify-between text-xs font-bold text-amber-950 pb-1.5 border-b border-amber-200 mb-2">
+                          <span className="flex items-center gap-1.5">
+                            🦷 ডেন্টাল ক্লিনিক্যাল পর্যবেক্ষণ (Clinical Findings & Dental Examination):
+                          </span>
+                          <span className="text-[10px] text-amber-800 font-normal">
+                            দাঁতের লক্ষণ ও পর্যবেক্ষণ (Screenshot 2 & 3)
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 text-xs">
+                          {[
+                            'Pereocoronaties',
+                            'Pulpitis',
+                            'Calculus',
+                            'Gingivitis',
+                            'Caries',
+                            'Scaling',
+                            'Filling',
+                            'RCT',
+                            'Cap',
+                            'Bridge',
+                            'EXT',
+                            'Others',
+                            'Inv.',
+                          ].map((key) => {
+                            const val = previewInvoice.dentalClinical?.[key];
+                            const hasVal = Boolean(val && val.trim().length > 0);
+                            return (
+                              <div
+                                key={key}
+                                className={`p-1.5 rounded border text-[11px] leading-tight ${
+                                  hasVal
+                                    ? 'bg-white border-amber-400 text-amber-950 shadow-2xs font-semibold'
+                                    : 'bg-transparent border-dashed border-slate-300 text-slate-600'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold text-slate-900">{key}:</span>
+                                  {hasVal && <span className="text-emerald-700 text-[10px] font-bold">✓</span>}
+                                </div>
+                                <div className="text-[10.5px] mt-0.5 truncate text-slate-800 font-mono">
+                                  {hasVal ? val : '...................'}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )
                   )}
                 </div>
               );
@@ -4385,7 +4496,23 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                 )}
                               </div>
                             ) : (
-                              pItem.rawLine
+                              <div>
+                                <div className="font-bold text-slate-900 text-xs sm:text-[13px] font-sans">
+                                  {pItem.serial}. {pItem.formPrefix ? `${pItem.formPrefix.charAt(0).toUpperCase() + pItem.formPrefix.slice(1)}. ` : ''}
+                                  {pItem.cleanName || pItem.brandAndStrength}
+                                </div>
+                                {pItem.dosageInstruction ? (
+                                  <div className="mt-0.5 font-mono font-bold text-red-600 tracking-wider text-xs">
+                                    {pItem.dosageInstruction}
+                                  </div>
+                                ) : (
+                                  pItem.rawLine.includes('{') && (
+                                    <div className="mt-0.5 font-mono font-bold text-red-600 tracking-wider text-xs">
+                                      {pItem.rawLine.split('{')[1]?.replace('}', '')}
+                                    </div>
+                                  )
+                                )}
+                              </div>
                             )}
                           </td>
                           {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
@@ -4476,7 +4603,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                   </span>
                   <span>৳{previewInvoice.paidAmount.toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between text-red-600 font-semibold">
+                <div className="flex justify-between text-red-600 font-semibold items-center">
                   <span>
                     {previewInvoice.txType === 'purchase'
                       ? 'কোম্পানি বাকি (Supplier Due):'
@@ -4484,6 +4611,18 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                   </span>
                   <span>৳{previewInvoice.dueAmount.toFixed(2)}</span>
                 </div>
+                {previewInvoice.dueAmount > 0 && (
+                  <div className="pt-2 flex justify-end print:hidden">
+                    <button
+                      type="button"
+                      onClick={() => openPaymentModal(previewInvoice)}
+                      className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-md shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <CreditCard className="w-3.5 h-3.5" />
+                      <span>Payment Now (বকেয়া পরিশোধ করুন)</span>
+                    </button>
+                  </div>
+                )}
               </div>
             )}
             {/* নিচের ৩টি সিল ও স্বাক্ষর সেকশন (Official Seal & Doctor Signature) */}
@@ -4496,17 +4635,23 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                 },
                 dental_care_1: {
                   title: 'ইকবাল ডেন্টাল কেয়ার-১',
-                  location: 'নতুনহাট, পশ্চিম বাজার, লক্ষ্মীপুর',
+                  location: 'নতুনহাট, পশ্চিম বাজার, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
                 },
                 dental_care_2: {
                   title: 'ইকবাল ডেন্টাল কেয়ার-২',
-                  location: 'মোল্লাহাট, অলুয়া, নোয়াখালী',
+                  location: 'পশ্চিম বাজার, মূল রোডের (ডেল্টা মোড়), অলুয়া, বেগমগঞ্জ, নোয়াখালী',
                 },
               };
               const sealConfig = sealMap[currentSeal] || sealMap.iqbal_pharmacy;
 
               return (
-                <div className="pt-4 pb-2 my-2 border-t-2 border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-6">
+                <div>
+                  {/* পরবর্তী সাক্ষাতের সময় ব্যবস্থাপত্র সঙ্গে আনবেন (Screenshot 3 Green Banner) */}
+                  <div className="my-2 py-2 px-4 bg-[#2e7d32] text-white text-center font-bold text-xs rounded tracking-wide shadow-2xs">
+                    পরবর্তী সাক্ষাতের সময় ব্যবস্থাপত্র সঙ্গে আনবেন।
+                  </div>
+
+                  <div className="pt-4 pb-2 my-2 border-t-2 border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-6">
                   {/* The Selected Circular Rubber Stamp */}
                   <div className="flex flex-col items-center">
                     <div className="w-36 h-36 rounded-full border-4 border-dashed border-blue-900 p-1 flex items-center justify-center relative select-none shadow-xs rotate-[-2deg] print:rotate-0 bg-blue-50/25">
@@ -4551,8 +4696,9 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                     </div>
                   </div>
                 </div>
-              );
-            })()}
+              </div>
+            );
+          })()}
 
             {/* ইনভয়েস এর ফুটার (ছোট করে লেখা) */}
             <div className="pt-2.5 pb-1 border-t border-dashed border-slate-300 text-center space-y-0.5">
@@ -4618,6 +4764,217 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                 className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md cursor-pointer"
               >
                 বন্ধ করুন
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Now Modal (Full / Partial Payment for any invoice with Due) */}
+      {showPaymentModal && selectedPaymentInvoice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-5 space-y-4 border border-slate-200">
+            <div className="flex items-center justify-between border-b pb-3 border-slate-200">
+              <div className="flex items-center gap-2">
+                <CreditCard className="w-5 h-5 text-red-600" />
+                <h3 className="text-base font-bold text-slate-900">
+                  বকেয়া পরিশোধ (Payment Now)
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPaymentModal(false);
+                  setSelectedPaymentInvoice(null);
+                }}
+                className="text-slate-400 hover:text-slate-700 p-1 rounded-md cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Invoice Info */}
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-slate-500">ইনভয়েস নম্বর:</span>
+                <span className="font-mono font-bold text-slate-900">{selectedPaymentInvoice.invoiceNo}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">পার্টি / ক্রেতা:</span>
+                <span className="font-semibold text-slate-800">{selectedPaymentInvoice.partyName || '—'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">মোট বিল:</span>
+                <span className="font-mono text-slate-700">৳{selectedPaymentInvoice.grandTotal.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">পূর্বে পরিশোধিত:</span>
+                <span className="font-mono text-emerald-700">৳{selectedPaymentInvoice.paidAmount.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between border-t border-slate-200 pt-1.5 font-bold text-sm">
+                <span className="text-red-700">বর্তমান বকেয়া (Current Due):</span>
+                <span className="font-mono text-red-600">৳{selectedPaymentInvoice.dueAmount.toFixed(2)}</span>
+              </div>
+            </div>
+
+            {/* Payment Mode Selection */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-800">
+                পরিশোধের ধরণ নির্বাচন করুন:
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsFullPayment(true);
+                    setPaymentAmountInput(selectedPaymentInvoice.dueAmount.toString());
+                  }}
+                  className={`p-2.5 rounded-lg border text-xs font-bold transition-all text-center cursor-pointer ${
+                    isFullPayment
+                      ? 'bg-emerald-50 border-emerald-500 text-emerald-900 ring-2 ring-emerald-500/20'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="text-[13px]">সম্পূর্ণ পরিশোধ (Full)</div>
+                  <div className="font-mono text-emerald-700 mt-0.5">
+                    ৳{selectedPaymentInvoice.dueAmount.toFixed(2)}
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsFullPayment(false);
+                    if (paymentAmountInput === selectedPaymentInvoice.dueAmount.toString()) {
+                      setPaymentAmountInput('');
+                    }
+                  }}
+                  className={`p-2.5 rounded-lg border text-xs font-bold transition-all text-center cursor-pointer ${
+                    !isFullPayment
+                      ? 'bg-teal-50 border-teal-500 text-teal-900 ring-2 ring-teal-500/20'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="text-[13px]">আংশিক পরিশোধ (Partial)</div>
+                  <div className="text-[10px] text-slate-500 font-normal mt-0.5">
+                    ইচ্ছামতো পরিমাণ দিন
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* Payment Amount Input */}
+            <div className="space-y-1">
+              <label className="block text-xs font-bold text-slate-800">
+                পরিশোধের পরিমাণ (৳):
+              </label>
+              <input
+                type="number"
+                min="1"
+                max={selectedPaymentInvoice.dueAmount}
+                step="any"
+                value={isFullPayment ? selectedPaymentInvoice.dueAmount : paymentAmountInput}
+                disabled={isFullPayment}
+                onChange={(e) => setPaymentAmountInput(e.target.value)}
+                placeholder="পরিশোধের পরিমাণ দিন"
+                className="w-full px-3 py-2 text-base font-mono font-bold text-slate-900 border border-slate-300 rounded-lg focus:border-teal-600 focus:outline-none disabled:bg-slate-100"
+              />
+              {!isFullPayment && (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {[100, 200, 500, 1000].map((preset) => {
+                    if (preset > selectedPaymentInvoice.dueAmount) return null;
+                    return (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setPaymentAmountInput(preset.toString())}
+                        className="px-2 py-0.5 text-xs font-mono font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded border border-slate-200 cursor-pointer"
+                      >
+                        ৳{preset}
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => setPaymentAmountInput(selectedPaymentInvoice.dueAmount.toString())}
+                    className="px-2 py-0.5 text-xs font-mono font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded border border-emerald-200 cursor-pointer"
+                  >
+                    বাকি সব (৳{selectedPaymentInvoice.dueAmount})
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Payment Method */}
+            <div className="space-y-1">
+              <label className="block text-xs font-bold text-slate-800">
+                পরিশোধের মাধ্যম (Payment Method):
+              </label>
+              <div className="grid grid-cols-4 gap-1.5 text-xs">
+                {(['cash', 'bkash', 'nagad', 'card'] as const).map((method) => (
+                  <button
+                    key={method}
+                    type="button"
+                    onClick={() => setPaymentMethodChoice(method)}
+                    className={`py-1.5 px-2 rounded-md font-bold uppercase cursor-pointer border transition-colors ${
+                      paymentMethodChoice === method
+                        ? 'bg-teal-700 text-white border-teal-700 shadow-2xs'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    {method === 'cash'
+                      ? 'নগদ'
+                      : method === 'bkash'
+                      ? 'bKash'
+                      : method === 'nagad'
+                      ? 'Nagad'
+                      : 'কার্ড/ব্যাংক'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Payment Note */}
+            <div className="space-y-1">
+              <label className="block text-xs font-medium text-slate-700">
+                মন্তব্য / নোট (ঐচ্ছিক):
+              </label>
+              <input
+                type="text"
+                value={paymentNoteInput}
+                onChange={(e) => setPaymentNoteInput(e.target.value)}
+                placeholder="যেমন: কাস্টমার বকেয়া পরিশোধ করেছেন"
+                className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-md focus:border-teal-600 focus:outline-none"
+              />
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-2 pt-2 border-t border-slate-200">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPaymentModal(false);
+                  setSelectedPaymentInvoice(null);
+                }}
+                disabled={submittingPayment}
+                className="flex-1 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+              >
+                বাতিল
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmPaymentNow}
+                disabled={submittingPayment}
+                className="flex-1 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 disabled:bg-slate-300 rounded-lg shadow-xs cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                {submittingPayment ? (
+                  <span>পরিশোধ প্রসেস হচ্ছে...</span>
+                ) : (
+                  <>
+                    <CreditCard className="w-3.5 h-3.5" />
+                    <span>পরিশোধ নিশ্চিত করুন</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

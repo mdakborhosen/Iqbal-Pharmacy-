@@ -19,6 +19,7 @@ import {
   onSnapshot,
   serverTimestamp,
   setDoc,
+  updateDoc,
   writeBatch,
 } from 'firebase/firestore';
 import {
@@ -506,7 +507,7 @@ export default function App() {
   const [registerShopName, setRegisterShopName] = useState('ইকবাল ফার্মেসী');
   const [registerOwnerName, setRegisterOwnerName] = useState('ইকবাল মাহমুদ');
   const [registerEmail, setRegisterEmail] = useState('');
-  const [registerPhone, setRegisterPhone] = useState('01812-358839');
+  const [registerPhone, setRegisterPhone] = useState('');
   const [registerPassword, setRegisterPassword] = useState('');
   const [showRegisterPassword, setShowRegisterPassword] = useState(false);
   const [activeSection, setActiveSection] = useState<ActiveSection>('dashboard');
@@ -2013,8 +2014,26 @@ export default function App() {
           staffId: matchedAccount.id,
         });
 
+        const nowMs = Date.now();
+        const updatedStaffAccount = { ...matchedAccount, lastLoginAt: nowMs };
+        setStaffList((prev) => {
+          const next = prev.map((s) => (s.id === matchedAccount.id ? updatedStaffAccount : s));
+          saveLocal(STORAGE_KEYS.STAFF, next);
+          return next;
+        });
+        if (user) {
+          try {
+            await updateDoc(doc(db, 'staff', matchedAccount.id), {
+              lastLoginAt: nowMs,
+              updatedAt: serverTimestamp(),
+            });
+          } catch {
+            // ignore
+          }
+        }
+
         setCloudSession(session);
-        setActiveStaff(matchedAccount);
+        setActiveStaff(updatedStaffAccount);
         setLoginErrorMessage(null);
         setShowCloudLoginModal(false);
         showToast(
@@ -2045,8 +2064,27 @@ export default function App() {
             operatorRole: 'owner',
             staffId: ownerStaff.id,
           });
+
+          const nowMs = Date.now();
+          const updatedOwnerStaff = { ...ownerStaff, lastLoginAt: nowMs };
+          setStaffList((prev) => {
+            const next = prev.map((s) => (s.id === ownerStaff.id ? updatedOwnerStaff : s));
+            saveLocal(STORAGE_KEYS.STAFF, next);
+            return next;
+          });
+          if (user) {
+            try {
+              await updateDoc(doc(db, 'staff', ownerStaff.id), {
+                lastLoginAt: nowMs,
+                updatedAt: serverTimestamp(),
+              });
+            } catch {
+              // ignore
+            }
+          }
+
           setCloudSession(session);
-          setActiveStaff(ownerStaff);
+          setActiveStaff(updatedOwnerStaff);
           setLoginErrorMessage(null);
           setShowCloudLoginModal(false);
           showToast('স্বাগতম Owner! মাস্টার পাসওয়ার্ড দিয়ে সফলভাবে লগইন হয়েছে।');
@@ -2113,9 +2151,13 @@ export default function App() {
       } catch {
         // ignore
       }
-      const cleanEmail =
-        registerEmail.trim() ||
-        `${registerPhone.replace(/[^0-9]/g, '') || 'owner'}@iqbalpharmacy.bd`;
+      const rawEmail = registerEmail.trim();
+      const phoneDigits = registerPhone.replace(/[^0-9]/g, '');
+      const isValidEmailFormat = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail);
+      const cleanEmail = isValidEmailFormat
+        ? rawEmail.toLowerCase()
+        : `${phoneDigits || 'owner'}@iqbalpharmacy.bd`;
+
       const session = await registerNewShopOwnerAccount({
         shopName: registerShopName.trim() || 'ইকবাল ফার্মেসী',
         ownerName: registerOwnerName.trim(),
@@ -2130,7 +2172,17 @@ export default function App() {
         phone: session.phone,
         updatedAtMs: Date.now(),
       };
-      await handleUpdateShopProfile(updatedProfile);
+
+      // Safely persist shop profile locally and attempt background cloud write
+      setShopProfile(updatedProfile);
+      saveLocal(STORAGE_KEYS.SHOP, updatedProfile);
+      const activeAuthUser = auth.currentUser || user;
+      if (activeAuthUser) {
+        setDoc(
+          doc(db, 'shops', SHARED_SHOP_DOC_ID),
+          buildShopCloudPayload(updatedProfile, activeAuthUser.uid)
+        ).catch(() => {});
+      }
 
       const ownerStaff: StaffMember = {
         id: 'staff-owner-1',
@@ -2145,12 +2197,19 @@ export default function App() {
         active: true,
         updatedAtMs: Date.now(),
       };
-      await handleSaveStaffMember(ownerStaff, 'staff-owner-1');
 
-      // Directly write to Firestore staff collection so live syncing updates all devices immediately
-      const activeAuthUser = auth.currentUser || user;
+      // Safely persist staff member locally and attempt background cloud write
+      setStaffList((prev) => {
+        const next = prev.map((s) => (getCanonicalDocId(s.id) === 'staff-owner-1' ? ownerStaff : s));
+        if (!next.some((s) => getCanonicalDocId(s.id) === 'staff-owner-1')) {
+          next.unshift(ownerStaff);
+        }
+        saveLocal(STORAGE_KEYS.STAFF, next);
+        return next;
+      });
+
       if (activeAuthUser) {
-        await setDoc(
+        setDoc(
           doc(db, 'staff', 'staff-owner-1'),
           buildStaffCloudPayload(ownerStaff, activeAuthUser.uid)
         ).catch(() => {});
@@ -2159,6 +2218,7 @@ export default function App() {
       setActiveStaff(ownerStaff);
       setCloudSession(session);
       setCloudLoginEmail(session.phone);
+      setCloudLoginPhone(session.phone);
       setCloudLoginPassword(registerPassword.trim());
       setLoginErrorMessage(null);
       setShowCloudLoginModal(false);
@@ -5748,6 +5808,22 @@ export default function App() {
                       <ShieldCheck className="w-4 h-4" />
                       {cloudLoginLoading ? 'একাউন্ট তৈরি হচ্ছে...' : 'নতুন Owner একাউন্ট তৈরি ও আনলক করুন'}
                     </button>
+
+                    <div className="mt-3 p-2.5 bg-amber-50 border border-amber-200 rounded text-[11px] text-amber-900 leading-normal space-y-1">
+                      <div className="font-semibold flex items-center gap-1 text-amber-950">
+                        <span>☁️ Cloudflare Pages ও Firestore ডেপ্লয় নোট:</span>
+                      </div>
+                      <p>
+                        Cloudflare (যেমন: <code className="bg-amber-100 px-1 py-0.5 rounded">*.pages.dev</code>) এ অ্যাপ ডেপ্লয় করার পর Firebase Console এ যান:
+                      </p>
+                      <ul className="list-disc pl-4 space-y-0.5 text-[10.5px]">
+                        <li><strong>Authentication &gt; Settings &gt; Authorized Domains:</strong> আপনার ক্লাউডফ্লেয়ার ডোমেন যুক্ত করুন।</li>
+                        <li><strong>Authentication &gt; Sign-in method:</strong> Email/Password এবং Anonymous চালু রাখুন।</li>
+                      </ul>
+                      <p className="text-[10px] text-amber-800">
+                        (ডোমেন অনুমোদন ছাড়াও আপনার অফলাইন ও লোকাল রেজিস্টার্ড একাউন্ট স্বয়ংক্রিয়ভাবে কার্যকর থাকবে)।
+                      </p>
+                    </div>
                   </form>
                 )}
               </div>
@@ -6195,6 +6271,22 @@ export default function App() {
                     <ShieldCheck className="w-4 h-4" />
                     {cloudLoginLoading ? 'একাউন্ট তৈরি হচ্ছে...' : 'নতুন Owner আইডি তৈরি ও লগইন করুন'}
                   </button>
+                </div>
+
+                <div className="mt-2 p-2.5 bg-amber-50 border border-amber-200 rounded text-[11px] text-amber-900 leading-normal space-y-1">
+                  <div className="font-semibold flex items-center gap-1 text-amber-950">
+                    <span>☁️ Cloudflare Pages ও Firestore ডেপ্লয় নোট:</span>
+                  </div>
+                  <p>
+                    Cloudflare (যেমন: <code className="bg-amber-100 px-1 py-0.5 rounded">*.pages.dev</code>) এ অ্যাপ ডেপ্লয় করার পর Firebase Console এ যান:
+                  </p>
+                  <ul className="list-disc pl-4 space-y-0.5 text-[10.5px]">
+                    <li><strong>Authentication &gt; Settings &gt; Authorized Domains:</strong> আপনার ক্লাউডফ্লেয়ার ডোমেন যুক্ত করুন।</li>
+                    <li><strong>Authentication &gt; Sign-in method:</strong> Email/Password এবং Anonymous চালু রাখুন।</li>
+                  </ul>
+                  <p className="text-[10px] text-amber-800">
+                    (ডোমেন অনুমোদন ছাড়াও আপনার অফলাইন ও লোকাল রেজিস্টার্ড একাউন্ট স্বয়ংক্রিয়ভাবে কার্যকর থাকবে)।
+                  </p>
                 </div>
 
                 <div className="text-center pt-1">
