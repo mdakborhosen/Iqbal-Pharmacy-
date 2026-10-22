@@ -2257,7 +2257,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                         />
                         <div>
                           <div>২. ইকবাল ডেন্টাল কেয়ার-১</div>
-                          <div className="text-[10px] text-slate-500 font-normal">নতুনহাট, পশ্চিম বাজার, চন্দ্রগঞ্জ, লক্ষ্মীপুর</div>
+                          <div className="text-[10px] text-slate-500 font-normal">নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।</div>
                         </div>
                       </label>
 
@@ -2277,8 +2277,8 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                           className="text-teal-700 focus:ring-teal-600"
                         />
                         <div>
-                          <div>৩. ইকবাল ডেন্টাল কেয়ার-২ (ওয়াসেক ডেন্টাল কেয়ার)</div>
-                          <div className="text-[10px] text-slate-500 font-normal">পশ্চিম বাজার, মূল রোডের (ডেল্টা মোড়), অলুয়া, বেগমগঞ্জ, নোয়াখালী</div>
+                          <div>৩. ইকবাল ডেন্টাল কেয়ার-২ (ওদারহাট ডেন্টাল কেয়ার)</div>
+                          <div className="text-[10px] text-slate-500 font-normal">উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী।</div>
                         </div>
                       </label>
                     </div>
@@ -4187,24 +4187,24 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
               const sealMap = {
                 iqbal_pharmacy: {
                   title: 'ইকবাল ফার্মেসী',
-                  sub: 'ইকবাল মাহমুদ (DMTD DENTAL, LMF, RMP, Pharmacist)',
-                  address: 'ঠিকানা:- নতুনহাট, ইসলামিয়া মাদ্রাসা-৩৮০৯, চন্দ্রগঞ্জ, লক্ষ্মীপুর।',
+                  sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (DMTD (Dental), LMAF, RMP, Pharmacist)',
+                  address: 'ঠিকানা:- নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।',
                   mobile: 'মোবাইল:- 01812-358839, 01315645076',
                   location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
                 },
                 dental_care_1: {
                   title: 'ইকবাল ডেন্টাল কেয়ার-১',
-                  sub: 'ডেন্টিস্ট: ইকবাল মাহমুদ (ডি.এইচ.ডি.টি ফেনী, এস.ডি.এফ ঢাকা, এস.ডি.এস.পি ঢাকা)',
-                  address: 'ঠিকানা:- নতুনহাট, পশ্চিম বাজার, চন্দ্রগঞ্জ, লক্ষ্মীপুর।',
+                  sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (DMTD (Dental), LMAF, RMP, Pharmacist)',
+                  address: 'ঠিকানা:- নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।',
                   mobile: 'মোবাইল:- 01812-358839, 01315645076',
-                  location: 'নতুনহাট, পশ্চিম বাজার, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
+                  location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
                 },
                 dental_care_2: {
-                  title: 'ইকবাল ডেন্টাল কেয়ার-২ (ওয়াসেক ডেন্টাল কেয়ার)',
-                  sub: 'ডেন্টিস্ট: ইকবাল মাহমুদ (ডি.এইচ.ডি.টি ফেনী, এস.ডি.এফ ঢাকা, এস.ডি.এস.পি ঢাকা)',
-                  address: 'ঠিকানা:- পশ্চিম বাজার, মূল রোডের (ডেল্টা মোড়), অলুয়া, বেগমগঞ্জ, নোয়াখালী।',
+                  title: 'ইকবাল ডেন্টাল কেয়ার-২ (ওদারহাট ডেন্টাল কেয়ার)',
+                  sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (DMTD (Dental), LMAF, RMP, Pharmacist)',
+                  address: 'ঠিকানা:- উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী।',
                   mobile: 'মোবাইল:- 01812-358839, 01315645076',
-                  location: 'পশ্চিম বাজার, মূল রোডের (ডেল্টা মোড়), অলুয়া, বেগমগঞ্জ, নোয়াখালী',
+                  location: 'উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী',
                 },
               };
               const sealConfig = sealMap[currentSeal] || sealMap.iqbal_pharmacy;
@@ -4216,13 +4216,11 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                     {/* Left Doctor Info */}
                     <div className="text-left space-y-0.5 sm:max-w-[45%]">
                       <h3 className="text-lg font-black text-rose-900 tracking-tight">
-                        ডেন্টিস্ট: ইকবাল মাহমুদ
+                        ডেন্টিস্ট:- ইকবাল মাহমুদ
                       </h3>
                       <div className="text-[11px] font-semibold text-slate-800 leading-snug space-y-0.5">
-                        <div>ডি.এইচ.ডি.টি (ফেনী)</div>
-                        <div>এস.ডি.এফ (ঢাকা)</div>
-                        <div>এস.ডি.এস.পি (ঢাকা)</div>
-                        <div className="text-teal-900 font-bold pt-0.5">ফার্মাসিস্ট:</div>
+                        <div className="font-bold text-teal-900">DMTD (Dental), LMAF, RMP, Pharmacist</div>
+                        <div>ডি.এইচ.ডি.টি (ফেনী) · এস.ডি.এফ (ঢাকা)</div>
                         <div>চেম্বার এন্ড ডেন্টাল টেকনোলজিস্ট</div>
                         <div className="font-mono font-bold text-slate-900 pt-0.5">
                           মোবাইল: 01812-358839, 01315645076
@@ -4239,9 +4237,9 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                         {/* Chamber 2 */}
                         <div className="border-b sm:border-b-0 sm:border-r border-teal-500/50 pb-1.5 sm:pb-0 sm:pr-2">
                           <div className="font-bold text-emerald-100">ইকবাল ডেন্টাল কেয়ার-২</div>
-                          <div className="text-[9.5px] text-teal-100">(ওয়াসেক ডেন্টাল কেয়ার)</div>
+                          <div className="text-[9.5px] text-teal-100">(ওদারহাট ডেন্টাল কেয়ার)</div>
                           <div className="mt-0.5 text-teal-100">
-                            পশ্চিম বাজার, মূল রোডের (ডেল্টা মোড়), অলুয়া, বেগমগঞ্জ, নোয়াখালী।
+                            উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী।
                           </div>
                           <div className="mt-1 font-semibold text-amber-200 text-[9.5px]">
                             রোগী দেখার সময়ঃ প্রতিদিন সকাল ১০টা থেকে মাগরিব পর্যন্ত। প্রতি শুক্রবার চেম্বার বন্ধ।
@@ -4252,7 +4250,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                         <div className="sm:pl-1">
                           <div className="font-bold text-emerald-100">ইকবাল ডেন্টাল কেয়ার-১</div>
                           <div className="mt-0.5 text-teal-100">
-                            নতুনহাট, পশ্চিম বাজার, চন্দ্রগঞ্জ, লক্ষ্মীপুর।
+                            নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।
                           </div>
                           <div className="mt-1 font-semibold text-amber-200 text-[9.5px]">
                             রোগী দেখার সময়ঃ সকাল ৯টা থেকে দুপুর ১টা এবং মাগরিব থেকে রাত ৯.০০টা।
@@ -4635,11 +4633,11 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                 },
                 dental_care_1: {
                   title: 'ইকবাল ডেন্টাল কেয়ার-১',
-                  location: 'নতুনহাট, পশ্চিম বাজার, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
+                  location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
                 },
                 dental_care_2: {
-                  title: 'ইকবাল ডেন্টাল কেয়ার-২',
-                  location: 'পশ্চিম বাজার, মূল রোডের (ডেল্টা মোড়), অলুয়া, বেগমগঞ্জ, নোয়াখালী',
+                  title: 'ইকবাল ডেন্টাল কেয়ার-২ (ওদারহাট ডেন্টাল কেয়ার)',
+                  location: 'উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী',
                 },
               };
               const sealConfig = sealMap[currentSeal] || sealMap.iqbal_pharmacy;
@@ -4661,10 +4659,10 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                         </div>
                         <div className="w-16 h-px bg-blue-800 my-0.5" />
                         <div className="text-[9px] font-bold text-blue-950">
-                          ইকবাল মাহমুদ
+                          ডেন্টিস্ট:- ইকবাল মাহমুদ
                         </div>
                         <div className="text-[7.5px] font-semibold text-blue-900 leading-tight">
-                          DMTD (DENTAL), LMF, RMP
+                          DMTD (Dental),LMAF,RMP,Pharmacist
                         </div>
                         <div className="text-[8px] font-extrabold text-blue-900 tracking-wider border-y border-blue-700 py-0.5 my-0.5">
                           ★ VERIFIED & APPROVED ★
@@ -4689,10 +4687,13 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                       স্বাক্ষর ও সিল (Doctor's Signature & Seal)
                     </div>
                     <div className="text-[11px] font-semibold text-slate-800">
-                      ইকবাল মাহমুদ (DMTD DENTAL, LMF, RMP)
+                      ডেন্টিস্ট:- ইকবাল মাহমুদ
+                    </div>
+                    <div className="text-[10px] font-medium text-slate-700">
+                      DMTD (Dental),LMAF,RMP,Pharmacist
                     </div>
                     <div className="text-[10px] text-slate-600">
-                      ডেন্টাল প্র্যাকটিশনার ও ফার্মাসিস্ট · {sealConfig.title}
+                      {sealConfig.title} · {sealConfig.location}
                     </div>
                   </div>
                 </div>

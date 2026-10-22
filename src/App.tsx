@@ -5373,7 +5373,7 @@ export default function App() {
                 {shopProfile.shopName || 'ইকবাল ফার্মেসী'}
               </div>
               <div className="text-xs font-semibold text-slate-800">
-                ইকবাল মাহমুদ (DMTD DENTAL,LMF,RMP,Pharmasist)
+                ডেন্টিস্ট:- ইকবাল মাহমুদ (DMTD (Dental), LMAF, RMP, Pharmacist)
               </div>
               <div className="text-[11px] text-slate-600 leading-snug">
                 ঠিকানা:- {shopProfile.address}

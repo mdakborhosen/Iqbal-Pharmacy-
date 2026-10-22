@@ -12,9 +12,9 @@ export const DEFAULT_SHOP_PROFILE: ShopProfile = {
   id: 'shop-default',
   ownerId: 'demo-owner',
   shopName: 'ইকবাল ফার্মেসী',
-  licenseNo: 'DMTD DENTAL, LMF, RMP, Pharmacist',
+  licenseNo: 'DMTD (Dental), LMAF, RMP, Pharmacist',
   phone: '01812-358839',
-  address: 'নতুনহাট,ইসলামিয়া মাদ্রাসা-৩৮০৯,চন্দ্রগঞ্জ,লক্ষীপুর।',
+  address: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।',
 };
 
 export const INITIAL_DEMO_STAFF: StaffMember[] = [

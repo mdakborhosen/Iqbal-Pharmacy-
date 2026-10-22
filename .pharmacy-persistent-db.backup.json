@@ -1,13 +1,13 @@
 {
-  "updatedAtMs": 1791825358500,
+  "updatedAtMs": 1792652269351,
   "state": {
     "shopProfile": {
       "id": "shop-default",
       "ownerId": "demo-owner",
       "shopName": "ইকবাল ফার্মেসী",
-      "licenseNo": "DMTD DENTAL, LMF, RMP, Pharmacist",
+      "licenseNo": "DMTD (Dental), LMAF, RMP, Pharmacist",
       "phone": "01812-358839",
-      "address": "নতুনহাট,ইসলামিয়া মাদ্রাসা-৩৮০৯,চন্দ্রগঞ্জ,লক্ষীপুর।"
+      "address": "নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।"
     },
     "inventory": [
       {
@@ -23,12 +23,12 @@
         "purchasePrice": 4.4,
         "unitPrice": 5,
         "stripPrice": 50,
-        "stockQty": 96,
+        "stockQty": 86,
         "minStockLevel": 20,
         "batchNo": "B-2025",
         "expiryDate": "2028-06-30",
         "shelfLocation": "Rack A-1",
-        "updatedAtMs": 1791801832025
+        "updatedAtMs": 1792396404448
       },
       {
         "id": "inv_custom_sale_etizin-10mg-tablet_2025",
@@ -123,11 +123,12 @@
         "purchasePrice": 4.33,
         "unitPrice": 6,
         "stripPrice": 60,
-        "stockQty": 124,
+        "stockQty": 94,
         "minStockLevel": 20,
         "batchNo": "SCL-2608",
         "expiryDate": "2028-06-30",
-        "shelfLocation": "Rack A-1"
+        "shelfLocation": "Rack A-1",
+        "updatedAtMs": 1792492477241
       },
       {
         "id": "inv-sergel-20",
@@ -660,6 +661,46 @@
         "batchNo": "NRM-118",
         "expiryDate": "2028-11-30",
         "shelfLocation": "Rack G-3"
+      },
+      {
+        "id": "inv_custom-sale-1-custom-product_7241",
+        "ownerId": "iqbal-pharmacy",
+        "medicineId": "custom-sale-1-custom-product",
+        "brandName": "Custom Product",
+        "genericName": "Custom Product",
+        "companyName": "Pharmaceuticals",
+        "strength": "",
+        "dosageForm": "Tablet",
+        "packSize": "10 × 10 (100 pcs)",
+        "purchasePrice": 8.8,
+        "unitPrice": 10,
+        "stripPrice": 100,
+        "stockQty": 99,
+        "minStockLevel": 20,
+        "batchNo": "B-7241",
+        "expiryDate": "2028-06-30",
+        "shelfLocation": "Rack A-1",
+        "updatedAtMs": 1792492477241
+      },
+      {
+        "id": "inv_custom_sale_______-________-tablet_5520",
+        "ownerId": "iqbal-pharmacy",
+        "medicineId": "custom_sale_কাস্টম-প্রডাক্ট-tablet",
+        "brandName": "",
+        "genericName": "কাস্টম প্রডাক্ট",
+        "companyName": "Custom / General",
+        "strength": "",
+        "dosageForm": "Tablet",
+        "packSize": "10 × 10 (100 pcs)",
+        "purchasePrice": 8.8,
+        "unitPrice": 10,
+        "stripPrice": 100,
+        "stockQty": 99,
+        "minStockLevel": 20,
+        "batchNo": "B-5520",
+        "expiryDate": "2028-06-30",
+        "shelfLocation": "Rack A-1",
+        "updatedAtMs": 1792397305520
       }
     ],
     "customers": [
@@ -695,6 +736,101 @@
       }
     ],
     "transactions": [
+      {
+        "id": "tx_sale_1792492477241",
+        "ownerId": "iqbal-pharmacy",
+        "txType": "sale",
+        "invoiceNo": "INV-261020-187",
+        "dateStr": "2026-10-20",
+        "partyId": "walk-in",
+        "partyName": "সাধারণ ক্রেতা (Walk-in)",
+        "partyPhone": "N/A",
+        "patientSex": "Male",
+        "dentalClinical": {
+          "রক্তচাপ (BP)": "",
+          "ডায়াবেটিস (RBS)": "",
+          "তাপমাত্রা (Temp)": "",
+          "ওজন (Weight)": "",
+          "নাড়ির গতি (Pulse)": "",
+          "প্রধান লক্ষণ (Symptoms)": "",
+          "প্রাথমিক পরামর্শ (Advice)": "",
+          "পরীক্ষা-নিরীক্ষা (Inv.)": ""
+        },
+        "selectedSeal": "iqbal_pharmacy",
+        "itemsSummary": "1.cap.Seclo 20 mg (৳6) × 10=60\n2.tab.Custom Product (৳10) × 1=10",
+        "totalCount": 11,
+        "subTotal": 70,
+        "discount": 0,
+        "grandTotal": 70,
+        "paidAmount": 70,
+        "dueAmount": 0,
+        "paymentMethod": "cash",
+        "staffName": "Owner",
+        "staffRole": "owner",
+        "counterName": "কাউন্টার ১ (Owner)",
+        "updatedAtMs": 1792492477241
+      },
+      {
+        "id": "tx_sale_1792397305520",
+        "ownerId": "iqbal-pharmacy",
+        "txType": "sale",
+        "invoiceNo": "INV-261019-400",
+        "dateStr": "2026-10-19",
+        "partyId": "walk-in",
+        "partyName": "সাধারণ ক্রেতা (Walk-in)",
+        "partyPhone": "N/A",
+        "patientSex": "Male",
+        "dentalClinical": {
+          "Pereocoronaties": "",
+          "Pulpitis": "",
+          "Calculus": "",
+          "Gingivitis": "",
+          "Caries": "",
+          "Scaling": "",
+          "Filling": "",
+          "RCT": "",
+          "Cap": "",
+          "Bridge": "",
+          "EXT": "",
+          "Others": "",
+          "Inv.": ""
+        },
+        "selectedSeal": "iqbal_pharmacy",
+        "itemsSummary": "1.cap.Seclo 20 mg (৳6) × 10=60\n2.tab.Custom Product (৳10) × 1=10",
+        "totalCount": 11,
+        "subTotal": 70,
+        "discount": 0,
+        "grandTotal": 70,
+        "paidAmount": 70,
+        "dueAmount": 0,
+        "paymentMethod": "cash",
+        "staffName": "Owner",
+        "staffRole": "owner",
+        "counterName": "কাউন্টার ১ (Owner)",
+        "updatedAtMs": 1792397305520
+      },
+      {
+        "id": "tx_sale_1792396404448",
+        "ownerId": "iqbal-pharmacy",
+        "txType": "sale",
+        "invoiceNo": "INV-261019-411",
+        "dateStr": "2026-10-19",
+        "partyId": "walk-in",
+        "partyName": "সাধারণ ক্রেতা (Walk-in)",
+        "partyPhone": "N/A",
+        "itemsSummary": "1.cap.Seclo 20 mg (৳6) × 10=60\n2.cap.Op 20mg (৳5) × 10=50",
+        "totalCount": 20,
+        "subTotal": 110,
+        "discount": 0,
+        "grandTotal": 110,
+        "paidAmount": 110,
+        "dueAmount": 0,
+        "paymentMethod": "cash",
+        "staffName": "Owner",
+        "staffRole": "owner",
+        "counterName": "কাউন্টার ১ (Owner)",
+        "updatedAtMs": 1792396404448
+      },
       {
         "id": "tx_sale_1791801832025",
         "ownerId": "iqbal-pharmacy",
@@ -854,26 +990,6 @@
         "shift": "সারাদিন (মূল তত্ত্বাবধান)",
         "counterName": "কাউন্টার ১ (Owner)",
         "active": true
-      },
-      {
-        "id": "staff-pharmacist-2",
-        "ownerId": "demo-owner",
-        "name": "তানভীর আহমেদ",
-        "roleTitle": "pharmacist",
-        "phone": "01819-334455",
-        "shift": "সকাল ৮টা - বিকাল ৪টা",
-        "counterName": "কাউন্টার ২ (স্টাফ)",
-        "active": true
-      },
-      {
-        "id": "staff-sales-3",
-        "ownerId": "demo-owner",
-        "name": "সাইফুল ইসলাম",
-        "roleTitle": "salesman",
-        "phone": "01912-887766",
-        "shift": "বিকাল ৪টা - রাত ১১টা",
-        "counterName": "কাউন্টার ২ (স্টাফ)",
-        "active": true
       }
     ],
     "customMedicines": [
@@ -956,6 +1072,38 @@
         "therapeuticClass": "Custom Product",
         "indication": "কাস্টম প্রডাক্ট / সাধারণ ব্যবহার্য",
         "updatedAtMs": 1791801834541
+      },
+      {
+        "id": "cmed_1792492477389",
+        "ownerId": "iqbal-pharmacy",
+        "brandName": "Custom Product",
+        "genericName": "Custom Product",
+        "companyName": "Pharmaceuticals",
+        "strength": "Standard",
+        "dosageForm": "Tablet",
+        "packSize": "10 × 10 (100 pcs)",
+        "purchasePrice": 8.8,
+        "unitPrice": 10,
+        "stripPrice": 100,
+        "therapeuticClass": "Custom Product",
+        "indication": "কাস্টম প্রডাক্ট / সাধারণ ব্যবহার্য",
+        "updatedAtMs": 1792492477389
+      },
+      {
+        "id": "med-seclo-20",
+        "ownerId": "iqbal-pharmacy",
+        "brandName": "Seclo",
+        "genericName": "Omeprazole",
+        "companyName": "Square Pharmaceuticals PLC",
+        "strength": "20 mg",
+        "dosageForm": "Capsule",
+        "packSize": "10 × 10 (100 pcs)",
+        "purchasePrice": 4.33,
+        "unitPrice": 6,
+        "stripPrice": 60,
+        "therapeuticClass": "Custom Product",
+        "indication": "কাস্টম প্রডাক্ট / সাধারণ ব্যবহার্য",
+        "updatedAtMs": 1792492477243
       }
     ],
     "priceWatches": [
@@ -1011,7 +1159,9 @@
     ],
     "deletedIds": [
       "watch-seclo-20",
-      "watch-sergel-20"
+      "watch-sergel-20",
+      "staff-sales-3",
+      "staff-pharmacist-2"
     ],
     "posCart": [],
     "purchaseCart": [
@@ -1024,55 +1174,26 @@
         "strength": "20 mg",
         "dosageForm": "Capsule",
         "packSize": "10 × 10 (100 pcs)",
-        "purchasePrice": 5.25,
+        "purchasePrice": 4.33,
         "unitPrice": 6,
-        "qty": 100,
-        "batchNo": "SCL-2610",
+        "qty": 10,
+        "batchNo": "SCL-2608",
         "expiryDate": "2028-06-30",
-        "availableStock": 420
-      },
-      {
-        "medicineId": "med-napa-extend",
-        "inventoryId": "inv-napa-extend",
-        "brandName": "Napa Extend",
-        "genericName": "Paracetamol",
-        "companyName": "Beximco Pharmaceuticals Ltd.",
-        "strength": "665 mg",
-        "dosageForm": "Tablet",
-        "packSize": "10 × 12 (120 pcs)",
-        "purchasePrice": 1.75,
-        "unitPrice": 2,
-        "qty": 120,
-        "batchNo": "NPX-2610",
-        "expiryDate": "2028-08-31",
-        "availableStock": 240
-      },
-      {
-        "medicineId": "med-napa-500",
-        "inventoryId": "inv-napa-500",
-        "brandName": "Napa",
-        "genericName": "Paracetamol",
-        "companyName": "Beximco Pharmaceuticals Ltd.",
-        "strength": "500 mg",
-        "dosageForm": "Tablet",
-        "packSize": "51 × 10 (510 pcs)",
-        "purchasePrice": 1.05,
-        "unitPrice": 1.2,
-        "qty": 100,
-        "batchNo": "NPA-2610",
-        "expiryDate": "2028-09-30",
-        "availableStock": 850
+        "availableStock": 114,
+        "updateStock": true,
+        "packUnit": "piece",
+        "packCount": 1
       }
     ],
     "cloudSession": {
-      "uid": "shop_iqbal_mhakbor2001_gmail_com",
-      "email": "mhakbor2001@gmail.com",
+      "uid": "shop_iqbal_01711458920_iqbalpharmacy_bd",
+      "email": "01711458920@iqbalpharmacy.bd",
       "displayName": "ইকবাল মাহমুদ (Owner)",
       "shopName": "ইকবাল ফার্মেসী",
-      "phone": "01812-358839",
+      "phone": "01711-458920",
       "operatorRole": "owner",
-      "loggedInAt": 1791825357351
+      "loggedInAt": 1792652268372
     },
-    "updatedAtMs": 1791825358500
+    "updatedAtMs": 1792652269351
   }
 }
