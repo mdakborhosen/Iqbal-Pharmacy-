@@ -35,6 +35,7 @@ import {
   getInventoryStockForMedicine,
   getInvoiceFormPrefix,
   matchesMedicineQuery,
+  numberToBanglaWords,
   parseTransactionItemsDetailed,
   searchAndRankMedicines,
 } from '../data/bdMedicines';
@@ -4041,731 +4042,823 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
       )}
 
       {/* ============================================================================
-         TWO DISTINCT PRINTABLE INVOICE TEMPLATES MODAL:
-         - template 1: প্রডাক্ট বিক্রয় ইনভয়েস (SALES INVOICE — স্টক কমেছে)
-         - template 2: প্রডাক্ট ক্রয় ইনভয়েস (PURCHASE INVOICE — স্টক বেড়েছে)
+         A4 SIZE PHARMACY & CLINIC SALES INVOICE (210mm × 297mm)
+         - True A4 proportions on screen and standard A4 portrait in print dialog
+         - Complete Bangladesh DGDA & Dental clinic header, doctor qualifications & chambers
+         - Patient & customer info, vitals/clinical findings, items table, dosage rules
+         - Bengali amount in words ("কথায়: ... টাকা মাত্র"), return policy
+         - Customer, salesman, doctor signatures with official circular stamp
          ============================================================================ */}
       {previewInvoice && (
-        <div id="printable-invoice-modal" className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4 overflow-y-auto">
-          <div id="printable-invoice-receipt" className="bg-white border border-slate-200 rounded-lg max-w-2xl w-full p-6 shadow-xl my-auto">
-            {/* Sales Invoice Mode Switcher (no-print) */}
-            {previewInvoice.txType === 'sale' && (
-              <div className="mb-3 p-2.5 bg-slate-100 border border-slate-300 rounded-lg flex flex-wrap items-center justify-between gap-2 no-print shadow-2xs">
-                <div className="flex items-center gap-1.5 text-xs text-slate-900 font-bold">
-                  <Printer className="w-3.5 h-3.5 text-teal-700" />
-                  <span>মেমো প্রিন্ট মোড:</span>
-                </div>
-                <div className="inline-flex rounded-md border border-slate-300 p-0.5 bg-white shadow-2xs">
-                  <button
-                    type="button"
-                    onClick={() => setInvoicePrintWithPrice(true)}
-                    className={`px-3 py-1 text-xs font-bold rounded cursor-pointer transition-colors ${
-                      invoicePrintWithPrice
-                        ? 'bg-teal-700 text-white shadow-xs'
-                        : 'text-slate-700 hover:text-slate-900'
-                    }`}
-                  >
-                    ✓ দাম সহ মেমো
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setInvoicePrintWithPrice(false)}
-                    className={`px-3 py-1 text-xs font-bold rounded cursor-pointer transition-colors ${
-                      !invoicePrintWithPrice
-                        ? 'bg-amber-600 text-white shadow-xs'
-                        : 'text-slate-700 hover:text-slate-900'
-                    }`}
-                  >
-                    ✓ দাম ছাড়া মেমো
-                  </button>
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                  <span className="font-bold text-slate-800">সিল নির্বাচন:</span>
-                  <div className="inline-flex rounded-md border border-slate-300 p-0.5 bg-white shadow-2xs">
-                    <button
-                      type="button"
-                      onClick={() => setActiveInvoiceSeal('iqbal_pharmacy')}
-                      className={`px-2.5 py-1 text-xs font-bold rounded cursor-pointer transition-colors ${
-                        activeInvoiceSeal === 'iqbal_pharmacy'
-                          ? 'bg-teal-700 text-white shadow-xs'
-                          : 'text-slate-700 hover:text-slate-900'
-                      }`}
-                    >
-                      🏢 ১. ইকবাল ফার্মেসী
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveInvoiceSeal('dental_care_1')}
-                      className={`px-2.5 py-1 text-xs font-bold rounded cursor-pointer transition-colors ${
-                        activeInvoiceSeal === 'dental_care_1'
-                          ? 'bg-blue-800 text-white shadow-xs'
-                          : 'text-slate-700 hover:text-slate-900'
-                      }`}
-                    >
-                      🦷 ২. ইকবাল ডেন্টাল কেয়ার-১
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveInvoiceSeal('dental_care_2')}
-                      className={`px-2.5 py-1 text-xs font-bold rounded cursor-pointer transition-colors ${
-                        activeInvoiceSeal === 'dental_care_2'
-                          ? 'bg-indigo-800 text-white shadow-xs'
-                          : 'text-slate-700 hover:text-slate-900'
-                      }`}
-                    >
-                      🦷 ৩. ইকবাল ডেন্টাল কেয়ার-২
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
+        <div
+          id="printable-invoice-modal"
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-start justify-center p-2 sm:p-4 md:p-6 overflow-y-auto"
+        >
+          <div
+            id="printable-invoice-receipt"
+            className="bg-white border border-slate-300 rounded-lg w-full max-w-[210mm] min-h-[297mm] p-6 sm:p-8 md:p-10 shadow-2xl my-4 text-slate-900 font-sans print:border-none print:shadow-none print:p-0 print:my-0 print:max-w-none print:w-full flex flex-col justify-between"
+          >
+            <div>
+              {/* Top Control Toolbar (no-print) */}
+              <div className="mb-4 p-3 bg-slate-100 border border-slate-300 rounded-lg flex flex-wrap items-center justify-between gap-2.5 no-print shadow-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-teal-800 text-white font-bold text-xs shadow-2xs">
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>A4 পেপার সাইজ (210mm × 297mm)</span>
+                  </span>
 
-            {/* Distinct Top Invoice Type Banner */}
-            <div
-              className={`mb-4 px-4 py-2.5 rounded-md border flex flex-wrap items-center justify-between gap-2 ${
-                previewInvoice.txType === 'purchase'
-                  ? 'bg-indigo-50 border-indigo-300 text-indigo-950'
-                  : previewInvoice.txType === 'sale'
-                  ? invoicePrintWithPrice
-                    ? 'bg-teal-50 border-teal-300 text-teal-950'
-                    : 'bg-amber-50 border-amber-300 text-amber-950'
-                  : 'bg-emerald-50 border-emerald-300 text-emerald-950'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                {previewInvoice.txType === 'purchase' ? (
-                  <Truck className="w-4 h-4 text-indigo-700 shrink-0" />
-                ) : (
-                  <ShoppingCart className="w-4 h-4 text-teal-700 shrink-0" />
-                )}
-                <span className="text-sm font-extrabold tracking-tight">
-                  {previewInvoice.txType === 'purchase'
-                    ? 'প্রডাক্ট ক্রয় ইনভয়েস / স্টক-ইন চালান (PURCHASE INVOICE)'
-                    : previewInvoice.txType === 'sale'
-                    ? invoicePrintWithPrice
-                      ? 'প্রডাক্ট বিক্রয় ইনভয়েস / ক্যাশ মেমো (SALES INVOICE - WITH PRICE)'
-                      : 'প্রডাক্ট ডেলিভারি চালান / প্রেসক্রিপশন মেমো (DELIVERY MEMO - WITHOUT PRICE)'
-                    : 'বকেয়া আদায় মানি রিসিট (DUE COLLECTION RECEIPT)'}
-                </span>
-              </div>
-
-              <span
-                className={`text-xs font-mono font-bold px-2.5 py-0.5 rounded border ${
-                  previewInvoice.txType === 'purchase'
-                    ? 'bg-white border-indigo-300 text-emerald-700'
-                    : previewInvoice.txType === 'sale'
-                    ? invoicePrintWithPrice
-                      ? 'bg-white border-teal-300 text-amber-800'
-                      : 'bg-white border-amber-300 text-amber-900'
-                    : 'bg-white border-emerald-300 text-emerald-800'
-                }`}
-              >
-                {(() => {
-                  const items = parsedPreviewItems;
-                  const nonStockCount = items.filter((i) => i.tailText?.includes('নন-স্টক')).length;
-                  const stockEffectQty = items
-                    .filter((i) => !i.tailText?.includes('নন-স্টক'))
-                    .reduce((sum, i) => sum + i.qty, 0);
-                  if (previewInvoice.txType === 'purchase') {
-                    return stockEffectQty > 0
-                      ? `স্টক বৃদ্ধি (+${stockEffectQty} পিস)${nonStockCount > 0 ? ` · ${nonStockCount}টি নন-স্টক` : ''}`
-                      : 'শুধু ইনভয়েস (স্টক অপরিবর্তিত)';
-                  }
-                  if (previewInvoice.txType === 'sale') {
-                    return stockEffectQty > 0
-                      ? `স্টক হ্রাস (-${stockEffectQty} পিস)${nonStockCount > 0 ? ` · ${nonStockCount}টি নন-স্টক` : ''}`
-                      : 'শুধু ইনভয়েস (স্টক অপরিবর্তিত)';
-                  }
-                  return 'লেজার বকেয়া জমা';
-                })()}
-              </span>
-            </div>
-
-            {/* Top Header: Dynamic Chamber Identity & Doctor Qualifications (Screenshot 3) */}
-            {(() => {
-              const currentSeal = activeInvoiceSeal || previewInvoice.selectedSeal || 'iqbal_pharmacy';
-              const sealMap = {
-                iqbal_pharmacy: {
-                  title: 'ইকবাল ফার্মেসী',
-                  sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (DMTD (Dental), LMAF, RMP, Pharmacist)',
-                  address: 'ঠিকানা:- নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।',
-                  mobile: 'মোবাইল:- 01812-358839, 01315645076',
-                  location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
-                },
-                dental_care_1: {
-                  title: 'ইকবাল ডেন্টাল কেয়ার-১',
-                  sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (DMTD (Dental), LMAF, RMP, Pharmacist)',
-                  address: 'ঠিকানা:- নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।',
-                  mobile: 'মোবাইল:- 01812-358839, 01315645076',
-                  location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
-                },
-                dental_care_2: {
-                  title: 'ইকবাল ডেন্টাল কেয়ার-২ (ওদারহাট ডেন্টাল কেয়ার)',
-                  sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (DMTD (Dental), LMAF, RMP, Pharmacist)',
-                  address: 'ঠিকানা:- উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী।',
-                  mobile: 'মোবাইল:- 01812-358839, 01315645076',
-                  location: 'উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী',
-                },
-              };
-              const sealConfig = sealMap[currentSeal] || sealMap.iqbal_pharmacy;
-
-              return (
-                <div className="space-y-3 border-b-2 border-slate-800 pb-3 mb-3">
-                  {/* Header Row: Doctor Qualifications (Left) & Chamber Box (Right) per Screenshot 3 */}
-                  <div className="flex flex-col sm:flex-row sm:items-stretch justify-between gap-3 bg-white">
-                    {/* Left Doctor Info */}
-                    <div className="text-left space-y-0.5 sm:max-w-[45%]">
-                      <h3 className="text-lg font-black text-rose-900 tracking-tight">
-                        ডেন্টিস্ট:- ইকবাল মাহমুদ
-                      </h3>
-                      <div className="text-[11px] font-semibold text-slate-800 leading-snug space-y-0.5">
-                        <div className="font-bold text-teal-900">DMTD (Dental), LMAF, RMP, Pharmacist</div>
-                        <div>ডি.এইচ.ডি.টি (ফেনী) · এস.ডি.এফ (ঢাকা)</div>
-                        <div>চেম্বার এন্ড ডেন্টাল টেকনোলজিস্ট</div>
-                        <div className="font-mono font-bold text-slate-900 pt-0.5">
-                          মোবাইল: 01812-358839, 01315645076
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Right Chambers Box (Screenshot 3 Dark Teal/Cyan Box) */}
-                    <div className="bg-[#2a6d70] text-white p-2.5 rounded-md flex-1 text-xs space-y-1.5 shadow-xs">
-                      <div className="text-center font-bold text-sm text-amber-200 border-b border-teal-600/60 pb-1">
-                        চেম্বার:
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10.5px] leading-tight">
-                        {/* Chamber 2 */}
-                        <div className="border-b sm:border-b-0 sm:border-r border-teal-500/50 pb-1.5 sm:pb-0 sm:pr-2">
-                          <div className="font-bold text-emerald-100">ইকবাল ডেন্টাল কেয়ার-২</div>
-                          <div className="text-[9.5px] text-teal-100">(ওদারহাট ডেন্টাল কেয়ার)</div>
-                          <div className="mt-0.5 text-teal-100">
-                            উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী।
-                          </div>
-                          <div className="mt-1 font-semibold text-amber-200 text-[9.5px]">
-                            রোগী দেখার সময়ঃ প্রতিদিন সকাল ১০টা থেকে মাগরিব পর্যন্ত। প্রতি শুক্রবার চেম্বার বন্ধ।
-                          </div>
-                        </div>
-
-                        {/* Chamber 1 */}
-                        <div className="sm:pl-1">
-                          <div className="font-bold text-emerald-100">ইকবাল ডেন্টাল কেয়ার-১</div>
-                          <div className="mt-0.5 text-teal-100">
-                            নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।
-                          </div>
-                          <div className="mt-1 font-semibold text-amber-200 text-[9.5px]">
-                            রোগী দেখার সময়ঃ সকাল ৯টা থেকে দুপুর ১টা এবং মাগরিব থেকে রাত ৯.০০টা।
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Invoice / Memo Info Strip */}
-                  <div className="flex flex-wrap items-center justify-between text-xs py-1 px-2.5 bg-slate-100 border border-slate-200 rounded">
-                    <div>
-                      <span className="text-slate-500">
-                        {previewInvoice.txType === 'purchase'
-                          ? 'ক্রয় চালান নং: '
-                          : previewInvoice.txType === 'sale' && !invoicePrintWithPrice
-                          ? 'ডেলিভারি মেমো নং: '
-                          : 'বিক্রয় মেমো নং: '}
-                      </span>
-                      <span className="font-mono font-bold text-slate-900">
-                        {previewInvoice.invoiceNo}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-slate-500">অপারেটর: </span>
-                      <span className="text-slate-800 font-semibold">
-                        {previewInvoice.staffRole === 'owner' ? 'Owner' : previewInvoice.staffName}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* রোগীর তথ্য বার (Screenshot 3 Pink Bar) */}
-                  <div className="py-2 px-3 bg-[#fce4ec] border border-[#f8bbd0] rounded-md grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-[#880e4f] font-semibold italic">
-                    <div>
-                      <span className="not-italic text-slate-600 font-normal block text-[10px]">
-                        Name (নাম):
-                      </span>
-                      <span className="font-bold text-slate-900 truncate block not-italic">
-                        {previewInvoice.partyName || '—'}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="not-italic text-slate-600 font-normal block text-[10px]">
-                        Age (বয়স):
-                      </span>
-                      <span className="font-bold text-slate-900 block not-italic">
-                        {previewInvoice.patientAge ? `${previewInvoice.patientAge}` : '—'}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="not-italic text-slate-600 font-normal block text-[10px]">
-                        Sex (লিঙ্গ):
-                      </span>
-                      <span className="font-bold text-slate-900 block not-italic">
-                        {previewInvoice.patientSex === 'Female'
-                          ? 'Female (মহিলা)'
-                          : previewInvoice.patientSex === 'Other'
-                          ? 'Other'
-                          : 'Male (পুরুষ)'}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="not-italic text-slate-600 font-normal block text-[10px]">
-                        Date (তারিখ):
-                      </span>
-                      <span className="font-mono font-bold text-slate-900 block not-italic">
-                        {previewInvoice.dateStr || getTodayDateStr()}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* ক্লিনিক্যাল পর্যবেক্ষণ: ফার্মেসীর জন্য ফার্মেসী ক্লিনিক্যাল ও ডেন্টালের জন্য ডেন্টাল ক্লিনিক্যাল অপশন (Screenshot 2 & 3) */}
                   {previewInvoice.txType === 'sale' && (
-                    currentSeal === 'iqbal_pharmacy' ? (
-                      <div className="p-2.5 border border-teal-300 rounded-md bg-teal-50/50">
-                        <div className="flex items-center justify-between text-xs font-bold text-teal-950 pb-1.5 border-b border-teal-200 mb-2">
-                          <span className="flex items-center gap-1.5">
-                            <Stethoscope className="w-3.5 h-3.5 text-teal-700" />
-                            ফার্মেসী ক্লিনিক্যাল পর্যবেক্ষণ (Clinical Findings & Vitals):
-                          </span>
-                          <span className="text-[10px] text-teal-800 font-normal">
-                            রক্তচাপ, সুগার, তাপমাত্রা ও সাধারণ লক্ষণ
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                          {[
-                            'রক্তচাপ (BP)',
-                            'ডায়াবেটিস (RBS)',
-                            'তাপমাত্রা (Temp)',
-                            'ওজন (Weight)',
-                            'নাড়ির গতি (Pulse)',
-                            'প্রধান লক্ষণ (Symptoms)',
-                            'প্রাথমিক পরামর্শ (Advice)',
-                            'পরীক্ষা-নিরীক্ষা (Inv.)',
-                          ].map((key) => {
-                            const val = previewInvoice.dentalClinical?.[key];
-                            const hasVal = Boolean(val && val.trim().length > 0);
-                            return (
-                              <div
-                                key={key}
-                                className={`p-1.5 rounded border text-[11px] leading-tight ${
-                                  hasVal
-                                    ? 'bg-white border-teal-400 text-teal-950 shadow-2xs font-semibold'
-                                    : 'bg-transparent border-dashed border-slate-300 text-slate-600'
-                                }`}
-                              >
-                                <div className="flex items-center justify-between">
-                                  <span className="font-bold text-slate-900">{key}:</span>
-                                  {hasVal && <span className="text-teal-700 text-[10px] font-bold">✓</span>}
-                                </div>
-                                <div className="text-[10.5px] mt-0.5 truncate text-slate-800 font-mono">
-                                  {hasVal ? val : '...................'}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="p-2.5 border border-amber-300 rounded-md bg-amber-50/40">
-                        <div className="flex items-center justify-between text-xs font-bold text-amber-950 pb-1.5 border-b border-amber-200 mb-2">
-                          <span className="flex items-center gap-1.5">
-                            🦷 ডেন্টাল ক্লিনিক্যাল পর্যবেক্ষণ (Clinical Findings & Dental Examination):
-                          </span>
-                          <span className="text-[10px] text-amber-800 font-normal">
-                            দাঁতের লক্ষণ ও পর্যবেক্ষণ (Screenshot 2 & 3)
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 text-xs">
-                          {[
-                            'Pereocoronaties',
-                            'Pulpitis',
-                            'Calculus',
-                            'Gingivitis',
-                            'Caries',
-                            'Scaling',
-                            'Filling',
-                            'RCT',
-                            'Cap',
-                            'Bridge',
-                            'EXT',
-                            'Others',
-                            'Inv.',
-                          ].map((key) => {
-                            const val = previewInvoice.dentalClinical?.[key];
-                            const hasVal = Boolean(val && val.trim().length > 0);
-                            return (
-                              <div
-                                key={key}
-                                className={`p-1.5 rounded border text-[11px] leading-tight ${
-                                  hasVal
-                                    ? 'bg-white border-amber-400 text-amber-950 shadow-2xs font-semibold'
-                                    : 'bg-transparent border-dashed border-slate-300 text-slate-600'
-                                }`}
-                              >
-                                <div className="flex items-center justify-between">
-                                  <span className="font-bold text-slate-900">{key}:</span>
-                                  {hasVal && <span className="text-emerald-700 text-[10px] font-bold">✓</span>}
-                                </div>
-                                <div className="text-[10.5px] mt-0.5 truncate text-slate-800 font-mono">
-                                  {hasVal ? val : '...................'}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )
+                    <div className="inline-flex rounded-md border border-slate-300 p-0.5 bg-white shadow-2xs">
+                      <button
+                        type="button"
+                        onClick={() => setInvoicePrintWithPrice(true)}
+                        className={`px-3 py-1 text-xs font-bold rounded cursor-pointer transition-colors ${
+                          invoicePrintWithPrice
+                            ? 'bg-teal-700 text-white shadow-xs'
+                            : 'text-slate-700 hover:text-slate-900'
+                        }`}
+                      >
+                        ✓ দাম সহ মেমো
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setInvoicePrintWithPrice(false)}
+                        className={`px-3 py-1 text-xs font-bold rounded cursor-pointer transition-colors ${
+                          !invoicePrintWithPrice
+                            ? 'bg-amber-600 text-white shadow-xs'
+                            : 'text-slate-700 hover:text-slate-900'
+                        }`}
+                      >
+                        ✓ দাম ছাড়া মেমো
+                      </button>
+                    </div>
                   )}
                 </div>
-              );
-            })()}
 
-            {/* Items & Stock Impact Section */}
-            <div className="py-4 border-b border-slate-200">
-              <div className="flex items-center justify-between text-xs font-semibold text-slate-700 mb-2">
-                <span>
-                  {previewInvoice.txType === 'purchase'
-                    ? 'ক্রয়কৃত প্রডাক্টের তালিকা ও স্টক বৃদ্ধি বিবরণ:'
-                    : previewInvoice.txType === 'sale' && !invoicePrintWithPrice
-                    ? 'বিতরণকৃত ওষুধের তালিকা (দাম ছাড়া ডেলিভারি চালান):'
-                    : 'বিক্রয়কৃত প্রডাক্টের তালিকা ও স্টক হ্রাস বিবরণ:'}
-                </span>
-                <span className="font-mono text-slate-500">
-                  {previewInvoice.txType === 'purchase'
-                    ? 'ক্রয় দর × পরিমাণ = মোট'
-                    : previewInvoice.txType === 'sale' && !invoicePrintWithPrice
-                    ? 'ওষুধ ও পরিমাণের তালিকা'
-                    : 'বিক্রয় দর × পরিমাণ = মোট'}
-                </span>
-              </div>
-
-              {parsedPreviewItems.length > 0 ? (
-                <div className="border border-slate-200 rounded overflow-hidden">
-                  <table className="w-full text-left border-collapse text-xs font-mono">
-                    <thead
-                      className={
-                        previewInvoice.txType === 'purchase'
-                          ? 'bg-indigo-50/70 border-b border-slate-200 text-indigo-950 font-sans'
-                          : previewInvoice.txType === 'sale' && !invoicePrintWithPrice
-                          ? 'bg-amber-50/70 border-b border-slate-200 text-amber-950 font-sans'
-                          : 'bg-teal-50/70 border-b border-slate-200 text-teal-950 font-sans'
-                      }
-                    >
-                      <tr>
-                        <th className="py-2 px-3">
-                          {previewInvoice.txType === 'purchase'
-                            ? 'ওষুধের বিবরণ ও প্যাক হিসাব'
-                            : 'ওষুধের বিবরণ (হিসাব লাইন)'}
-                        </th>
-                        {/* Only show Unit Price when not in without-price mode */}
-                        {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
-                          <th className="py-2 px-2 text-center">
-                            {previewInvoice.txType === 'purchase' ? 'ক্রয় দর (৳)' : 'একক দর (৳)'}
-                          </th>
-                        )}
-                        <th className="py-2 px-2 text-center">পরিমাণ</th>
-                        <th className="py-2 px-2 text-center">স্টক পরিবর্তন</th>
-                        {/* Only show Total Price when not in without-price mode */}
-                        {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
-                          <th className="py-2 px-3 text-right">
-                            {previewInvoice.txType === 'purchase' ? 'মোট ক্রয় মূল্য (৳)' : 'মোট (৳)'}
-                          </th>
-                        )}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 bg-slate-50/50">
-                      {parsedPreviewItems.map((pItem, idx) => (
-                        <tr key={idx}>
-                          <td className="py-2 px-3 font-semibold text-slate-900">
-                            {previewInvoice.txType === 'purchase' ? (
-                              <div>
-                                <div className="font-bold text-slate-900">
-                                  {pItem.formPrefix ? `${pItem.formPrefix.toUpperCase()}. ` : ''}
-                                  {pItem.cleanName || pItem.brandAndStrength}
-                                </div>
-                                {pItem.packDetail && (
-                                  <div className="text-[11px] font-mono text-indigo-800 font-semibold mt-0.5">
-                                    প্যাক হিসাব: {pItem.packDetail}
-                                  </div>
-                                )}
-                              </div>
-                            ) : (
-                              <div>
-                                <div className="font-bold text-slate-900 text-xs sm:text-[13px] font-sans">
-                                  {pItem.serial}. {pItem.formPrefix ? `${pItem.formPrefix.charAt(0).toUpperCase() + pItem.formPrefix.slice(1)}. ` : ''}
-                                  {pItem.cleanName || pItem.brandAndStrength}
-                                </div>
-                                {pItem.dosageInstruction ? (
-                                  <div className="mt-0.5 font-mono font-bold text-red-600 tracking-wider text-xs">
-                                    {pItem.dosageInstruction}
-                                  </div>
-                                ) : (
-                                  pItem.rawLine.includes('{') && (
-                                    <div className="mt-0.5 font-mono font-bold text-red-600 tracking-wider text-xs">
-                                      {pItem.rawLine.split('{')[1]?.replace('}', '')}
-                                    </div>
-                                  )
-                                )}
-                              </div>
-                            )}
-                          </td>
-                          {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
-                            <td className="py-2 px-2 text-center text-slate-700">
-                              ৳{formatCleanMoney(pItem.unitPrice)}
-                            </td>
-                          )}
-                          <td className="py-2 px-2 text-center font-bold text-slate-900">
-                            {pItem.qty} পিস
-                          </td>
-                          <td className="py-2 px-2 text-center">
-                            {pItem.tailText?.includes('নন-স্টক') ? (
-                              <span className="text-slate-600 font-semibold bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">
-                                ০ পিস (শুধু ইনভয়েস)
-                              </span>
-                            ) : previewInvoice.txType === 'purchase' ? (
-                              <span className="text-emerald-700 font-bold">
-                                +{pItem.qty} পিস (স্টক ইন)
-                              </span>
-                            ) : (
-                              <span className="text-amber-800 font-bold">
-                                -{pItem.qty} পিস (স্টক আউট)
-                              </span>
-                            )}
-                          </td>
-                          {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
-                            <td className="py-2 px-3 text-right font-bold text-slate-900">
-                              ৳{formatCleanMoney(pItem.lineTotal)}
-                            </td>
-                          )}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div className="p-3 bg-slate-50 rounded border border-slate-200 text-xs font-mono text-slate-900 space-y-1 leading-relaxed">
-                  {formatTransactionItemsList(previewInvoice.itemsSummary).map((line, idx) => (
-                    <div key={idx}>{line}</div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Financial Totals OR Non-Price Summary */}
-            {previewInvoice.txType === 'sale' && !invoicePrintWithPrice ? (
-              <div className="py-3 px-3.5 my-2 bg-amber-50/60 border border-amber-200 rounded-md text-xs space-y-2">
-                <div className="flex justify-between font-semibold text-amber-950">
-                  <span>মোট ওষুধের আইটেম:</span>
-                  <span className="font-mono font-bold">{parsedPreviewItems.length} টি</span>
-                </div>
-                <div className="flex justify-between font-semibold text-amber-950">
-                  <span>মোট বিতরণকৃত পরিমাণ:</span>
-                  <span className="font-mono font-bold">
-                    {parsedPreviewItems.reduce((acc, curr) => acc + curr.qty, 0)} পিস
-                  </span>
-                </div>
-                <div className="text-[11px] text-slate-600 pt-1 border-t border-amber-200">
-                  * এটি মূল্যবিহীন ডেলিভারি ও রিসিট চালান। ওষুধ ব্যবহারের নিয়ম ডাক্তার ও ফার্মাসিস্টের পরামর্শ অনুযায়ী মেনে চলুন।
-                </div>
-              </div>
-            ) : (
-              <div className="py-3.5 space-y-1.5 text-sm font-mono tabular-nums">
-                <div className="flex justify-between text-xs text-slate-600">
-                  <span>
-                    {previewInvoice.txType === 'purchase'
-                      ? 'মোট ক্রয় বিল (Sub-total):'
-                      : 'মোট বিক্রয় বিল (Sub-total):'}
-                  </span>
-                  <span>৳{previewInvoice.subTotal.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-xs text-slate-600">
-                  <span>ছাড় / ডিসকাউন্ট (Discount):</span>
-                  <span>-৳{previewInvoice.discount.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between font-bold text-slate-900 pt-1 border-t border-slate-200">
-                  <span>
-                    {previewInvoice.txType === 'purchase'
-                      ? 'নিট ক্রয় বিল (Grand Total):'
-                      : 'নিট বিক্রয় বিল (Grand Total):'}
-                  </span>
-                  <span>৳{previewInvoice.grandTotal.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-emerald-700 font-semibold">
-                  <span>
-                    {previewInvoice.txType === 'purchase' ? 'নগদ পরিশোধ' : 'নগদ জমা'} (
-                    {previewInvoice.paymentMethod.toUpperCase()}):
-                  </span>
-                  <span>৳{previewInvoice.paidAmount.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-red-600 font-semibold items-center">
-                  <span>
-                    {previewInvoice.txType === 'purchase'
-                      ? 'কোম্পানি বাকি (Supplier Due):'
-                      : 'কাস্টমার বাকি (Customer Due):'}
-                  </span>
-                  <span>৳{previewInvoice.dueAmount.toFixed(2)}</span>
-                </div>
-                {previewInvoice.dueAmount > 0 && (
-                  <div className="pt-2 flex justify-end print:hidden">
-                    <button
-                      type="button"
-                      onClick={() => openPaymentModal(previewInvoice)}
-                      className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-md shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <CreditCard className="w-3.5 h-3.5" />
-                      <span>Payment Now (বকেয়া পরিশোধ করুন)</span>
-                    </button>
+                {previewInvoice.txType === 'sale' && (
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                    <span className="font-bold text-slate-700">সিল / শাখা:</span>
+                    <div className="inline-flex rounded-md border border-slate-300 p-0.5 bg-white shadow-2xs">
+                      <button
+                        type="button"
+                        onClick={() => setActiveInvoiceSeal('iqbal_pharmacy')}
+                        className={`px-2.5 py-1 text-xs font-bold rounded cursor-pointer transition-colors ${
+                          activeInvoiceSeal === 'iqbal_pharmacy'
+                            ? 'bg-teal-700 text-white shadow-xs'
+                            : 'text-slate-700 hover:text-slate-900'
+                        }`}
+                      >
+                        🏢 ১. ইকবাল ফার্মেসী
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setActiveInvoiceSeal('dental_care_1')}
+                        className={`px-2.5 py-1 text-xs font-bold rounded cursor-pointer transition-colors ${
+                          activeInvoiceSeal === 'dental_care_1'
+                            ? 'bg-blue-800 text-white shadow-xs'
+                            : 'text-slate-700 hover:text-slate-900'
+                        }`}
+                      >
+                        🦷 ২. ইকবাল ডেন্টাল কেয়ার-১
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setActiveInvoiceSeal('dental_care_2')}
+                        className={`px-2.5 py-1 text-xs font-bold rounded cursor-pointer transition-colors ${
+                          activeInvoiceSeal === 'dental_care_2'
+                            ? 'bg-indigo-800 text-white shadow-xs'
+                            : 'text-slate-700 hover:text-slate-900'
+                        }`}
+                      >
+                        🦷 ৩. ইকবাল ডেন্টাল কেয়ার-২
+                      </button>
+                    </div>
                   </div>
                 )}
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="px-3.5 py-1.5 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-md flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>A4 প্রিন্ট করুন</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewInvoice(null)}
+                    className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-200 border border-slate-300 rounded-md cursor-pointer"
+                  >
+                    বন্ধ
+                  </button>
+                </div>
               </div>
-            )}
-            {/* নিচের ৩টি সিল ও স্বাক্ষর সেকশন (Official Seal & Doctor Signature) */}
-            {(() => {
-              const currentSeal = activeInvoiceSeal || previewInvoice.selectedSeal || 'iqbal_pharmacy';
-              const sealMap = {
-                iqbal_pharmacy: {
-                  title: 'ইকবাল ফার্মেসী',
-                  location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
-                },
-                dental_care_1: {
-                  title: 'ইকবাল ডেন্টাল কেয়ার-১',
-                  location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
-                },
-                dental_care_2: {
-                  title: 'ইকবাল ডেন্টাল কেয়ার-২ (ওদারহাট ডেন্টাল কেয়ার)',
-                  location: 'উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী',
-                },
-              };
-              const sealConfig = sealMap[currentSeal] || sealMap.iqbal_pharmacy;
 
-              return (
-                <div>
-                  {/* পরবর্তী সাক্ষাতের সময় ব্যবস্থাপত্র সঙ্গে আনবেন (Screenshot 3 Green Banner) */}
-                  <div className="my-2 py-2 px-4 bg-[#2e7d32] text-white text-center font-bold text-xs rounded tracking-wide shadow-2xs">
-                    পরবর্তী সাক্ষাতের সময় ব্যবস্থাপত্র সঙ্গে আনবেন।
-                  </div>
+              {/* ========================================================================
+                  A4 INVOICE SHEET CONTENT
+                  ======================================================================== */}
 
-                  <div className="pt-4 pb-2 my-2 border-t-2 border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-6">
-                  {/* The Selected Circular Rubber Stamp */}
-                  <div className="flex flex-col items-center">
-                    <div className="w-36 h-36 rounded-full border-4 border-dashed border-blue-900 p-1 flex items-center justify-center relative select-none shadow-xs rotate-[-2deg] print:rotate-0 bg-blue-50/25">
-                      <div className="w-full h-full rounded-full border-2 border-solid border-blue-900 flex flex-col items-center justify-center text-center p-1.5 text-blue-950">
-                        <div className="text-[9.5px] font-black uppercase tracking-wide text-blue-950 leading-tight">
-                          ★ {sealConfig.title} ★
+              {/* Top Meta Line: Govt Approval & Invoice Copy Label */}
+              <div className="flex items-center justify-between text-[11px] text-slate-600 border-b border-slate-300 pb-1.5 mb-2.5">
+                <span className="font-semibold text-slate-800">
+                  গণপ্রজাতন্ত্রী বাংলাদেশ সরকার অনুমোদিত ড্রাগ লাইসেন্স ও ডেন্টাল ক্লিনিক
+                </span>
+                <span className="font-mono font-bold text-slate-700">
+                  {previewInvoice.txType === 'purchase'
+                    ? 'ক্রয় চালান (PURCHASE INVOICE)'
+                    : previewInvoice.txType === 'sale' && !invoicePrintWithPrice
+                    ? 'প্রেসক্রিপশন ও ডেলিভারি মেমো (DELIVERY MEMO)'
+                    : 'বিক্রয় চালান / ক্যাশ মেমো (SALES INVOICE)'}{' '}
+                  · মূল কপি (Customer Copy) · A4
+                </span>
+              </div>
+
+              {/* Header Row: Doctor Qualifications (Left) & Chamber Box (Right) */}
+              {(() => {
+                const currentSeal = activeInvoiceSeal || previewInvoice.selectedSeal || 'iqbal_pharmacy';
+                const sealMap = {
+                  iqbal_pharmacy: {
+                    title: 'ইকবাল ফার্মেসী',
+                    sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (DMTD (Dental), LMAF, RMP, Pharmacist)',
+                    address: 'ঠিকানা:- নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।',
+                    mobile: 'মোবাইল:- 01812-358839, 01315645076',
+                    location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
+                  },
+                  dental_care_1: {
+                    title: 'ইকবাল ডেন্টাল কেয়ার-১',
+                    sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (DMTD (Dental), LMAF, RMP, Pharmacist)',
+                    address: 'ঠিকানা:- নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।',
+                    mobile: 'মোবাইল:- 01812-358839, 01315645076',
+                    location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
+                  },
+                  dental_care_2: {
+                    title: 'ইকবাল ডেন্টাল কেয়ার-২ (ওদারহাট ডেন্টাল কেয়ার)',
+                    sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (DMTD (Dental), LMAF, RMP, Pharmacist)',
+                    address: 'ঠিকানা:- উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী।',
+                    mobile: 'মোবাইল:- 01812-358839, 01315645076',
+                    location: 'উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী',
+                  },
+                };
+                const sealConfig = sealMap[currentSeal] || sealMap.iqbal_pharmacy;
+
+                return (
+                  <div className="space-y-3 border-b-2 border-slate-900 pb-3 mb-3">
+                    <div className="flex flex-col sm:flex-row sm:items-stretch justify-between gap-4 bg-white">
+                      {/* Left Doctor Info */}
+                      <div className="text-left space-y-1 sm:max-w-[46%]">
+                        <div className="flex items-center gap-2">
+                          <span className="text-rose-900 font-black text-2xl font-serif">Rx</span>
+                          <h3 className="text-xl font-black text-rose-900 tracking-tight">
+                            ডেন্টিস্ট:- ইকবাল মাহমুদ
+                          </h3>
                         </div>
-                        <div className="w-16 h-px bg-blue-800 my-0.5" />
-                        <div className="text-[9px] font-bold text-blue-950">
-                          ডেন্টিস্ট:- ইকবাল মাহমুদ
+                        <div className="text-xs font-semibold text-slate-800 leading-snug space-y-0.5">
+                          <div className="font-bold text-teal-900 text-[13px]">
+                            DMTD (Dental), LMAF, RMP, Pharmacist
+                          </div>
+                          <div className="text-slate-700">ডি.এইচ.ডি.টি (ফেনী) · এস.ডি.এফ (ঢাকা)</div>
+                          <div className="text-slate-700">চেম্বার এন্ড ডেন্টাল টেকনোলজিস্ট</div>
+                          <div className="font-mono font-bold text-slate-900 pt-1 text-xs">
+                            মোবাইল: 01812-358839, 01315645076
+                          </div>
+                          <div className="text-[11px] font-bold text-teal-800">
+                            শাখা: {sealConfig.title}
+                          </div>
                         </div>
-                        <div className="text-[7.5px] font-semibold text-blue-900 leading-tight">
-                          DMTD (Dental),LMAF,RMP,Pharmacist
+                      </div>
+
+                      {/* Right Chambers Box (Dark Teal Box) */}
+                      <div className="bg-[#2a6d70] text-white p-3 rounded-md flex-1 text-xs space-y-1.5 shadow-xs">
+                        <div className="text-center font-bold text-sm text-amber-200 border-b border-teal-600/60 pb-1">
+                          চেম্বার ও রোগী দেখার সময়সূচী:
                         </div>
-                        <div className="text-[8px] font-extrabold text-blue-900 tracking-wider border-y border-blue-700 py-0.5 my-0.5">
-                          ★ VERIFIED & APPROVED ★
-                        </div>
-                        <div className="text-[7.5px] font-mono font-bold text-blue-950">
-                          {previewInvoice.dateStr || getTodayDateStr()}
-                        </div>
-                        <div className="text-[7px] text-blue-800 font-semibold leading-tight">
-                          {sealConfig.location}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-[11px] leading-tight">
+                          {/* Chamber 2 */}
+                          <div className="border-b sm:border-b-0 sm:border-r border-teal-500/50 pb-1.5 sm:pb-0 sm:pr-2.5">
+                            <div className="font-bold text-emerald-100">ইকবাল ডেন্টাল কেয়ার-২</div>
+                            <div className="text-[10px] text-teal-100">(ওদারহাট ডেন্টাল কেয়ার)</div>
+                            <div className="mt-0.5 text-teal-100 text-[10.5px]">
+                              উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী।
+                            </div>
+                            <div className="mt-1 font-semibold text-amber-200 text-[10px]">
+                              রোগী দেখার সময়ঃ প্রতিদিন সকাল ১০টা থেকে মাগরিব পর্যন্ত। প্রতি শুক্রবার চেম্বার বন্ধ।
+                            </div>
+                          </div>
+
+                          {/* Chamber 1 */}
+                          <div className="sm:pl-1">
+                            <div className="font-bold text-emerald-100">ইকবাল ডেন্টাল কেয়ার-১</div>
+                            <div className="mt-0.5 text-teal-100 text-[10.5px]">
+                              নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।
+                            </div>
+                            <div className="mt-1 font-semibold text-amber-200 text-[10px]">
+                              রোগী দেখার সময়ঃ সকাল ৯টা থেকে দুপুর ১টা এবং মাগরিব থেকে রাত ৯.০০টা।
+                            </div>
+                            <div className="mt-1 text-[10px] text-teal-200 border-t border-teal-600/50 pt-0.5">
+                              ফার্মেসী শাখা: ইকবাল ফার্মেসী, নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
-                    <span className="text-[10px] font-bold text-blue-950 mt-1">
-                      {sealConfig.title} (অফিসিয়াল সিল)
+                  </div>
+                );
+              })()}
+
+              {/* Distinct A4 Invoice Title Ribbon */}
+              <div
+                className={`mb-3 px-4 py-2 rounded-md border flex flex-wrap items-center justify-between gap-2 ${
+                  previewInvoice.txType === 'purchase'
+                    ? 'bg-indigo-50 border-indigo-300 text-indigo-950'
+                    : previewInvoice.txType === 'sale'
+                    ? invoicePrintWithPrice
+                      ? 'bg-teal-50 border-teal-300 text-teal-950'
+                      : 'bg-amber-50 border-amber-300 text-amber-950'
+                    : 'bg-emerald-50 border-emerald-300 text-emerald-950'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  {previewInvoice.txType === 'purchase' ? (
+                    <Truck className="w-4 h-4 text-indigo-700 shrink-0" />
+                  ) : (
+                    <ShoppingCart className="w-4 h-4 text-teal-700 shrink-0" />
+                  )}
+                  <span className="text-sm sm:text-base font-black tracking-tight">
+                    {previewInvoice.txType === 'purchase'
+                      ? 'প্রডাক্ট ক্রয় ইনভয়েস / স্টক-ইন চালান (PURCHASE INVOICE)'
+                      : previewInvoice.txType === 'sale'
+                      ? invoicePrintWithPrice
+                        ? 'প্রডাক্ট বিক্রয় ইনভয়েস / ক্যাশ মেমো (SALES INVOICE & CASH MEMO)'
+                        : 'প্রডাক্ট ডেলিভারি চালান / প্রেসক্রিপশন মেমো (DELIVERY MEMO)'
+                      : 'বকেয়া আদায় মানি রিসিট (DUE COLLECTION RECEIPT)'}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded border bg-white border-slate-300 text-slate-800">
+                    A4 ফরম্যাট
+                  </span>
+                  <span
+                    className={`text-[11px] font-mono font-bold px-2.5 py-0.5 rounded border ${
+                      previewInvoice.txType === 'purchase'
+                        ? 'bg-white border-indigo-300 text-emerald-700'
+                        : previewInvoice.txType === 'sale'
+                        ? invoicePrintWithPrice
+                          ? 'bg-white border-teal-300 text-amber-800'
+                          : 'bg-white border-amber-300 text-amber-900'
+                        : 'bg-white border-emerald-300 text-emerald-800'
+                    }`}
+                  >
+                    {(() => {
+                      const items = parsedPreviewItems;
+                      const nonStockCount = items.filter((i) => i.tailText?.includes('নন-স্টক')).length;
+                      const stockEffectQty = items
+                        .filter((i) => !i.tailText?.includes('নন-স্টক'))
+                        .reduce((sum, i) => sum + i.qty, 0);
+                      if (previewInvoice.txType === 'purchase') {
+                        return stockEffectQty > 0
+                          ? `স্টক বৃদ্ধি (+${stockEffectQty} পিস)${nonStockCount > 0 ? ` · ${nonStockCount}টি নন-স্টক` : ''}`
+                          : 'শুধু ইনভয়েস (স্টক অপরিবর্তিত)';
+                      }
+                      if (previewInvoice.txType === 'sale') {
+                        return stockEffectQty > 0
+                          ? `স্টক হ্রাস (-${stockEffectQty} পিস)${nonStockCount > 0 ? ` · ${nonStockCount}টি নন-স্টক` : ''}`
+                          : 'শুধু ইনভয়েস (স্টক অপরিবর্তিত)';
+                      }
+                      return 'লেজার বকেয়া জমা';
+                    })()}
+                  </span>
+                </div>
+              </div>
+
+              {/* Patient & Customer & Invoice Meta Details (4-Card Grid) */}
+              <div className="p-3 bg-pink-50/70 border border-pink-200 rounded-lg mb-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  <div className="space-y-0.5">
+                    <span className="text-slate-500 text-[10.5px] block">
+                      Name (রোগী / ক্রেতার নাম):
+                    </span>
+                    <span className="font-bold text-slate-900 block truncate text-sm">
+                      {previewInvoice.partyName || 'সাধারণ ক্রেতা (Walk-in)'}
+                    </span>
+                    <span className="text-slate-500 text-[10.5px] block pt-0.5 font-mono">
+                      ফোন: {previewInvoice.partyPhone || 'N/A'}
                     </span>
                   </div>
 
-                  {/* Doctor Signature Block */}
-                  <div className="text-center sm:text-right space-y-1">
-                    <div className="w-48 border-b-2 border-slate-900 mx-auto sm:ml-auto sm:mr-0 mb-1" />
-                    <div className="text-xs font-bold text-slate-900">
-                      স্বাক্ষর ও সিল (Doctor's Signature & Seal)
-                    </div>
-                    <div className="text-[11px] font-semibold text-slate-800">
-                      ডেন্টিস্ট:- ইকবাল মাহমুদ
-                    </div>
-                    <div className="text-[10px] font-medium text-slate-700">
-                      DMTD (Dental),LMAF,RMP,Pharmacist
-                    </div>
-                    <div className="text-[10px] text-slate-600">
-                      {sealConfig.title} · {sealConfig.location}
-                    </div>
+                  <div className="space-y-0.5">
+                    <span className="text-slate-500 text-[10.5px] block">
+                      Age & Sex (বয়স ও লিঙ্গ):
+                    </span>
+                    <span className="font-bold text-slate-900 block text-sm">
+                      {previewInvoice.patientAge ? `${previewInvoice.patientAge} বছর` : '—'} ·{' '}
+                      {previewInvoice.patientSex === 'Female'
+                        ? 'মহিলা'
+                        : previewInvoice.patientSex === 'Other'
+                        ? 'Other'
+                        : 'পুরুষ'}
+                    </span>
+                    <span className="text-slate-500 text-[10.5px] block pt-0.5">
+                      ঠিকানা: {previewInvoice.selectedSeal === 'dental_care_2' ? 'নোয়াখালী সদর' : 'চন্দ্রগঞ্জ, লক্ষ্মীপুর'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-0.5">
+                    <span className="text-slate-500 text-[10.5px] block">
+                      Invoice No (চালান / মেমো নং):
+                    </span>
+                    <span className="font-mono font-bold text-slate-900 block text-sm">
+                      {previewInvoice.invoiceNo}
+                    </span>
+                    <span className="text-slate-500 text-[10.5px] block pt-0.5 font-mono">
+                      তারিখ: {previewInvoice.dateStr || getTodayDateStr()}
+                    </span>
+                  </div>
+
+                  <div className="space-y-0.5">
+                    <span className="text-slate-500 text-[10.5px] block">
+                      Served By & Payment:
+                    </span>
+                    <span className="font-semibold text-slate-800 block text-xs">
+                      অপারেটর: {previewInvoice.staffRole === 'owner' ? 'Owner' : previewInvoice.staffName || 'Staff'}
+                    </span>
+                    <span className="font-mono font-bold text-emerald-800 block pt-0.5 text-xs">
+                      {previewInvoice.paymentMethod.toUpperCase()} ·{' '}
+                      <span className={previewInvoice.dueAmount > 0 ? 'text-red-600' : 'text-emerald-700'}>
+                        {previewInvoice.dueAmount > 0 ? 'বকেয়া (DUE)' : 'পরিশোধিত (PAID)'}
+                      </span>
+                    </span>
                   </div>
                 </div>
               </div>
-            );
-          })()}
 
-            {/* ইনভয়েস এর ফুটার (ছোট করে লেখা) */}
-            <div className="pt-2.5 pb-1 border-t border-dashed border-slate-300 text-center space-y-0.5">
-              <div className="text-[10px] font-semibold text-slate-600">
-                মোঃ আকবর হোসেন চৌধুরী
+              {/* ক্লিনিক্যাল পর্যবেক্ষণ: ফার্মেসীর জন্য ফার্মেসী ক্লিনিক্যাল ও ডেন্টালের জন্য ডেন্টাল ক্লিনিক্যাল অপশন */}
+              {previewInvoice.txType === 'sale' && (
+                (() => {
+                  const currentSeal = activeInvoiceSeal || previewInvoice.selectedSeal || 'iqbal_pharmacy';
+                  return currentSeal === 'iqbal_pharmacy' ? (
+                    <div className="p-2.5 border border-teal-300 rounded-md bg-teal-50/50 mb-3">
+                      <div className="flex items-center justify-between text-xs font-bold text-teal-950 pb-1 border-b border-teal-200 mb-2">
+                        <span className="flex items-center gap-1.5">
+                          <Stethoscope className="w-3.5 h-3.5 text-teal-700" />
+                          ফার্মেসী ক্লিনিক্যাল পর্যবেক্ষণ ও ভাইটালস (Clinical Findings & Vitals):
+                        </span>
+                        <span className="text-[10px] text-teal-800 font-normal">
+                          রক্তচাপ, সুগার, তাপমাত্রা ও পরামর্শ
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                        {[
+                          'রক্তচাপ (BP)',
+                          'ডায়াবেটিস (RBS)',
+                          'তাপমাত্রা (Temp)',
+                          'ওজন (Weight)',
+                          'নাড়ির গতি (Pulse)',
+                          'প্রধান লক্ষণ (Symptoms)',
+                          'প্রাথমিক পরামর্শ (Advice)',
+                          'পরীক্ষা-নিরীক্ষা (Inv.)',
+                        ].map((key) => {
+                          const val = previewInvoice.dentalClinical?.[key];
+                          const hasVal = Boolean(val && val.trim().length > 0);
+                          return (
+                            <div
+                              key={key}
+                              className={`p-1.5 rounded border text-[11px] leading-tight ${
+                                hasVal
+                                  ? 'bg-white border-teal-400 text-teal-950 shadow-2xs font-semibold'
+                                  : 'bg-transparent border-dashed border-slate-300 text-slate-600'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-slate-900">{key}:</span>
+                                {hasVal && <span className="text-teal-700 text-[10px] font-bold">✓</span>}
+                              </div>
+                              <div className="text-[10.5px] mt-0.5 truncate text-slate-800 font-mono">
+                                {hasVal ? val : '...................'}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-2.5 border border-amber-300 rounded-md bg-amber-50/40 mb-3">
+                      <div className="flex items-center justify-between text-xs font-bold text-amber-950 pb-1 border-b border-amber-200 mb-2">
+                        <span className="flex items-center gap-1.5">
+                          🦷 ডেন্টাল ক্লিনিক্যাল পর্যবেক্ষণ (Clinical Findings & Dental Examination):
+                        </span>
+                        <span className="text-[10px] text-amber-800 font-normal">
+                          দাঁতের লক্ষণ ও পর্যবেক্ষণ
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 text-xs">
+                        {[
+                          'Pereocoronaties',
+                          'Pulpitis',
+                          'Calculus',
+                          'Gingivitis',
+                          'Caries',
+                          'Scaling',
+                          'Filling',
+                          'RCT',
+                          'Cap',
+                          'Bridge',
+                          'EXT',
+                          'Others',
+                          'Inv.',
+                        ].map((key) => {
+                          const val = previewInvoice.dentalClinical?.[key];
+                          const hasVal = Boolean(val && val.trim().length > 0);
+                          return (
+                            <div
+                              key={key}
+                              className={`p-1.5 rounded border text-[11px] leading-tight ${
+                                hasVal
+                                  ? 'bg-white border-amber-400 text-amber-950 shadow-2xs font-semibold'
+                                  : 'bg-transparent border-dashed border-slate-300 text-slate-600'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-slate-900">{key}:</span>
+                                {hasVal && <span className="text-emerald-700 text-[10px] font-bold">✓</span>}
+                              </div>
+                              <div className="text-[10.5px] mt-0.5 truncate text-slate-800 font-mono">
+                                {hasVal ? val : '...................'}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()
+              )}
+
+              {/* Items Table (Full Width A4 Table with Clean Borders) */}
+              <div className="mb-3">
+                <div className="flex items-center justify-between text-xs font-bold text-slate-800 mb-1.5">
+                  <span>
+                    {previewInvoice.txType === 'purchase'
+                      ? 'ক্রয়কৃত ওষুধের বিবরণ ও প্যাক হিসাব:'
+                      : previewInvoice.txType === 'sale' && !invoicePrintWithPrice
+                      ? 'বিতরণকৃত ওষুধের তালিকা (ডেলিভারি চালান):'
+                      : 'বিক্রয়কৃত ওষুধের তালিকা ও হিসাব:'}
+                  </span>
+                  <span className="font-mono text-slate-500 text-[11px]">
+                    মোট আইটেম: {parsedPreviewItems.length} টি
+                  </span>
+                </div>
+
+                {parsedPreviewItems.length > 0 ? (
+                  <div className="border border-slate-300 rounded overflow-hidden">
+                    <table className="w-full text-left border-collapse text-xs font-mono">
+                      <thead
+                        className={
+                          previewInvoice.txType === 'purchase'
+                            ? 'bg-indigo-100/70 border-b-2 border-slate-300 text-indigo-950 font-sans'
+                            : previewInvoice.txType === 'sale' && !invoicePrintWithPrice
+                            ? 'bg-amber-100/70 border-b-2 border-slate-300 text-amber-950 font-sans'
+                            : 'bg-teal-100/70 border-b-2 border-slate-300 text-teal-950 font-sans'
+                        }
+                      >
+                        <tr>
+                          <th className="py-2 px-2.5 text-center w-10">ক্র.নং</th>
+                          <th className="py-2 px-3">ওষুধের বিবরণ ও নির্দেশনা</th>
+                          <th className="py-2 px-2 text-center w-28">ডোজ ও নিয়ম</th>
+                          {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
+                            <th className="py-2 px-2 text-center w-24">
+                              {previewInvoice.txType === 'purchase' ? 'ক্রয় দর (৳)' : 'একক দর (৳)'}
+                            </th>
+                          )}
+                          <th className="py-2 px-2 text-center w-20">পরিমাণ</th>
+                          {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
+                            <th className="py-2 px-3 text-right w-28">
+                              {previewInvoice.txType === 'purchase' ? 'মোট ক্রয় (৳)' : 'মোট টাকা (৳)'}
+                            </th>
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 bg-white">
+                        {parsedPreviewItems.map((pItem, idx) => (
+                          <tr key={idx} className={idx % 2 === 1 ? 'bg-slate-50/50' : 'bg-white'}>
+                            <td className="py-2 px-2 text-center font-bold text-slate-600">
+                              {idx + 1}
+                            </td>
+                            <td className="py-2 px-3 text-slate-900">
+                              {previewInvoice.txType === 'purchase' ? (
+                                <div>
+                                  <div className="font-bold text-slate-900 text-xs sm:text-[13px] font-sans">
+                                    {pItem.formPrefix ? `${pItem.formPrefix.toUpperCase()}. ` : ''}
+                                    {pItem.cleanName || pItem.brandAndStrength}
+                                  </div>
+                                  {pItem.packDetail && (
+                                    <div className="text-[11px] font-mono text-indigo-800 font-semibold mt-0.5">
+                                      প্যাক হিসাব: {pItem.packDetail}
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div>
+                                  <div className="font-bold text-slate-900 text-xs sm:text-[13px] font-sans">
+                                    {pItem.formPrefix ? `${pItem.formPrefix.charAt(0).toUpperCase() + pItem.formPrefix.slice(1)}. ` : ''}
+                                    {pItem.cleanName || pItem.brandAndStrength}
+                                  </div>
+                                  {pItem.tailText && !pItem.dosageInstruction && (
+                                    <div className="text-[10.5px] text-slate-500 font-sans">
+                                      {pItem.tailText}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-2 px-2 text-center">
+                              {pItem.dosageInstruction ? (
+                                <span className="inline-block px-1.5 py-0.5 font-mono font-bold text-red-600 bg-rose-50 border border-rose-200 rounded text-[11px]">
+                                  {pItem.dosageInstruction}
+                                </span>
+                              ) : pItem.rawLine.includes('{') ? (
+                                <span className="inline-block px-1.5 py-0.5 font-mono font-bold text-red-600 bg-rose-50 border border-rose-200 rounded text-[11px]">
+                                  {pItem.rawLine.split('{')[1]?.replace('}', '')}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400 font-sans text-[11px]">নিয়মিত</span>
+                              )}
+                            </td>
+                            {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
+                              <td className="py-2 px-2 text-center text-slate-700">
+                                ৳{formatCleanMoney(pItem.unitPrice)}
+                              </td>
+                            )}
+                            <td className="py-2 px-2 text-center font-bold text-slate-900">
+                              {pItem.qty} পিস
+                            </td>
+                            {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
+                              <td className="py-2 px-3 text-right font-bold text-slate-900">
+                                ৳{formatCleanMoney(pItem.lineTotal)}
+                              </td>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-slate-50 rounded border border-slate-300 text-xs font-mono text-slate-900 space-y-1 leading-relaxed">
+                    {formatTransactionItemsList(previewInvoice.itemsSummary).map((line, idx) => (
+                      <div key={idx}>{line}</div>
+                    ))}
+                  </div>
+                )}
               </div>
-              <div className="text-[10px] text-slate-500">
-                ডেভেলপার ইকবাল ফার্মেসী মেডিসিন এ্যাপস্
+
+              {/* Financial Totals & In-Words Section */}
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 mb-3 pt-1">
+                {/* Left 7 Cols: Amount In Bengali Words + Return Terms */}
+                <div className="sm:col-span-7 space-y-2">
+                  <div className="p-2.5 bg-slate-50 border border-slate-300 rounded-md text-xs space-y-1">
+                    <div className="font-bold text-slate-900">
+                      কথায় (Amount in Words):
+                    </div>
+                    <div className="text-teal-900 font-bold text-[13px] bg-white p-1.5 rounded border border-slate-200">
+                      কথায়: {numberToBanglaWords(previewInvoice.grandTotal)}
+                    </div>
+                  </div>
+
+                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-md text-[11px] text-slate-600 space-y-1">
+                    <div className="font-bold text-slate-800">
+                      ওষুধ সংক্রান্ত বিশেষ দ্রষ্টব্য ও শর্তাবলী:
+                    </div>
+                    <ul className="list-disc list-inside space-y-0.5 text-[10.5px] leading-relaxed">
+                      <li>বিক্রিত ওষুধ অক্ষত ফয়েল/প্যাক থাকলে ক্যাশ মেমোসহ ৭ দিনের মধ্যে পরিবর্তনযোগ্য।</li>
+                      <li>কাটা/ছেঁড়া পাতা বা ইনসুলিন ও ফ্রিজের ওষুধ ফেরত বা পরিবর্তনযোগ্য নয়।</li>
+                      <li>সকল ওষুধ আলো ও তাপ থেকে দূরে ঠাণ্ডা ও শুষ্ক স্থানে রাখুন। শিশুদের নাগালের বাইরে রাখুন।</li>
+                    </ul>
+                  </div>
+
+                  {/* পরবর্তী সাক্ষাতের সময় ব্যবস্থাপত্র সঙ্গে আনবেন Banner */}
+                  <div className="py-1.5 px-3 bg-[#2e7d32] text-white text-center font-bold text-xs rounded tracking-wide shadow-2xs">
+                    পরবর্তী সাক্ষাতের সময় ব্যবস্থাপত্র সঙ্গে আনবেন।
+                  </div>
+                </div>
+
+                {/* Right 5 Cols: Financial Calculations Breakdown */}
+                <div className="sm:col-span-5">
+                  <div className="p-3 bg-slate-50 border border-slate-300 rounded-md space-y-1.5 text-xs font-mono tabular-nums">
+                    <div className="flex justify-between text-slate-600">
+                      <span>
+                        {previewInvoice.txType === 'purchase'
+                          ? 'মোট ক্রয় মূল্য (Sub-total):'
+                          : 'মোট বিক্রয় মূল্য (Sub-total):'}
+                      </span>
+                      <span className="font-bold">৳{previewInvoice.subTotal.toFixed(2)}</span>
+                    </div>
+
+                    <div className="flex justify-between text-slate-600">
+                      <span>ছাড় / ডিসকাউন্ট (Discount):</span>
+                      <span className="font-bold text-red-600">-৳{previewInvoice.discount.toFixed(2)}</span>
+                    </div>
+
+                    <div className="flex justify-between font-bold text-slate-900 text-sm pt-1.5 border-t-2 border-slate-300">
+                      <span>সর্বমোট প্রদেয় বিল (Grand Total):</span>
+                      <span className="text-base text-teal-900">৳{previewInvoice.grandTotal.toFixed(2)}</span>
+                    </div>
+
+                    <div className="flex justify-between text-emerald-700 font-bold pt-1 border-t border-slate-200">
+                      <span>
+                        {previewInvoice.txType === 'purchase' ? 'পরিশোধিত মূল্য' : 'নগদ জমা / পরিশোধ'} (
+                        {previewInvoice.paymentMethod.toUpperCase()}):
+                      </span>
+                      <span>৳{previewInvoice.paidAmount.toFixed(2)}</span>
+                    </div>
+
+                    <div className="flex justify-between text-red-600 font-bold items-center">
+                      <span>
+                        {previewInvoice.txType === 'purchase'
+                          ? 'কোম্পানি বাকি (Supplier Due):'
+                          : 'বকেয়া বিল (Customer Due):'}
+                      </span>
+                      <span className="text-sm">৳{previewInvoice.dueAmount.toFixed(2)}</span>
+                    </div>
+
+                    {previewInvoice.dueAmount > 0 && (
+                      <div className="pt-2 flex justify-end no-print">
+                        <button
+                          type="button"
+                          onClick={() => openPaymentModal(previewInvoice)}
+                          className="px-3.5 py-1.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-md shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <CreditCard className="w-3.5 h-3.5" />
+                          <span>Payment Now (বকেয়া পরিশোধ)</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center justify-end gap-2 pt-3 border-t border-slate-200 no-print mt-2">
-              {(previewInvoice.txType === 'sale' || previewInvoice.txType === 'purchase') && (
-                <button
-                  type="button"
-                  onClick={() => handleEditInvoiceAction(previewInvoice)}
-                  className="px-4 py-2 text-xs font-semibold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-md flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Edit3 className="w-3.5 h-3.5" />
-                  ইনভয়েস এডিট করুন
-                </button>
-              )}
-              {previewInvoice.txType === 'sale' ? (
-                <>
+            {/* Bottom Section: Official Seal & Doctor Signatures (Print-Friendly) */}
+            <div className="print-avoid-break">
+              {(() => {
+                const currentSeal = activeInvoiceSeal || previewInvoice.selectedSeal || 'iqbal_pharmacy';
+                const sealMap = {
+                  iqbal_pharmacy: {
+                    title: 'ইকবাল ফার্মেসী',
+                    location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
+                  },
+                  dental_care_1: {
+                    title: 'ইকবাল ডেন্টাল কেয়ার-১',
+                    location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
+                  },
+                  dental_care_2: {
+                    title: 'ইকবাল ডেন্টাল কেয়ার-২ (ওদারহাট ডেন্টাল কেয়ার)',
+                    location: 'উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী',
+                  },
+                };
+                const sealConfig = sealMap[currentSeal] || sealMap.iqbal_pharmacy;
+
+                return (
+                  <div className="pt-4 pb-2 border-t-2 border-slate-900 grid grid-cols-1 sm:grid-cols-3 items-center gap-4">
+                    {/* Customer Signature */}
+                    <div className="text-center sm:text-left space-y-1">
+                      <div className="w-36 border-b border-slate-600 mx-auto sm:mx-0 mb-1" />
+                      <div className="text-xs font-bold text-slate-800">
+                        ক্রেতার স্বাক্ষর
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        Customer's Signature
+                      </div>
+                    </div>
+
+                    {/* Salesman / Prepared By Signature */}
+                    <div className="text-center space-y-1">
+                      <div className="w-36 border-b border-slate-600 mx-auto mb-1" />
+                      <div className="text-xs font-bold text-slate-800">
+                        বিক্রয়কারীর স্বাক্ষর
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        {previewInvoice.staffRole === 'owner' ? 'Owner / Pharmacist' : previewInvoice.staffName || 'Salesman'}
+                      </div>
+                    </div>
+
+                    {/* Doctor Seal & Signature Block */}
+                    <div className="flex flex-col items-center sm:items-end">
+                      <div className="flex items-center gap-3">
+                        {/* Circular Rubber Stamp */}
+                        <div className="w-28 h-28 rounded-full border-2 border-dashed border-blue-900 p-0.5 flex items-center justify-center relative select-none shadow-xs bg-blue-50/25">
+                          <div className="w-full h-full rounded-full border border-solid border-blue-900 flex flex-col items-center justify-center text-center p-1 text-blue-950">
+                            <div className="text-[8px] font-black uppercase tracking-tight text-blue-950 leading-tight">
+                              ★ {sealConfig.title} ★
+                            </div>
+                            <div className="w-12 h-px bg-blue-800 my-0.5" />
+                            <div className="text-[7.5px] font-bold text-blue-950">
+                              ডেন্টিস্ট:- ইকবাল মাহমুদ
+                            </div>
+                            <div className="text-[6.5px] font-semibold text-blue-900 leading-tight">
+                              DMTD, LMAF, RMP, Pharmacist
+                            </div>
+                            <div className="text-[7px] font-extrabold text-blue-900 tracking-wider border-y border-blue-700 py-0.5 my-0.5">
+                              ★ VERIFIED & APPROVED ★
+                            </div>
+                            <div className="text-[6.5px] font-mono font-bold text-blue-950">
+                              {previewInvoice.dateStr || getTodayDateStr()}
+                            </div>
+                            <div className="text-[6px] text-blue-800 font-semibold leading-tight truncate max-w-[90px]">
+                              {sealConfig.location}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Doctor's Signature Text */}
+                        <div className="text-right space-y-0.5">
+                          <div className="w-36 border-b border-slate-900 ml-auto mb-1" />
+                          <div className="text-xs font-bold text-slate-900">
+                            স্বাক্ষর ও অফিসিয়াল সিল
+                          </div>
+                          <div className="text-[11px] font-semibold text-slate-800">
+                            ডেন্টিস্ট:- ইকবাল মাহমুদ
+                          </div>
+                          <div className="text-[9.5px] text-slate-600">
+                            DMTD (Dental), LMAF, RMP, Pharmacist
+                          </div>
+                          <div className="text-[9px] text-slate-500">
+                            {sealConfig.title}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Developer Credit Footer */}
+              <div className="pt-2 border-t border-dashed border-slate-300 text-center space-y-0.5">
+                <div className="text-[10px] font-semibold text-slate-600">
+                  মোঃ আকবর হোসেন চৌধুরী
+                </div>
+                <div className="text-[9.5px] text-slate-500">
+                  ডেভেলপার ইকবাল ফার্মেসী মেডিসিন এ্যাপস্ · সুস্থ থাকুন, সঠিক নিয়মে ওষুধ সেবন করুন
+                </div>
+              </div>
+
+              {/* Modal Bottom Buttons (no-print) */}
+              <div className="flex flex-wrap items-center justify-end gap-2 pt-3 border-t border-slate-200 no-print mt-2">
+                {(previewInvoice.txType === 'sale' || previewInvoice.txType === 'purchase') && (
                   <button
                     type="button"
-                    onClick={() => {
-                      setInvoicePrintWithPrice(true);
-                      setTimeout(() => window.print(), 100);
-                    }}
-                    className="px-4 py-2 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-md flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    onClick={() => handleEditInvoiceAction(previewInvoice)}
+                    className="px-4 py-2 text-xs font-semibold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-md flex items-center gap-1.5 cursor-pointer"
                   >
-                    <Printer className="w-3.5 h-3.5" />
-                    দাম সহ প্রিন্ট করুন
+                    <Edit3 className="w-3.5 h-3.5" />
+                    ইনভয়েস এডিট করুন
                   </button>
+                )}
+                {previewInvoice.txType === 'sale' ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInvoicePrintWithPrice(true);
+                        setTimeout(() => window.print(), 100);
+                      }}
+                      className="px-4 py-2 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-md flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    >
+                      <Printer className="w-3.5 h-3.5" />
+                      A4 দাম সহ প্রিন্ট করুন
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInvoicePrintWithPrice(false);
+                        setTimeout(() => window.print(), 100);
+                      }}
+                      className="px-4 py-2 text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-md flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    >
+                      <Printer className="w-3.5 h-3.5" />
+                      A4 দাম ছাড়া প্রিন্ট করুন
+                    </button>
+                  </>
+                ) : (
                   <button
                     type="button"
-                    onClick={() => {
-                      setInvoicePrintWithPrice(false);
-                      setTimeout(() => window.print(), 100);
-                    }}
-                    className="px-4 py-2 text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-md flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    onClick={() => window.print()}
+                    className="px-4 py-2 text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-md flex items-center gap-1.5 cursor-pointer"
                   >
                     <Printer className="w-3.5 h-3.5" />
-                    দাম ছাড়া প্রিন্ট করুন
+                    {previewInvoice.txType === 'purchase'
+                      ? 'A4 ক্রয় ইনভয়েস প্রিন্ট করুন'
+                      : 'A4 ইনভয়েস প্রিন্ট করুন'}
                   </button>
-                </>
-              ) : (
+                )}
                 <button
                   type="button"
-                  onClick={() => window.print()}
-                  className="px-4 py-2 text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-md flex items-center gap-1.5 cursor-pointer"
+                  onClick={() => setPreviewInvoice(null)}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md cursor-pointer"
                 >
-                  <Printer className="w-3.5 h-3.5" />
-                  {previewInvoice.txType === 'purchase'
-                    ? 'ক্রয় ইনভয়েস প্রিন্ট করুন'
-                    : 'ইনভয়েস প্রিন্ট করুন'}
+                  বন্ধ করুন
                 </button>
-              )}
-              <button
-                type="button"
-                onClick={() => setPreviewInvoice(null)}
-                className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md cursor-pointer"
-              >
-                বন্ধ করুন
-              </button>
+              </div>
             </div>
           </div>
         </div>

@@ -495,9 +495,9 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [showCloudLoginModal, setShowCloudLoginModal] = useState(false);
   const [cloudAuthTab, setCloudAuthTab] = useState<'login' | 'register_owner'>('login');
-  const [cloudLoginEmail, setCloudLoginEmail] = useState('01812-358839');
-  const [cloudLoginPhone, setCloudLoginPhone] = useState('01812-358839');
-  const [cloudLoginPassword, setCloudLoginPassword] = useState('IqbalPharmacy#2026');
+  const [cloudLoginEmail, setCloudLoginEmail] = useState('');
+  const [cloudLoginPhone, setCloudLoginPhone] = useState('');
+  const [cloudLoginPassword, setCloudLoginPassword] = useState('');
   const [cloudLoginRole, setCloudLoginRole] = useState<'owner' | 'staff'>('owner');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [cloudLoginLoading, setCloudLoginLoading] = useState(false);
@@ -5662,45 +5662,6 @@ export default function App() {
                       />
                     </div>
 
-                    {/* Quick Selection Buttons */}
-                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-md space-y-2">
-                      <div className="text-[11px] font-semibold text-slate-700 flex items-center justify-between">
-                        <span>১-ক্লিকে টেস্ট আইডি সিলেক্ট করুন:</span>
-                        <span className="text-[10px] text-slate-400">Quick Fill</span>
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const ownerStaff = staffList.find((s) => s.roleTitle === 'owner');
-                            setCloudLoginEmail(ownerStaff?.phone || '01812-358839');
-                            setCloudLoginPassword(ownerStaff?.password || 'IqbalPharmacy#2026');
-                            setCloudLoginRole('owner');
-                            setLoginErrorMessage(null);
-                          }}
-                          className="px-2.5 py-1 text-xs bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded font-medium cursor-pointer"
-                        >
-                          👑 Owner (01812-358839)
-                        </button>
-                        {staffList
-                          .filter((s) => s.roleTitle !== 'owner')
-                          .map((st) => (
-                            <button
-                              key={st.id}
-                              type="button"
-                              onClick={() => {
-                                setCloudLoginEmail(st.email || st.phone);
-                                setCloudLoginPassword(st.password || '123456');
-                                setCloudLoginRole('staff');
-                                setLoginErrorMessage(null);
-                              }}
-                              className="px-2.5 py-1 text-xs bg-white hover:bg-teal-50 text-slate-800 border border-slate-200 rounded font-medium cursor-pointer"
-                            >
-                              👤 {st.name} ({st.phone})
-                            </button>
-                          ))}
-                      </div>
-                    </div>
 
                     <button
                       type="submit"
@@ -6106,43 +6067,6 @@ export default function App() {
                   />
                 </div>
 
-                {/* Quick Selection Buttons */}
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-md space-y-2">
-                  <div className="text-[11px] font-semibold text-slate-700 flex items-center justify-between">
-                    <span>১-ক্লিকে টেস্ট লগইন নির্বাচন করুন:</span>
-                    <span className="text-[10px] text-slate-400">Quick Fill</span>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const ownerStaff = staffList.find((s) => s.roleTitle === 'owner');
-                        setCloudLoginEmail(ownerStaff?.phone || '01812-358839');
-                        setCloudLoginPassword(ownerStaff?.password || 'IqbalPharmacy#2026');
-                        setCloudLoginRole('owner');
-                      }}
-                      className="px-2.5 py-1 text-xs bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded font-medium cursor-pointer"
-                    >
-                      👑 Owner (01812-358839)
-                    </button>
-                    {staffList
-                      .filter((s) => s.roleTitle !== 'owner')
-                      .map((st) => (
-                        <button
-                          key={st.id}
-                          type="button"
-                          onClick={() => {
-                            setCloudLoginEmail(st.phone);
-                            setCloudLoginPassword(st.password || '123456');
-                            setCloudLoginRole('staff');
-                          }}
-                          className="px-2.5 py-1 text-xs bg-white hover:bg-teal-50 text-slate-800 border border-slate-200 rounded font-medium cursor-pointer"
-                        >
-                          👤 {st.name} ({st.phone})
-                        </button>
-                      ))}
-                  </div>
-                </div>
 
                 <div className="flex flex-col sm:flex-row items-center gap-2 pt-1">
                   <button

@@ -410,13 +410,13 @@ service cloud.firestore {
     }
 
     match /registered_users/{userId} {
-      allow get: if isSignedIn() && isValidId(userId);
+      allow get: if isValidId(userId);
       allow list: if isSignedIn();
-      allow create: if isSignedIn() && isValidId(userId)
+      allow create: if isValidId(userId)
         && isValidRegisteredUser(incoming())
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
-      allow update: if isSignedIn() && isValidId(userId)
+      allow update: if isValidId(userId)
         && isValidRegisteredUser(incoming())
         && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)
         && incoming().updatedAt == request.time

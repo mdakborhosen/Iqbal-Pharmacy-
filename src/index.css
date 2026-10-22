@@ -25,8 +25,8 @@
 
 @media print {
   @page {
-    size: auto;
-    margin: 6mm 8mm;
+    size: A4 portrait;
+    margin: 8mm 10mm;
   }
 
   *,
@@ -51,7 +51,7 @@
     visibility: hidden !important;
   }
 
-  /* When an invoice receipt modal is open, ensure only the invoice receipt prints on a single clean page */
+  /* When an invoice receipt modal is open, ensure only the invoice receipt prints on a clean A4 sheet */
   body:has(#printable-invoice-receipt) header,
   body:has(#printable-invoice-receipt) aside,
   body:has(#printable-invoice-receipt) nav,
@@ -82,14 +82,17 @@
     position: static !important;
     max-width: 100% !important;
     width: 100% !important;
-    border: 1px solid #1e293b !important;
+    border: none !important;
     box-shadow: none !important;
-    padding: 12px 14px !important;
+    padding: 0 !important;
     margin: 0 auto !important;
+    page-break-inside: auto !important;
+    break-inside: auto !important;
+    display: block !important;
+  }
+
+  .print-avoid-break {
     page-break-inside: avoid !important;
     break-inside: avoid !important;
-    page-break-after: avoid !important;
-    break-after: avoid !important;
-    display: block !important;
   }
 }
