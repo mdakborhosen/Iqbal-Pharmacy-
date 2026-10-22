@@ -53,6 +53,7 @@ import {
   StaffMember,
   Transaction,
 } from '../types';
+import { SaleStepWizard } from './SaleStepWizard';
 
 interface PosAndDailyAccountsViewProps {
   catalog: MedicineCatalogItem[];
@@ -394,6 +395,15 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
   });
 
   const [showClinicalPanel, setShowClinicalPanel] = useState<boolean>(true);
+  const [saleStep, setSaleStep] = useState<1 | 2 | 3 | 4>(1);
+  const [saleWorkflowMode, setSaleWorkflowMode] = useState<'step_by_step' | 'all_in_one'>('step_by_step');
+
+  const hasAnyClinicalData = useMemo(() => {
+    if (selectedSeal === 'iqbal_pharmacy') {
+      return Object.values(pharmacyFindings).some((v) => v && v.trim().length > 0);
+    }
+    return Object.values(dentalFindings).some((v) => v && v.trim().length > 0);
+  }, [selectedSeal, pharmacyFindings, dentalFindings]);
 
   // Payment Now Modal states (for Full or Partial payment of any invoice with Due)
   const [showPaymentModal, setShowPaymentModal] = useState<boolean>(false);
@@ -664,6 +674,42 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     setDiscountStr('0');
     setPaidAmountStr('');
     setPaymentMethod('cash');
+    setSaleStep(1);
+  };
+
+  const handlePreviewCurrentSaleInvoice = () => {
+    const cust = customers.find((c) => c.id === selectedCustomerId);
+    const partyName =
+      selectedCustomerId === 'walk-in'
+        ? walkInName.trim() || 'সাধারণ ক্রেতা (Walk-in)'
+        : cust?.name || 'কাস্টমার';
+    const partyPhone = selectedCustomerId === 'walk-in' ? walkInPhone : cust?.phone || '';
+    const itemsSummary = posCart.map((i, idx) => formatCartItemInvoiceLine(i, idx)).join('\n');
+    const mockTx: Transaction = {
+      id: 'preview-' + Date.now(),
+      invoiceNo: saleInvoiceNo,
+      dateStr: saleDateStr,
+      txType: 'sale',
+      category: 'Medicine Sale',
+      amount: grandTotal,
+      subTotal: cartSubTotal,
+      discount: discountVal,
+      paidAmount: effectivePaidAmount,
+      dueAmount: dueAmount,
+      paymentMethod: paymentMethod,
+      partyName,
+      partyPhone,
+      itemsSummary,
+      staffId: activeStaff.id,
+      staffName: activeStaff.name,
+      staffRole: activeStaff.roleTitle === 'owner' ? 'owner' : 'staff',
+      timestamp: Date.now(),
+      patientAge,
+      patientSex,
+      selectedSeal,
+      dentalClinical: selectedSeal === 'iqbal_pharmacy' ? pharmacyFindings : dentalFindings,
+    };
+    setPreviewInvoice(mockTx);
   };
 
   const resetPurchaseFormToFresh = () => {
@@ -1327,1181 +1373,89 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
 
           <div className="flex items-center gap-3 text-xs">
             {entryTab === 'sale_pos' ? (
-              <span className="inline-flex items-center gap-1.5 font-semibold text-teal-800 bg-teal-50 border border-teal-200 px-3 py-1 rounded-md">
-                <PackageMinus className="w-3.5 h-3.5 text-teal-700" />
-                {isEditingSale
-                  ? 'বিক্রয় ইনভয়েস এডিট: সংরক্ষণ করলে পূর্বের স্টক সমন্বয় হয়ে নতুন স্টক কমবে'
-                  : 'বিক্রয় মোড: ইনভয়েস সম্পন্ন করলে স্টক স্বয়ংক্রিয়ভাবে কমবে'}
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 font-semibold text-indigo-800 bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-md">
-                <PackageCheck className="w-3.5 h-3.5 text-indigo-700" />
-                {isEditingPurchase
-                  ? 'ক্রয় ইনভয়েস এডিট: সংরক্ষণ করলে পূর্বের স্টক সমন্বয় হয়ে নতুন স্টক বাড়বে'
-                  : 'ক্রয় মোড: ইনভয়েস সম্পন্ন করলে স্টক স্বয়ংক্রিয়ভাবে বাড়বে'}
-              </span>
-            )}
-          </div>
-        </div>
-
-        {entryTab === 'sale_pos' ? (
-          /* ============================================================================
-             MODE 1: PRODUCT SALES INVOICE (বিক্রয় ইনভয়েস — বিক্রয় করলে স্টক কমবে)
-             ============================================================================ */
-          <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-slate-200">
-            {/* Left 5 Cols: Custom Product Entry + Quick Medicine Picker for Sale */}
-            <div className="lg:col-span-5 p-5 space-y-4">
-              {/* Custom Product Quick Builder for Sales Bill */}
-              <form
-                onSubmit={async (e) => {
-                  e.preventDefault();
-                  const name = saleCustomName.trim();
-                  if (!name) {
-                    saleCustomNameInputRef.current?.focus();
-                    return;
-                  }
-                  const unitPrice = Math.max(0.1, parseFloat(saleCustomUnitPrice) || 10);
-                  const purchasePrice =
-                    saleCustomPurPrice.trim() !== ''
-                      ? Math.max(0.01, parseFloat(saleCustomPurPrice) || Number((unitPrice * 0.88).toFixed(2)))
-                      : Number((unitPrice * 0.88).toFixed(2));
-                  const qty = Math.max(1, parseInt(saleCustomQty, 10) || 1);
-
-                  await onAddCustomToCart({
-                    brandName: name,
-                    strength: saleCustomStrength.trim(),
-                    dosageForm: saleCustomForm,
-                    unitPrice,
-                    purchasePrice,
-                    qty,
-                    saveToCatalog: saleCustomSaveCatalog,
-                  });
-
-                  setSaleCustomName('');
-                  setSaleCustomStrength('');
-                  setSaleCustomUnitPrice('');
-                  setSaleCustomPurPrice('');
-                  setSaleCustomQty('1');
-                  setTimeout(() => {
-                    saleCustomNameInputRef.current?.focus();
-                  }, 60);
-                }}
-                className="p-3.5 bg-teal-50/70 border border-teal-200 rounded-md space-y-2.5"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <div className="text-xs font-extrabold text-teal-950 flex items-center gap-1.5">
-                      <Plus className="w-3.5 h-3.5 text-teal-700" />
-                      <span>কাস্টম প্রডাক্ট, দাম ও পরিমাণ দিয়ে বিক্রয় বিল তৈরি</span>
-                    </div>
-                    <p className="text-[11px] text-teal-800">
-                      লিস্টে না থাকা যেকোনো ওষুধ বা কাস্টম পণ্যের নাম, দাম ও পরিমাণ লিখে সরাসরি বিক্রয় বিলে যুক্ত করুন
-                    </p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
-                  <div className="sm:col-span-5">
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                      প্রডাক্ট / ওষুধের নাম *
-                    </label>
-                    <input
-                      ref={saleCustomNameInputRef}
-                      type="text"
-                      required
-                      value={saleCustomName}
-                      onChange={(e) => setSaleCustomName(e.target.value)}
-                      placeholder="যেমন: কাস্টম ওষুধ / সার্জিক্যাল..."
-                      className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded focus:border-teal-600 focus:outline-none"
-                    />
-                  </div>
-                  <div className="sm:col-span-4">
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                      ধরন / ফর্ম
-                    </label>
-                    <select
-                      value={saleCustomForm}
-                      onChange={(e) => setSaleCustomForm(e.target.value)}
-                      aria-label="কাস্টম প্রডাক্টের ধরন"
-                      className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded focus:border-teal-600 focus:outline-none"
-                    >
-                      {CUSTOM_PRODUCT_FORMS.map((f) => (
-                        <option key={f.value} value={f.value}>
-                          {f.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="sm:col-span-3">
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                      শক্তি / সাইজ
-                    </label>
-                    <input
-                      type="text"
-                      value={saleCustomStrength}
-                      onChange={(e) => setSaleCustomStrength(e.target.value)}
-                      placeholder="500mg / 100ml"
-                      className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded font-mono focus:border-teal-600 focus:outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                      বিক্রয় দর (৳) *
-                    </label>
-                    <input
-                      ref={saleCustomPriceInputRef}
-                      type="number"
-                      step="0.01"
-                      min="0.01"
-                      required
-                      value={saleCustomUnitPrice}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setSaleCustomUnitPrice(val);
-                        const num = parseFloat(val);
-                        if (Number.isFinite(num) && num > 0) {
-                          setSaleCustomPurPrice(String(Number((num * 0.88).toFixed(2))));
-                        }
-                      }}
-                      placeholder="10.00"
-                      className="w-full px-2.5 py-1.5 text-xs font-mono bg-white border border-slate-200 rounded focus:border-teal-600 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                      ক্রয় দর (৳)
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0.01"
-                      value={saleCustomPurPrice}
-                      onChange={(e) => setSaleCustomPurPrice(e.target.value)}
-                      placeholder="8.80 (88%)"
-                      className="w-full px-2.5 py-1.5 text-xs font-mono bg-white border border-slate-200 rounded focus:border-teal-600 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                      বিক্রয় পরিমাণ (পিস) *
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      required
-                      value={saleCustomQty}
-                      onChange={(e) => setSaleCustomQty(e.target.value)}
-                      className="w-full px-2.5 py-1.5 text-xs font-mono bg-white border border-slate-200 rounded focus:border-teal-600 focus:outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
-                  <label className="inline-flex items-center gap-1.5 text-[11px] text-teal-900 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={saleCustomSaveCatalog}
-                      onChange={(e) => setSaleCustomSaveCatalog(e.target.checked)}
-                      className="rounded border-teal-400 text-teal-700"
-                    />
-                    <span>ক্যাটালগ ও স্টকেও সংরক্ষণ করুন</span>
-                  </label>
-
-                  <button
-                    type="submit"
-                    className="px-3.5 py-1.5 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>+ বিক্রয় বিলে কাস্টম প্রডাক্ট যুক্ত করুন</span>
-                  </button>
-                </div>
-              </form>
-
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-2">
-                  <div className="relative flex-1">
-                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                    <input
-                      ref={saleSearchInputRef}
-                      type="text"
-                      value={medSearch}
-                      onChange={(e) => setMedSearch(e.target.value)}
-                      placeholder="ওষুধের নাম লিখে সার্চ করুন (যেমন: Napa, Seclo, Noret, Femicon)..."
-                      className="w-full pl-9 pr-8 py-2 text-sm bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:border-teal-600 focus:outline-none"
-                    />
-                    {medSearch && (
-                      <button
-                        type="button"
-                        onClick={() => setMedSearch('')}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-full cursor-pointer transition-colors"
-                        title="সার্চ মুছে ফেলুন"
-                        aria-label="সার্চ মুছে ফেলুন"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                  {onOpenScanner && (
-                    <button
-                      type="button"
-                      onClick={onOpenScanner}
-                      className="px-2.5 sm:px-3 py-2 bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200 rounded-md text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-2xs whitespace-nowrap active:scale-95 transition-all"
-                      title="বক্সের উপর স্ক্যান করুন: নাম, বক্স সাইজ, দাম, ব্যাচ নম্বর ও মেয়াদ"
-                    >
-                      <Camera className="w-4 h-4 text-purple-700" />
-                      <span className="font-bold hidden sm:inline">(স্ক্যান) বক্স স্ক্যানার</span>
-                    </button>
-                  )}
-                </div>
-                {medSearch.trim() && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSaleCustomName(medSearch.trim());
-                      saleCustomPriceInputRef.current?.focus();
-                    }}
-                    className="w-full py-1.5 px-3 text-xs font-semibold text-teal-900 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded flex items-center justify-between cursor-pointer"
-                  >
-                    <span>
-                      &ldquo;{medSearch.trim()}&rdquo; কাস্টম প্রডাক্ট হিসেবে দাম ও পরিমাণ বসিয়ে বিক্রয় বিলে যুক্ত করুন
-                    </span>
-                    <span className="font-bold text-teal-700">+ কাস্টম যোগ →</span>
-                  </button>
-                )}
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[340px] overflow-y-auto pr-1">
-                {quickSearchSaleMedicines.map((med) => {
-                  const st = getStockForMed(med);
-                  const inCart = posCart.find((c) => c.medicineId === med.id)?.qty || 0;
-                  const afterSaleStock = Math.max(0, st - inCart);
-                  const purPrice = getMedPurchasePrice(med);
-                  return (
-                    <div
-                      key={med.id}
-                      className="p-3 border border-slate-200 rounded-md hover:border-teal-600 transition-colors flex flex-col justify-between gap-2 bg-white"
-                    >
-                      <div>
-                        <div className="flex items-start justify-between gap-2">
-                          <span className="font-semibold text-sm text-slate-900">
-                            {med.brandName}{' '}
-                            <span className="text-xs font-normal text-slate-500">
-                              {med.strength}
-                            </span>
-                          </span>
-                          <span className="font-mono tabular-nums text-xs font-bold text-teal-700">
-                            বিক্রয়: ৳{formatCleanMoney(med.unitPrice)}
-                          </span>
-                        </div>
-                        <div className="text-xs text-slate-500 truncate mt-0.5 flex items-center justify-between">
-                          <span>{med.genericName} · {med.dosageForm}</span>
-                          <span className="font-mono text-[11px] font-semibold text-indigo-700">
-                            ক্রয়: ৳{formatCleanMoney(purPrice)}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-                        <div className="text-xs font-mono tabular-nums">
-                          {st > 0 ? (
-                            <span className="text-slate-700 font-semibold">
-                              স্টক: {st} পিস
-                              {inCart > 0 && (
-                                <span className="text-amber-700 ml-1">
-                                  (থাকবে {afterSaleStock})
-                                </span>
-                              )}
-                            </span>
-                          ) : (
-                            <span className="text-red-600 font-medium">স্টক: ০ পিস</span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              onAddToCart(med, 1);
-                              setMedSearch('');
-                              setTimeout(() => saleSearchInputRef.current?.focus(), 50);
-                            }}
-                            className="px-2 py-1 text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-800 rounded cursor-pointer"
-                          >
-                            +১ পিস
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              onAddToCart(med, med.unitsPerStrip || 10);
-                              setMedSearch('');
-                              setTimeout(() => saleSearchInputRef.current?.focus(), 50);
-                            }}
-                            className="px-2 py-1 text-xs font-medium bg-teal-700 hover:bg-teal-800 text-white rounded cursor-pointer flex items-center gap-1"
-                          >
-                            <ShoppingCart className="w-3 h-3" />
-                            +১ পাতা
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              onAddToPurchaseCart(med, med.unitsPerStrip || 10);
-                              setMedSearch('');
-                              setTimeout(() => saleSearchInputRef.current?.focus(), 50);
-                            }}
-                            title="ক্রয় কার্ট / Purchase Cart-এ যোগ করুন"
-                            className="px-2 py-1 text-xs font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 rounded cursor-pointer flex items-center gap-1"
-                          >
-                            <Package className="w-3 h-3 text-indigo-700" />
-                            +ক্রয়
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Right 7 Cols: Active Sales Invoice Memo with Stock Decrease Indicator */}
-            <div className="lg:col-span-7 p-5 bg-slate-50/40 flex flex-col justify-between">
-              <div>
-                <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-bold text-teal-900">
-                        ১. প্রডাক্ট বিক্রয় ইনভয়েস ও ক্যাশ মেমো (Sales Invoice — স্টক কমবে)
-                      </h3>
-                    </div>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      অপারেটর: <strong>{formatOperatorDisplay(activeStaff)}</strong> · মেমো টেবিলে প্রডাক্টের নাম, ধরন, শক্তি, ক্রয় দর, বিক্রয় দর ও পরিমাণ সরাসরি পরিবর্তন করা যাবে
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onAddCustomToCart({
-                          brandName: 'কাস্টম প্রডাক্ট',
-                          strength: '',
-                          dosageForm: 'Tablet',
-                          unitPrice: 10,
-                          purchasePrice: 8.8,
-                          qty: 1,
-                          saveToCatalog: false,
-                        });
-                      }}
-                      className="px-2.5 py-1 text-xs font-semibold text-teal-900 bg-teal-100 hover:bg-teal-200 border border-teal-300 rounded cursor-pointer"
-                    >
-                      + নতুন কাস্টম লাইন যোগ
-                    </button>
-                    {posCart.length > 0 && (
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            posCart.forEach((item) => {
-                              onUpdateCartItemDetails(item.medicineId, { updateStock: true });
-                            });
-                          }}
-                          className="px-2 py-0.5 text-[11px] font-medium text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded cursor-pointer"
-                        >
-                          সবগুলোতে ✅ স্টক কমবে
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            posCart.forEach((item) => {
-                              onUpdateCartItemDetails(item.medicineId, { updateStock: false });
-                            });
-                          }}
-                          className="px-2 py-0.5 text-[11px] font-medium text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded cursor-pointer"
-                        >
-                          সবগুলো শুধু ইনভয়েস
-                        </button>
-                        <button
-                          type="button"
-                          onClick={onClearCart}
-                          className="text-xs text-red-600 hover:underline cursor-pointer ml-1"
-                        >
-                          মেমো খালি করুন
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Sale Cart Items Table */}
-                <div className="my-3 max-h-[290px] overflow-y-auto border border-slate-200 rounded-md bg-white">
-                  {posCart.length === 0 ? (
-                    <div className="py-10 px-4 text-center text-xs text-slate-500 space-y-2">
-                      <div>
-                        বিক্রয় ইনভয়েসে এখনো কোনো ওষুধ বা কাস্টম প্রডাক্ট যোগ করা হয়নি।
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onAddCustomToCart({
-                            brandName: 'কাস্টম প্রডাক্ট',
-                            strength: '',
-                            dosageForm: 'Tablet',
-                            unitPrice: 10,
-                            purchasePrice: 8.8,
-                            qty: 1,
-                            saveToCatalog: false,
-                          });
-                        }}
-                        className="px-3 py-1.5 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded cursor-pointer"
-                      >
-                        + সরাসরি কাস্টম প্রডাক্ট লাইন যোগ করুন
-                      </button>
-                    </div>
-                  ) : (
-                    <table className="w-full text-left border-collapse">
-                      <thead className="bg-teal-50/70 border-b border-slate-200 text-xs font-semibold text-slate-700">
-                        <tr>
-                          <th className="py-2 px-3">প্রডাক্ট / ওষুধের নাম, ধরন ও স্টক হ্রাস</th>
-                          <th className="py-2 px-1.5 text-center">ক্রয় দর (৳)</th>
-                          <th className="py-2 px-1.5 text-center">বিক্রয় দর (৳)</th>
-                          <th className="py-2 px-2 text-center">বিক্রয় পরিমাণ (পিস)</th>
-                          <th className="py-2 px-3 text-right">মোট (৳)</th>
-                          <th className="py-2 px-2 text-right"></th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-200 text-sm">
-                        {posCart.map((item, idx) => {
-                          const priceChanged =
-                            item.originalUnitPrice !== undefined &&
-                            Math.abs(item.unitPrice - item.originalUnitPrice) > 0.001;
-                          const purPriceVal =
-                            typeof item.purchasePrice === 'number' && item.purchasePrice > 0
-                              ? item.purchasePrice
-                              : Number((item.unitPrice * 0.88).toFixed(2));
-                          const purPriceChanged =
-                            item.originalPurchasePrice !== undefined &&
-                            Math.abs(purPriceVal - item.originalPurchasePrice) > 0.001;
-                          const lineTotal = item.unitPrice * item.qty;
-                          const rawCurrentStock = getStockForMed(item);
-                          const oldEditedQty = isEditingSale ? getOldEditedQtyForMed(item) : 0;
-                          const currentStock = rawCurrentStock + oldEditedQty;
-                          const remainingStock = Math.max(0, currentStock - item.qty);
-                          return (
-                            <tr key={item.medicineId}>
-                              <td className="py-2 px-3">
-                                <div className="flex flex-wrap items-center gap-1">
-                                  <span className="font-mono text-xs font-bold text-slate-500">
-                                    {idx + 1}.
-                                  </span>
-                                  <select
-                                    value={item.dosageForm || 'Tablet'}
-                                    onChange={(e) =>
-                                      onUpdateCartItemDetails(item.medicineId, {
-                                        dosageForm: e.target.value,
-                                      })
-                                    }
-                                    aria-label="প্রডাক্ট ফর্ম"
-                                    className="px-1 py-0.5 text-[11px] font-mono bg-slate-50 border border-slate-200 rounded text-slate-700"
-                                  >
-                                    {CUSTOM_PRODUCT_FORMS.map((f) => (
-                                      <option key={f.value} value={f.value}>
-                                        {getInvoiceFormPrefix(f.value)}
-                                      </option>
-                                    ))}
-                                  </select>
-                                  <input
-                                    type="text"
-                                    value={item.brandName}
-                                    onChange={(e) =>
-                                      onUpdateCartItemDetails(item.medicineId, {
-                                        brandName: e.target.value,
-                                      })
-                                    }
-                                    placeholder="প্রডাক্টের নাম"
-                                    aria-label="প্রডাক্টের নাম"
-                                    className="w-32 sm:w-36 px-1.5 py-0.5 text-xs font-semibold text-slate-900 bg-white border border-slate-200 rounded focus:border-teal-600 focus:outline-none"
-                                  />
-                                  <input
-                                    type="text"
-                                    value={item.strength}
-                                    onChange={(e) =>
-                                      onUpdateCartItemDetails(item.medicineId, {
-                                        strength: e.target.value,
-                                      })
-                                    }
-                                    placeholder="শক্তি/সাইজ"
-                                    aria-label="শক্তি বা সাইজ"
-                                    className="w-20 px-1.5 py-0.5 text-[11px] font-mono text-slate-600 bg-white border border-slate-200 rounded focus:border-teal-600 focus:outline-none"
-                                  />
-                                </div>
-                                <div className="text-[11px] font-mono text-teal-800 mt-1">
-                                  (৳{formatCleanMoney(item.unitPrice)}) × {item.qty}=
-                                  {formatCleanMoney(lineTotal)}
-                                  {priceChanged && (
-                                    <span className="ml-1.5 text-amber-700 font-sans font-semibold">
-                                      (পূর্বের বিক্রয় দর: ৳{item.originalUnitPrice?.toFixed(2)})
-                                    </span>
-                                  )}
-                                </div>
-
-                                {/* Dosage Schedule & Duration Inputs (Screenshot 3 & 4) */}
-                                <div className="flex flex-wrap items-center gap-1.5 mt-1.5 bg-rose-50/70 p-1.5 rounded border border-rose-200">
-                                  <span className="text-[10px] font-bold text-rose-900">ডোজ ও নিয়ম:</span>
-                                  <input
-                                    type="text"
-                                    value={item.dosageSchedule || ''}
-                                    onChange={(e) =>
-                                      onUpdateCartItemDetails(item.medicineId, {
-                                        dosageSchedule: e.target.value,
-                                      })
-                                    }
-                                    placeholder="ডোজ (যেমন: 1+0+1)"
-                                    className="w-24 px-1.5 py-0.5 text-xs font-mono font-bold text-red-600 bg-white border border-rose-200 rounded focus:border-red-500 focus:outline-none"
-                                    title="খাওয়ার ডোজ (যেমন: 1+0+1, 1+1+1)"
-                                  />
-                                  <input
-                                    type="text"
-                                    value={item.dosageDuration || ''}
-                                    onChange={(e) =>
-                                      onUpdateCartItemDetails(item.medicineId, {
-                                        dosageDuration: e.target.value,
-                                      })
-                                    }
-                                    placeholder="মেয়াদ (যেমন: 7 Days)"
-                                    className="w-28 px-1.5 py-0.5 text-xs font-mono text-slate-800 bg-white border border-rose-200 rounded focus:border-red-500 focus:outline-none"
-                                    title="কত দিন চলবে (যেমন: 7 Days, 10 Day)"
-                                  />
-                                  <div className="flex flex-wrap items-center gap-1">
-                                    {['1+0+1', '1+1+1', '1+0+0', '0+0+1'].map((preset) => (
-                                      <button
-                                        key={preset}
-                                        type="button"
-                                        onClick={() =>
-                                          onUpdateCartItemDetails(item.medicineId, {
-                                            dosageSchedule: preset,
-                                          })
-                                        }
-                                        className="px-1 py-0.5 text-[9.5px] font-mono font-bold bg-white hover:bg-rose-100 text-rose-700 border border-rose-300 rounded cursor-pointer"
-                                      >
-                                        {preset}
-                                      </button>
-                                    ))}
-                                    {['7 Days', '10 Day', '14 Days'].map((preset) => (
-                                      <button
-                                        key={preset}
-                                        type="button"
-                                        onClick={() =>
-                                          onUpdateCartItemDetails(item.medicineId, {
-                                            dosageDuration: preset,
-                                          })
-                                        }
-                                        className="px-1 py-0.5 text-[9.5px] font-mono bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded cursor-pointer"
-                                      >
-                                        {preset}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-
-                                <div className="flex flex-wrap items-center gap-2 mt-1">
-                                  <label
-                                    className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs border select-none cursor-pointer transition-colors ${
-                                      item.updateStock !== false
-                                        ? 'bg-teal-50 border-teal-300 text-teal-900 hover:bg-teal-100 font-semibold'
-                                        : 'bg-amber-50 border-amber-300 text-amber-900 hover:bg-amber-100 font-medium'
-                                    }`}
-                                    title={
-                                      item.updateStock !== false
-                                        ? 'স্টক থেকে কমবে (টিক চিহ্ন তুলে দিলে স্টক পরিবর্তন হবে না, শুধু ইনভয়েস তৈরি হবে)'
-                                        : 'স্টকে পরিবর্তন হবে না (শুধু ইনভয়েস তৈরি হবে)'
-                                    }
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      checked={item.updateStock !== false}
-                                      onChange={(e) =>
-                                        onUpdateCartItemDetails(item.medicineId, {
-                                          updateStock: e.target.checked,
-                                        })
-                                      }
-                                      className="w-3.5 h-3.5 rounded text-teal-600 focus:ring-teal-500 cursor-pointer"
-                                    />
-                                    <span className="text-[11px]">
-                                      {item.updateStock !== false
-                                        ? '✅ স্টক থেকে কমবে'
-                                        : '❌ স্টকে কমবে না (শুধু ইনভয়েস)'}
-                                    </span>
-                                  </label>
-                                </div>
-
-                                {item.updateStock !== false ? (
-                                  <div className="text-[11px] font-mono text-amber-800 mt-0.5 flex items-center gap-1">
-                                    <ArrowDownRight className="w-3 h-3 text-amber-700 shrink-0" />
-                                    <span>
-                                      স্টক কমবে: বর্তমান {currentStock} পিস → বিক্রয়ের পর{' '}
-                                      <strong>{remainingStock} পিস</strong> (-{item.qty})
-                                    </span>
-                                  </div>
-                                ) : (
-                                  <div className="text-[11px] font-mono text-amber-800 mt-0.5 flex items-center gap-1">
-                                    <Info className="w-3 h-3 text-amber-600 shrink-0" />
-                                    <span>
-                                      স্টক অপরিবর্তিত থাকবে (বর্তমান {currentStock} পিস) · শুধু ইনভয়েসে যুক্ত থাকবে
-                                    </span>
-                                  </div>
-                                )}
-                              </td>
-
-                              {/* Editable Purchase Price Input */}
-                              <td className="py-2 px-1.5 text-center">
-                                <div className="inline-flex items-center">
-                                  <input
-                                    type="number"
-                                    step="0.01"
-                                    min="0.01"
-                                    aria-label={`${item.brandName} ক্রয় মূল্য`}
-                                    value={purPriceVal}
-                                    onChange={(e) =>
-                                      onUpdateCartPurchasePrice(
-                                        item.medicineId,
-                                        Math.max(0, parseFloat(e.target.value) || 0)
-                                      )
-                                    }
-                                    className={`w-18 text-center py-1 px-1 text-xs font-mono tabular-nums border rounded focus:outline-none ${
-                                      purPriceChanged
-                                        ? 'border-indigo-500 bg-indigo-50/60 font-bold text-indigo-900'
-                                        : 'border-slate-200 bg-white text-indigo-900'
-                                    }`}
-                                  />
-                                </div>
-                              </td>
-
-                              {/* Editable Selling Unit Price Input */}
-                              <td className="py-2 px-1.5 text-center">
-                                <div className="inline-flex items-center">
-                                  <input
-                                    type="number"
-                                    step="0.01"
-                                    min="0.1"
-                                    aria-label={`${item.brandName} বিক্রয় মূল্য`}
-                                    value={item.unitPrice}
-                                    onChange={(e) =>
-                                      onUpdateCartUnitPrice(
-                                        item.medicineId,
-                                        Math.max(0, parseFloat(e.target.value) || 0)
-                                      )
-                                    }
-                                    className={`w-18 text-center py-1 px-1 text-xs font-mono tabular-nums border rounded focus:outline-none ${
-                                      priceChanged
-                                        ? 'border-amber-500 bg-amber-50/60 font-bold text-slate-900'
-                                        : 'border-slate-200 bg-white text-slate-900'
-                                    }`}
-                                  />
-                                </div>
-                              </td>
-
-                              {/* Quantity Controls */}
-                              <td className="py-2 px-2">
-                                <div className="flex items-center justify-center gap-1">
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      onUpdateCartQty(item.medicineId, Math.max(1, item.qty - 1))
-                                    }
-                                    className="p-1 bg-slate-100 hover:bg-slate-200 rounded text-slate-700 cursor-pointer"
-                                  >
-                                    <Minus className="w-3 h-3" />
-                                  </button>
-                                  <input
-                                    type="number"
-                                    min="1"
-                                    value={item.qty}
-                                    onChange={(e) =>
-                                      onUpdateCartQty(
-                                        item.medicineId,
-                                        Math.max(1, parseInt(e.target.value, 10) || 1)
-                                      )
-                                    }
-                                    className="w-14 text-center py-1 text-xs font-mono tabular-nums border border-slate-200 rounded"
-                                  />
-                                  <button
-                                    type="button"
-                                    onClick={() => onUpdateCartQty(item.medicineId, item.qty + 1)}
-                                    className="p-1 bg-slate-100 hover:bg-slate-200 rounded text-slate-700 cursor-pointer"
-                                  >
-                                    <Plus className="w-3 h-3" />
-                                  </button>
-                                </div>
-                              </td>
-
-                              <td className="py-2 px-3 text-right font-mono tabular-nums font-semibold text-slate-900">
-                                {formatCleanMoney(lineTotal)}
-                              </td>
-
-                              <td className="py-2 px-2 text-right">
-                                <button
-                                  type="button"
-                                  onClick={() => onRemoveFromCart(item.medicineId)}
-                                  className="p-1 text-slate-400 hover:text-red-600 cursor-pointer"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-
-                {posCart.length > 0 && (
-                  <div className="mb-3 p-2.5 bg-white border border-teal-200 rounded-md text-xs font-mono text-slate-800 space-y-0.5">
-                    <div className="text-[11px] font-sans font-semibold text-teal-800 mb-1 flex items-center justify-between">
-                      <span>বিক্রয় ইনভয়েস প্রিভিউ (Sales Invoice Lines):</span>
-                      <span>মোট স্টক আউট: -{totalSaleUnits} পিস</span>
-                    </div>
-                    {posCart.map((item, idx) => (
-                      <div key={item.medicineId}>{formatCartItemInvoiceLine(item, idx)}</div>
-                    ))}
-                  </div>
-                )}
-
-                {hasModifiedCartPrice && (
-                  <label className="flex items-center gap-2 text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded px-3 py-2 mb-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={syncModifiedPrices}
-                      onChange={(e) => setSyncModifiedPrices(e.target.checked)}
-                      className="rounded border-amber-400 text-teal-700"
-                    />
-                    <span>
-                      ইনভয়েসে পরিবর্তিত ওষুধের নতুন দাম মূল ক্যাটালগ ও ইনভেন্টরিতেও আপডেট করুন এবং স্বয়ংক্রিয় মূল্য অ্যালার্ট পাঠান
-                    </span>
-                  </label>
-                )}
-              </div>
-
-              {/* Customer Selection & Sale Payment Form */}
-              <form onSubmit={handleSaleSubmit} className="space-y-3 pt-2 border-t border-slate-200">
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                  <div className="sm:col-span-2">
-                    <label className="block text-xs font-medium text-slate-700 mb-1">
-                      কাস্টমার / লেজার খাতা নির্বাচন করুন
-                    </label>
-                    <select
-                      value={selectedCustomerId}
-                      onChange={(e) => setSelectedCustomerId(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md"
-                    >
-                      <option value="walk-in">সাধারণ ক্রেতা (নগদ / Walk-in)</option>
-                      {customers.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name} ({c.phone}) — পূর্বের বাকি: ৳{c.totalDue}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">
-                      বিক্রয় মেমো নং *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={saleInvoiceNo}
-                      onChange={(e) => setSaleInvoiceNo(e.target.value)}
-                      className="w-full px-2.5 py-1.5 text-xs font-mono bg-white border border-slate-200 rounded-md"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">
-                      তারিখ ও পেমেন্ট মাধ্যম
-                    </label>
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        type="date"
-                        required
-                        value={saleDateStr}
-                        onChange={(e) => setSaleDateStr(e.target.value)}
-                        aria-label="বিক্রয় তারিখ"
-                        className="w-1/2 px-1.5 py-1.5 text-[11px] font-mono bg-white border border-slate-200 rounded-md"
-                      />
-                      <select
-                        value={paymentMethod}
-                        onChange={(e) =>
-                          setPaymentMethod(e.target.value as Transaction['paymentMethod'])
-                        }
-                        aria-label="পেমেন্ট মাধ্যম"
-                        className="w-1/2 px-1.5 py-1.5 text-xs bg-white border border-slate-200 rounded-md"
-                      >
-                        <option value="cash">নগদ (Cash)</option>
-                        <option value="bkash">বিকাশ</option>
-                        <option value="nagad">নগদ MFS</option>
-                        <option value="card">কার্ড</option>
-                        <option value="due">বাকি (Due)</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Patient Information & Clinical Bar (Pink/Rose Theme as per Memo) */}
-                <div className="p-3 bg-pink-50/70 border border-pink-200 rounded-lg space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-pink-950 flex items-center gap-1.5">
-                      <FileText className="w-3.5 h-3.5 text-pink-700" />
-                      রোগীর তথ্য (Patient Info - প্রেসক্রিপশন মেমো):
-                    </span>
-                    <span className="text-[11px] font-mono text-pink-800">
-                      তারিখ: {saleDateStr} (স্বয়ংক্রিয় আজকের তারিখ)
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                    {selectedCustomerId === 'walk-in' ? (
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                          Name (রোগীর নাম):
-                        </label>
-                        <input
-                          type="text"
-                          value={walkInName}
-                          onChange={(e) => setWalkInName(e.target.value)}
-                          placeholder="রোগী / ক্রেতার নাম"
-                          className="w-full px-2.5 py-1.5 text-xs bg-white border border-pink-300 rounded focus:border-pink-600 focus:outline-none"
-                        />
-                      </div>
-                    ) : (
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                          Name (রোগীর নাম):
-                        </label>
-                        <div className="px-2.5 py-1.5 text-xs bg-white border border-pink-200 rounded font-semibold text-slate-900 truncate">
-                          {customers.find((c) => c.id === selectedCustomerId)?.name || 'নাম'}
-                        </div>
-                      </div>
-                    )}
-
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                        Age (বয়স):
-                      </label>
-                      <input
-                        type="text"
-                        value={patientAge}
-                        onChange={(e) => setPatientAge(e.target.value)}
-                        placeholder="যেমন: 28Y / ৩০ বছর"
-                        className="w-full px-2.5 py-1.5 text-xs bg-white border border-pink-300 rounded focus:border-pink-600 focus:outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                        Sex (লিঙ্গ):
-                      </label>
-                      <select
-                        value={patientSex}
-                        onChange={(e) => setPatientSex(e.target.value)}
-                        className="w-full px-2.5 py-1.5 text-xs bg-white border border-pink-300 rounded focus:border-pink-600 focus:outline-none"
-                      >
-                        <option value="Male">পুরুষ (Male)</option>
-                        <option value="Female">মহিলা (Female)</option>
-                        <option value="Other">অন্যান্য (Other)</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Seal Selection: ৩টি সিল থেকে নির্বাচন (সঠিক ঠিকানা সহ) */}
-                  <div className="pt-2 border-t border-pink-200">
-                    <label className="block text-[11px] font-bold text-slate-800 mb-1.5">
-                      নিচের সিল ও চেম্বার নির্বাচন করুন (মেমোতে প্রদর্শিত ঠিকানা):
-                    </label>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      <label
-                        className={`flex items-center gap-2 p-2 rounded-md border cursor-pointer text-xs transition-colors ${
-                          selectedSeal === 'iqbal_pharmacy'
-                            ? 'bg-teal-50 border-teal-600 text-teal-950 font-bold shadow-2xs'
-                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-                        }`}
-                      >
-                        <input
-                          type="radio"
-                          name="invoiceSeal"
-                          value="iqbal_pharmacy"
-                          checked={selectedSeal === 'iqbal_pharmacy'}
-                          onChange={() => setSelectedSeal('iqbal_pharmacy')}
-                          className="text-teal-700 focus:ring-teal-600"
-                        />
-                        <div>
-                          <div>১. ইকবাল ফার্মেসী</div>
-                          <div className="text-[10px] text-slate-500 font-normal">নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর</div>
-                        </div>
-                      </label>
-
-                      <label
-                        className={`flex items-center gap-2 p-2 rounded-md border cursor-pointer text-xs transition-colors ${
-                          selectedSeal === 'dental_care_1'
-                            ? 'bg-teal-50 border-teal-600 text-teal-950 font-bold shadow-2xs'
-                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-                        }`}
-                      >
-                        <input
-                          type="radio"
-                          name="invoiceSeal"
-                          value="dental_care_1"
-                          checked={selectedSeal === 'dental_care_1'}
-                          onChange={() => setSelectedSeal('dental_care_1')}
-                          className="text-teal-700 focus:ring-teal-600"
-                        />
-                        <div>
-                          <div>২. ইকবাল ডেন্টাল কেয়ার-১</div>
-                          <div className="text-[10px] text-slate-500 font-normal">নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।</div>
-                        </div>
-                      </label>
-
-                      <label
-                        className={`flex items-center gap-2 p-2 rounded-md border cursor-pointer text-xs transition-colors ${
-                          selectedSeal === 'dental_care_2'
-                            ? 'bg-teal-50 border-teal-600 text-teal-950 font-bold shadow-2xs'
-                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-                        }`}
-                      >
-                        <input
-                          type="radio"
-                          name="invoiceSeal"
-                          value="dental_care_2"
-                          checked={selectedSeal === 'dental_care_2'}
-                          onChange={() => setSelectedSeal('dental_care_2')}
-                          className="text-teal-700 focus:ring-teal-600"
-                        />
-                        <div>
-                          <div>৩. ইকবাল ডেন্টাল কেয়ার-২ (ওদারহাট ডেন্টাল কেয়ার)</div>
-                          <div className="text-[10px] text-slate-500 font-normal">উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী।</div>
-                        </div>
-                      </label>
-                    </div>
-                  </div>
-                </div>
-
-                {/* ক্লিনিক্যাল অপশন: ফার্মেসীর জন্য ফার্মেসী ক্লিনিক্যাল ও ডেন্টালের জন্য ডেন্টাল ক্লিনিক্যাল অপশন (Screenshot 2) */}
-                {selectedSeal === 'iqbal_pharmacy' ? (
-                  <div className="p-3 bg-teal-50/70 border border-teal-300 rounded-lg space-y-2">
-                    <div className="flex items-center justify-between">
-                      <button
-                        type="button"
-                        onClick={() => setShowClinicalPanel(!showClinicalPanel)}
-                        className="text-xs font-bold text-teal-950 flex items-center gap-1.5 cursor-pointer hover:underline"
-                      >
-                        <Stethoscope className="w-3.5 h-3.5 text-teal-700" />
-                        <span>ফার্মেসী ক্লিনিক্যাল অপশন (রক্তচাপ, সুগার/RBS, জ্বর, ওজন, লক্ষণ ও পরামর্শ):</span>
-                        <span className="text-[11px] text-teal-700 font-normal">
-                          {showClinicalPanel ? '[- সংক্ষেপ করুন]' : '[+ তথ্য যুক্ত করতে ক্লিক করুন]'}
-                        </span>
-                      </button>
-                      <span className="text-[10px] text-slate-500">
-                        রোগীর প্রাথমিক পর্যবেক্ষণ মেমোতে যুক্ত থাকবে
-                      </span>
-                    </div>
-
-                    {showClinicalPanel && (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 pt-2">
-                        {[
-                          { key: 'রক্তচাপ (BP)', icon: Activity, placeholder: 'যেমন: 120/80 mmHg' },
-                          { key: 'ডায়াবেটিস (RBS)', icon: Heart, placeholder: 'যেমন: 6.5 mmol/L' },
-                          { key: 'তাপমাত্রা (Temp)', icon: Thermometer, placeholder: 'যেমন: 98.6 °F' },
-                          { key: 'ওজন (Weight)', placeholder: 'যেমন: 65 kg' },
-                          { key: 'নাড়ির গতি (Pulse)', placeholder: 'যেমন: 72 bpm' },
-                          { key: 'প্রধান লক্ষণ (Symptoms)', placeholder: 'যেমন: সর্দি, কাশি, গ্যাস্ট্রিক' },
-                          { key: 'প্রাথমিক পরামর্শ (Advice)', placeholder: 'যেমন: পর্যাপ্ত পানি ও বিশ্রাম' },
-                          { key: 'পরীক্ষা-নিরীক্ষা (Inv.)', placeholder: 'যেমন: CBC, RBS, Urine R/E' },
-                        ].map((field) => {
-                          const val = pharmacyFindings[field.key] || '';
-                          const IconComp = field.icon;
-                          return (
-                            <div key={field.key} className="bg-white p-2 rounded border border-teal-200 shadow-2xs">
-                              <label className="block text-[11px] font-bold text-slate-800 mb-1 flex items-center gap-1">
-                                {IconComp && <IconComp className="w-3 h-3 text-teal-600" />}
-                                <span>{field.key}:</span>
-                              </label>
-                              <input
-                                type="text"
-                                value={val}
-                                onChange={(e) =>
-                                  setPharmacyFindings((prev) => ({
-                                    ...prev,
-                                    [field.key]: e.target.value,
-                                  }))
-                                }
-                                placeholder={field.placeholder}
-                                className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:border-teal-600 focus:outline-none"
-                              />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="p-3 bg-amber-50/70 border border-amber-300 rounded-lg space-y-2">
-                    <div className="flex items-center justify-between">
-                      <button
-                        type="button"
-                        onClick={() => setShowClinicalPanel(!showClinicalPanel)}
-                        className="text-xs font-bold text-amber-950 flex items-center gap-1.5 cursor-pointer hover:underline"
-                      >
-                        <span>🦷 ডেন্টাল ক্লিনিক্যাল অপশন (Pereocoronaties, Pulpitis, RCT, ইত্যাদি):</span>
-                        <span className="text-[11px] text-amber-700 font-normal">
-                          {showClinicalPanel ? '[- সংক্ষেপ করুন]' : '[+ তথ্য যুক্ত করতে ক্লিক করুন]'}
-                        </span>
-                      </button>
-                      <span className="text-[10px] text-slate-500">
-                        অপশন সিলেক্ট করে টেক্সট লিখুন (মেমোর বাম কলামে প্রদর্শিত হবে)
-                      </span>
-                    </div>
-
-                    {showClinicalPanel && (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 pt-2">
-                        {[
-                          'Pereocoronaties',
-                          'Pulpitis',
-                          'Calculus',
-                          'Gingivitis',
-                          'Caries',
-                          'Scaling',
-                          'Filling',
-                          'RCT',
-                          'Cap',
-                          'Bridge',
-                          'EXT',
-                          'Others',
-                          'Inv.',
-                        ].map((itemKey) => {
-                          const val = dentalFindings[itemKey] || '';
-                          return (
-                            <div key={itemKey} className="bg-white p-2 rounded border border-amber-200 shadow-2xs">
-                              <label className="block text-[11px] font-bold text-slate-800 mb-1">
-                                {itemKey}:
-                              </label>
-                              <input
-                                type="text"
-                                value={val}
-                                onChange={(e) =>
-                                  setDentalFindings((prev) => ({
-                                    ...prev,
-                                    [itemKey]: e.target.value,
-                                  }))
-                                }
-                                placeholder={`${itemKey} বিবরণ / দাঁতের নং...`}
-                                className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:border-amber-600 focus:outline-none"
-                              />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <div className="grid grid-cols-3 gap-3 bg-white p-3 rounded-md border border-slate-200">
-                  <div>
-                    <label className="block text-xs text-slate-500">মোট বিক্রয় বিল (৳)</label>
-                    <div className="text-base font-bold font-mono tabular-nums text-slate-900 mt-0.5">
-                      ৳{cartSubTotal.toFixed(2)}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-500">ছাড় / ডিসকাউন্ট (৳)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={discountStr}
-                      onChange={(e) => setDiscountStr(e.target.value)}
-                      className="w-full mt-0.5 px-2 py-1 text-xs font-mono tabular-nums border border-slate-200 rounded"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-500">নগদ জমা (৳)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      placeholder={grandTotal.toFixed(0)}
-                      value={paidAmountStr}
-                      onChange={(e) => setPaidAmountStr(e.target.value)}
-                      className="w-full mt-0.5 px-2 py-1 text-xs font-mono tabular-nums border border-slate-200 rounded"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                  <div className="text-xs space-x-3 font-mono tabular-nums">
-                    <span className="text-slate-700">
-                      নিট প্রদেয়: <strong className="text-slate-900">৳{grandTotal.toFixed(2)}</strong>
-                    </span>
-                    <span className={dueAmount > 0 ? 'text-red-600 font-bold' : 'text-emerald-700'}>
-                      বাকি (Due): ৳{dueAmount.toFixed(2)}
-                    </span>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    {isEditingSale && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            onCancelEditInvoice();
-                            resetSaleFormToFresh();
-                          }}
-                          className="px-3 py-2 text-xs font-semibold text-slate-700 bg-slate-200 hover:bg-slate-300 rounded-md transition-colors cursor-pointer whitespace-nowrap shrink-0"
-                        >
-                          এডিট বাতিল
-                        </button>
-                        <button
-                          type="button"
-                          disabled={posCart.length === 0 || submittingSale}
-                          onClick={() => submitSaleWithMode(true)}
-                          className="px-3.5 py-2 text-xs font-semibold text-teal-900 bg-teal-100 hover:bg-teal-200 border border-teal-300 rounded-md transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
-                        >
-                          নতুন ইনভয়েস হিসেবে তৈরি করুন
-                        </button>
-                      </>
-                    )}
-                    <button
-                      type="button"
-                      disabled={posCart.length === 0 || submittingSale}
-                      onClick={async () => {
-                        setWalkInName('সরাসরি ক্যাশ কাস্টমার');
-                        setSelectedCustomerId('walk-in');
-                        setPaymentMethod('cash');
-                        setPaidAmountStr(grandTotal.toString());
-                        await submitSaleWithMode(false);
-                      }}
-                      className="px-4 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-md transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap flex items-center gap-1.5 shadow-xs active:scale-95 shrink-0"
-                      title="কোনো কাস্টমার বা কাগজপত্র ছাড়া ১-ক্লিকে সরাসরি নগদ বিক্রি সম্পন্ন করুন"
-                    >
-                      <Zap className="w-3.5 h-3.5" />
-                      <span>⚡ সরাসরি নগদ বিক্রি (ইনভয়েস ছাড়া)</span>
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={posCart.length === 0 || submittingSale}
-                      className="px-5 py-2.5 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-md transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
-                    >
-                      {submittingSale
-                        ? 'বিক্রয় ইনভয়েস সংরক্ষণ হচ্ছে...'
-                        : isEditingSale
-                        ? `এডিটকৃত বিক্রয় ইনভয়েস সংরক্ষণ ও স্টক সমন্বয় করুন (${saleInvoiceNo}) ✓`
-                        : `বিক্রয় ইনভয়েস সম্পন্ন করুন ও স্টক কমান (-${totalSaleUnits} পিস) ✓`}
-                    </button>
-                  </div>
-                </div>
-              </form>
-            </div>
-          </div>
+          <SaleStepWizard
+            saleStep={saleStep}
+            setSaleStep={setSaleStep}
+            saleWorkflowMode={saleWorkflowMode}
+            setSaleWorkflowMode={setSaleWorkflowMode}
+            walkInName={walkInName}
+            setWalkInName={setWalkInName}
+            walkInPhone={walkInPhone}
+            setWalkInPhone={setWalkInPhone}
+            patientAge={patientAge}
+            setPatientAge={setPatientAge}
+            patientSex={patientSex}
+            setPatientSex={setPatientSex}
+            selectedSeal={selectedSeal}
+            setSelectedSeal={setSelectedSeal}
+            pharmacyFindings={pharmacyFindings}
+            setPharmacyFindings={setPharmacyFindings}
+            dentalFindings={dentalFindings}
+            setDentalFindings={setDentalFindings}
+            showClinicalPanel={showClinicalPanel}
+            setShowClinicalPanel={setShowClinicalPanel}
+            customers={customers}
+            selectedCustomerId={selectedCustomerId}
+            setSelectedCustomerId={setSelectedCustomerId}
+            saleInvoiceNo={saleInvoiceNo}
+            setSaleInvoiceNo={setSaleInvoiceNo}
+            saleDateStr={saleDateStr}
+            setSaleDateStr={setSaleDateStr}
+            paymentMethod={paymentMethod}
+            setPaymentMethod={setPaymentMethod}
+            saleCustomName={saleCustomName}
+            setSaleCustomName={setSaleCustomName}
+            saleCustomStrength={saleCustomStrength}
+            setSaleCustomStrength={setSaleCustomStrength}
+            saleCustomForm={saleCustomForm}
+            setSaleCustomForm={setSaleCustomForm}
+            saleCustomUnitPrice={saleCustomUnitPrice}
+            setSaleCustomUnitPrice={setSaleCustomUnitPrice}
+            saleCustomPurPrice={saleCustomPurPrice}
+            setSaleCustomPurPrice={setSaleCustomPurPrice}
+            saleCustomQty={saleCustomQty}
+            setSaleCustomQty={setSaleCustomQty}
+            saleCustomSaveCatalog={saleCustomSaveCatalog}
+            setSaleCustomSaveCatalog={setSaleCustomSaveCatalog}
+            saleCustomNameInputRef={saleCustomNameInputRef}
+            saleCustomPriceInputRef={saleCustomPriceInputRef}
+            customProductForms={CUSTOM_PRODUCT_FORMS}
+            medSearch={medSearch}
+            setMedSearch={setMedSearch}
+            saleSearchInputRef={saleSearchInputRef}
+            onOpenScanner={onOpenScanner}
+            quickSearchSaleMedicines={quickSearchSaleMedicines}
+            getStockForMed={getStockForMed}
+            getMedPurchasePrice={getMedPurchasePrice}
+            getOldEditedQtyForMed={getOldEditedQtyForMed}
+            posCart={posCart}
+            cartSubTotal={cartSubTotal}
+            discountStr={discountStr}
+            setDiscountStr={setDiscountStr}
+            discountVal={discountVal}
+            grandTotal={grandTotal}
+            paidAmountStr={paidAmountStr}
+            setPaidAmountStr={setPaidAmountStr}
+            dueAmount={dueAmount}
+            totalSaleUnits={totalSaleUnits}
+            hasModifiedCartPrice={hasModifiedCartPrice}
+            syncModifiedPrices={syncModifiedPrices}
+            setSyncModifiedPrices={setSyncModifiedPrices}
+            onAddToCart={onAddToCart}
+            onAddCustomToCart={onAddCustomToCart}
+            onUpdateCartItemDetails={onUpdateCartItemDetails}
+            onUpdateCartUnitPrice={onUpdateCartUnitPrice}
+            onUpdateCartPurchasePrice={onUpdateCartPurchasePrice}
+            onUpdateCartQty={onUpdateCartQty}
+            onRemoveFromCart={onRemoveFromCart}
+            onClearCart={onClearCart}
+            isEditingSale={isEditingSale}
+            submittingSale={submittingSale}
+            handleSaleSubmit={handleSaleSubmit}
+            submitSaleWithMode={submitSaleWithMode}
+            onPreviewCurrentSaleInvoice={handlePreviewCurrentSaleInvoice}
+            activeStaff={activeStaff}
+          />
         ) : (
           /* ============================================================================
              MODE 2: PRODUCT PURCHASE INVOICE (বক্স আকারে ক্রয় ইনভয়েস টেবিল)
@@ -4056,206 +3010,196 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
         >
           <div
             id="printable-invoice-receipt"
-            className="bg-white border border-slate-300 rounded-lg w-full max-w-[210mm] min-h-[297mm] p-6 sm:p-8 md:p-10 shadow-2xl my-4 text-slate-900 font-sans print:border-none print:shadow-none print:p-0 print:my-0 print:max-w-none print:w-full flex flex-col justify-between"
+            className={`bg-white border border-slate-300 rounded-lg w-full max-w-[210mm] shadow-2xl my-2 text-slate-900 font-sans print:border-none print:shadow-none print:p-0 print:my-0 print:max-w-none print:w-full print:max-h-[287mm] flex flex-col justify-between overflow-hidden ${
+              parsedPreviewItems.length >= 14
+                ? 'p-3 sm:p-4 text-[9.5px]'
+                : parsedPreviewItems.length >= 9
+                ? 'p-3.5 sm:p-5 text-[10px]'
+                : parsedPreviewItems.length >= 5
+                ? 'p-4 sm:p-6 text-[11px]'
+                : 'p-6 sm:p-8 text-xs'
+            }`}
           >
-            <div>
-              {/* Top Control Toolbar (no-print) */}
-              <div className="mb-4 p-3 bg-slate-100 border border-slate-300 rounded-lg flex flex-wrap items-center justify-between gap-2.5 no-print shadow-xs">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-teal-800 text-white font-bold text-xs shadow-2xs">
-                    <FileText className="w-3.5 h-3.5" />
-                    <span>A4 পেপার সাইজ (210mm × 297mm)</span>
-                  </span>
+            {(() => {
+              const previewItemCount = parsedPreviewItems.length;
+              const isMicro = previewItemCount >= 14;
+              const isUltraCompact = previewItemCount >= 9 && previewItemCount < 14;
+              const isCompact = previewItemCount >= 5 && previewItemCount < 9;
+              const isDense = isMicro || isUltraCompact || isCompact;
 
-                  {previewInvoice.txType === 'sale' && (
-                    <div className="inline-flex rounded-md border border-slate-300 p-0.5 bg-white shadow-2xs">
-                      <button
-                        type="button"
-                        onClick={() => setInvoicePrintWithPrice(true)}
-                        className={`px-3 py-1 text-xs font-bold rounded cursor-pointer transition-colors ${
-                          invoicePrintWithPrice
-                            ? 'bg-teal-700 text-white shadow-xs'
-                            : 'text-slate-700 hover:text-slate-900'
-                        }`}
-                      >
-                        ✓ দাম সহ মেমো
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setInvoicePrintWithPrice(false)}
-                        className={`px-3 py-1 text-xs font-bold rounded cursor-pointer transition-colors ${
-                          !invoicePrintWithPrice
-                            ? 'bg-amber-600 text-white shadow-xs'
-                            : 'text-slate-700 hover:text-slate-900'
-                        }`}
-                      >
-                        ✓ দাম ছাড়া মেমো
-                      </button>
+              const currentSeal = activeInvoiceSeal || previewInvoice.selectedSeal || 'iqbal_pharmacy';
+              const sealMap = {
+                iqbal_pharmacy: {
+                  title: 'ইকবাল ফার্মেসী',
+                  sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (DMTD (Dental), LMAF, RMP, Pharmacist)',
+                  address: 'ঠিকানা:- নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।',
+                  mobile: 'মোবাইল:- 01812-358839, 01315645076',
+                  location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
+                },
+                dental_care_1: {
+                  title: 'ইকবাল ডেন্টাল কেয়ার-১',
+                  sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (DMTD (Dental), LMAF, RMP, Pharmacist)',
+                  address: 'ঠিকানা:- নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।',
+                  mobile: 'মোবাইল:- 01812-358839, 01315645076',
+                  location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
+                },
+                dental_care_2: {
+                  title: 'ইকবাল ডেন্টাল কেয়ার-২ (ওদারহাট ডেন্টাল কেয়ার)',
+                  sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (DMTD (Dental), LMAF, RMP, Pharmacist)',
+                  address: 'ঠিকানা:- উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী।',
+                  mobile: 'মোবাইল:- 01812-358839, 01315645076',
+                  location: 'উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী',
+                },
+              };
+              const sealConfig = sealMap[currentSeal] || sealMap.iqbal_pharmacy;
+              const sealDimensions = isMicro ? 'w-18 h-18' : isUltraCompact ? 'w-20 h-20' : isCompact ? 'w-22 h-22' : 'w-26 h-26';
+
+              return (
+                <div>
+                  {/* Top Control Toolbar (no-print) */}
+                  <div className="mb-3 p-2.5 bg-slate-100 border border-slate-300 rounded-lg flex flex-wrap items-center justify-between gap-2 no-print shadow-xs">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-teal-800 text-white font-bold text-xs shadow-2xs">
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>A4 পেপার সাইজ (এক পেজে সম্পূর্ণ ইনভয়েস)</span>
+                      </span>
+
+                      {previewInvoice.txType === 'sale' && (
+                        <div className="inline-flex rounded-md border border-slate-300 p-0.5 bg-white shadow-2xs">
+                          <button
+                            type="button"
+                            onClick={() => setInvoicePrintWithPrice(true)}
+                            className={`px-2.5 py-1 text-xs font-bold rounded cursor-pointer transition-colors ${
+                              invoicePrintWithPrice
+                                ? 'bg-teal-700 text-white shadow-xs'
+                                : 'text-slate-700 hover:text-slate-900'
+                            }`}
+                          >
+                            ✓ দাম সহ মেমো
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setInvoicePrintWithPrice(false)}
+                            className={`px-2.5 py-1 text-xs font-bold rounded cursor-pointer transition-colors ${
+                              !invoicePrintWithPrice
+                                ? 'bg-amber-600 text-white shadow-xs'
+                                : 'text-slate-700 hover:text-slate-900'
+                            }`}
+                          >
+                            ✓ দাম ছাড়া মেমো
+                          </button>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
 
-                {previewInvoice.txType === 'sale' && (
-                  <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                    <span className="font-bold text-slate-700">সিল / শাখা:</span>
-                    <div className="inline-flex rounded-md border border-slate-300 p-0.5 bg-white shadow-2xs">
+                    {previewInvoice.txType === 'sale' && (
+                      <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                        <span className="font-bold text-slate-700">সিল / শাখা:</span>
+                        <div className="inline-flex rounded-md border border-slate-300 p-0.5 bg-white shadow-2xs">
+                          <button
+                            type="button"
+                            onClick={() => setActiveInvoiceSeal('iqbal_pharmacy')}
+                            className={`px-2 py-0.5 text-xs font-bold rounded cursor-pointer transition-colors ${
+                              activeInvoiceSeal === 'iqbal_pharmacy'
+                                ? 'bg-teal-700 text-white shadow-xs'
+                                : 'text-slate-700 hover:text-slate-900'
+                            }`}
+                          >
+                            🏢 ১. ইকবাল ফার্মেসী
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setActiveInvoiceSeal('dental_care_1')}
+                            className={`px-2 py-0.5 text-xs font-bold rounded cursor-pointer transition-colors ${
+                              activeInvoiceSeal === 'dental_care_1'
+                                ? 'bg-blue-800 text-white shadow-xs'
+                                : 'text-slate-700 hover:text-slate-900'
+                            }`}
+                          >
+                            🦷 ২. ইকবাল ডেন্টাল কেয়ার-১
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setActiveInvoiceSeal('dental_care_2')}
+                            className={`px-2 py-0.5 text-xs font-bold rounded cursor-pointer transition-colors ${
+                              activeInvoiceSeal === 'dental_care_2'
+                                ? 'bg-indigo-800 text-white shadow-xs'
+                                : 'text-slate-700 hover:text-slate-900'
+                            }`}
+                          >
+                            🦷 ৩. ইকবাল ডেন্টাল কেয়ার-২
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => setActiveInvoiceSeal('iqbal_pharmacy')}
-                        className={`px-2.5 py-1 text-xs font-bold rounded cursor-pointer transition-colors ${
-                          activeInvoiceSeal === 'iqbal_pharmacy'
-                            ? 'bg-teal-700 text-white shadow-xs'
-                            : 'text-slate-700 hover:text-slate-900'
-                        }`}
+                        onClick={() => window.print()}
+                        className="px-3.5 py-1 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-md flex items-center gap-1.5 cursor-pointer shadow-xs"
                       >
-                        🏢 ১. ইকবাল ফার্মেসী
+                        <Printer className="w-3.5 h-3.5" />
+                        <span>A4 প্রিন্ট করুন</span>
                       </button>
                       <button
                         type="button"
-                        onClick={() => setActiveInvoiceSeal('dental_care_1')}
-                        className={`px-2.5 py-1 text-xs font-bold rounded cursor-pointer transition-colors ${
-                          activeInvoiceSeal === 'dental_care_1'
-                            ? 'bg-blue-800 text-white shadow-xs'
-                            : 'text-slate-700 hover:text-slate-900'
-                        }`}
+                        onClick={() => setPreviewInvoice(null)}
+                        className="px-3 py-1 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-200 border border-slate-300 rounded-md cursor-pointer"
                       >
-                        🦷 ২. ইকবাল ডেন্টাল কেয়ার-১
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setActiveInvoiceSeal('dental_care_2')}
-                        className={`px-2.5 py-1 text-xs font-bold rounded cursor-pointer transition-colors ${
-                          activeInvoiceSeal === 'dental_care_2'
-                            ? 'bg-indigo-800 text-white shadow-xs'
-                            : 'text-slate-700 hover:text-slate-900'
-                        }`}
-                      >
-                        🦷 ৩. ইকবাল ডেন্টাল কেয়ার-২
+                        বন্ধ
                       </button>
                     </div>
                   </div>
-                )}
 
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => window.print()}
-                    className="px-3.5 py-1.5 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-md flex items-center gap-1.5 cursor-pointer shadow-xs"
-                  >
-                    <Printer className="w-3.5 h-3.5" />
-                    <span>A4 প্রিন্ট করুন</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPreviewInvoice(null)}
-                    className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-200 border border-slate-300 rounded-md cursor-pointer"
-                  >
-                    বন্ধ
-                  </button>
-                </div>
-              </div>
-
-              {/* ========================================================================
-                  A4 INVOICE SHEET CONTENT
-                  ======================================================================== */}
-
-              {/* Top Meta Line: Govt Approval & Invoice Copy Label */}
-              <div className="flex items-center justify-between text-[11px] text-slate-600 border-b border-slate-300 pb-1.5 mb-2.5">
-                <span className="font-semibold text-slate-800">
-                  গণপ্রজাতন্ত্রী বাংলাদেশ সরকার অনুমোদিত ড্রাগ লাইসেন্স ও ডেন্টাল ক্লিনিক
-                </span>
-                <span className="font-mono font-bold text-slate-700">
-                  {previewInvoice.txType === 'purchase'
-                    ? 'ক্রয় চালান (PURCHASE INVOICE)'
-                    : previewInvoice.txType === 'sale' && !invoicePrintWithPrice
-                    ? 'প্রেসক্রিপশন ও ডেলিভারি মেমো (DELIVERY MEMO)'
-                    : 'বিক্রয় চালান / ক্যাশ মেমো (SALES INVOICE)'}{' '}
-                  · মূল কপি (Customer Copy) · A4
-                </span>
-              </div>
-
-              {/* Header Row: Doctor Qualifications (Left) & Chamber Box (Right) */}
-              {(() => {
-                const currentSeal = activeInvoiceSeal || previewInvoice.selectedSeal || 'iqbal_pharmacy';
-                const sealMap = {
-                  iqbal_pharmacy: {
-                    title: 'ইকবাল ফার্মেসী',
-                    sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (DMTD (Dental), LMAF, RMP, Pharmacist)',
-                    address: 'ঠিকানা:- নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।',
-                    mobile: 'মোবাইল:- 01812-358839, 01315645076',
-                    location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
-                  },
-                  dental_care_1: {
-                    title: 'ইকবাল ডেন্টাল কেয়ার-১',
-                    sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (DMTD (Dental), LMAF, RMP, Pharmacist)',
-                    address: 'ঠিকানা:- নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।',
-                    mobile: 'মোবাইল:- 01812-358839, 01315645076',
-                    location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
-                  },
-                  dental_care_2: {
-                    title: 'ইকবাল ডেন্টাল কেয়ার-২ (ওদারহাট ডেন্টাল কেয়ার)',
-                    sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (DMTD (Dental), LMAF, RMP, Pharmacist)',
-                    address: 'ঠিকানা:- উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী।',
-                    mobile: 'মোবাইল:- 01812-358839, 01315645076',
-                    location: 'উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী',
-                  },
-                };
-                const sealConfig = sealMap[currentSeal] || sealMap.iqbal_pharmacy;
-
-                return (
-                  <div className="space-y-3 border-b-2 border-slate-900 pb-3 mb-3">
-                    <div className="flex flex-col sm:flex-row sm:items-stretch justify-between gap-4 bg-white">
+                  {/* Header Row: Doctor Qualifications (Left) & Chamber Box (Right) */}
+                  <div className={`border-b-2 border-slate-900 ${isDense ? 'pb-2 mb-2' : 'pb-3 mb-3'}`}>
+                    <div className="flex flex-col sm:flex-row sm:items-stretch justify-between gap-3 bg-white">
                       {/* Left Doctor Info */}
-                      <div className="text-left space-y-1 sm:max-w-[46%]">
-                        <div className="flex items-center gap-2">
-                          <span className="text-rose-900 font-black text-2xl font-serif">Rx</span>
-                          <h3 className="text-xl font-black text-rose-900 tracking-tight">
+                      <div className="text-left space-y-0.5 sm:max-w-[46%]">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`text-rose-900 font-black font-serif ${isDense ? 'text-xl' : 'text-2xl'}`}>Rx</span>
+                          <h3 className={`font-black text-rose-900 tracking-tight ${isDense ? 'text-base sm:text-lg' : 'text-xl'}`}>
                             ডেন্টিস্ট:- ইকবাল মাহমুদ
                           </h3>
                         </div>
-                        <div className="text-xs font-semibold text-slate-800 leading-snug space-y-0.5">
-                          <div className="font-bold text-teal-900 text-[13px]">
+                        <div className={`font-semibold text-slate-800 leading-snug space-y-0.5 ${isDense ? 'text-[10px]' : 'text-xs'}`}>
+                          <div className={`font-bold text-teal-900 ${isDense ? 'text-[11px]' : 'text-[13px]'}`}>
                             DMTD (Dental), LMAF, RMP, Pharmacist
                           </div>
                           <div className="text-slate-700">ডি.এইচ.ডি.টি (ফেনী) · এস.ডি.এফ (ঢাকা)</div>
                           <div className="text-slate-700">চেম্বার এন্ড ডেন্টাল টেকনোলজিস্ট</div>
-                          <div className="font-mono font-bold text-slate-900 pt-1 text-xs">
+                          <div className={`font-mono font-bold text-slate-900 ${isDense ? 'text-[10px] pt-0.5' : 'text-xs pt-1'}`}>
                             মোবাইল: 01812-358839, 01315645076
                           </div>
-                          <div className="text-[11px] font-bold text-teal-800">
+                          <div className={`font-bold text-teal-800 ${isDense ? 'text-[10px]' : 'text-[11px]'}`}>
                             শাখা: {sealConfig.title}
                           </div>
                         </div>
                       </div>
 
-                      {/* Right Chambers Box (Dark Teal Box) */}
-                      <div className="bg-[#2a6d70] text-white p-3 rounded-md flex-1 text-xs space-y-1.5 shadow-xs">
-                        <div className="text-center font-bold text-sm text-amber-200 border-b border-teal-600/60 pb-1">
-                          চেম্বার ও রোগী দেখার সময়সূচী:
+                      {/* Right Chambers Box (Dark Teal Box - clean without visiting times) */}
+                      <div className={`bg-[#2a6d70] text-white rounded-md flex-1 space-y-1 shadow-xs ${isDense ? 'p-2 text-[10px]' : 'p-2.5 sm:p-3 text-xs'}`}>
+                        <div className="text-center font-bold text-xs text-amber-200 border-b border-teal-600/60 pb-0.5">
+                          শাখা ও চেম্বার:
                         </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-[11px] leading-tight">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px] leading-tight">
                           {/* Chamber 2 */}
-                          <div className="border-b sm:border-b-0 sm:border-r border-teal-500/50 pb-1.5 sm:pb-0 sm:pr-2.5">
+                          <div className="border-b sm:border-b-0 sm:border-r border-teal-500/50 pb-1 sm:pb-0 sm:pr-2">
                             <div className="font-bold text-emerald-100">ইকবাল ডেন্টাল কেয়ার-২</div>
-                            <div className="text-[10px] text-teal-100">(ওদারহাট ডেন্টাল কেয়ার)</div>
-                            <div className="mt-0.5 text-teal-100 text-[10.5px]">
+                            <div className="text-[9.5px] text-teal-100">(ওদারহাট ডেন্টাল কেয়ার)</div>
+                            <div className="mt-0.5 text-teal-100 text-[9.5px] leading-snug">
                               উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী।
-                            </div>
-                            <div className="mt-1 font-semibold text-amber-200 text-[10px]">
-                              রোগী দেখার সময়ঃ প্রতিদিন সকাল ১০টা থেকে মাগরিব পর্যন্ত। প্রতি শুক্রবার চেম্বার বন্ধ।
                             </div>
                           </div>
 
                           {/* Chamber 1 */}
                           <div className="sm:pl-1">
                             <div className="font-bold text-emerald-100">ইকবাল ডেন্টাল কেয়ার-১</div>
-                            <div className="mt-0.5 text-teal-100 text-[10.5px]">
+                            <div className="mt-0.5 text-teal-100 text-[9.5px] leading-snug">
                               নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।
                             </div>
-                            <div className="mt-1 font-semibold text-amber-200 text-[10px]">
-                              রোগী দেখার সময়ঃ সকাল ৯টা থেকে দুপুর ১টা এবং মাগরিব থেকে রাত ৯.০০টা।
-                            </div>
-                            <div className="mt-1 text-[10px] text-teal-200 border-t border-teal-600/50 pt-0.5">
+                            <div className="mt-0.5 text-[9.5px] text-teal-200 border-t border-teal-600/50 pt-0.5">
                               ফার্মেসী শাখা: ইকবাল ফার্মেসী, নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।
                             </div>
                           </div>
@@ -4263,440 +3207,378 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                       </div>
                     </div>
                   </div>
-                );
-              })()}
 
-              {/* Distinct A4 Invoice Title Ribbon */}
-              <div
-                className={`mb-3 px-4 py-2 rounded-md border flex flex-wrap items-center justify-between gap-2 ${
-                  previewInvoice.txType === 'purchase'
-                    ? 'bg-indigo-50 border-indigo-300 text-indigo-950'
-                    : previewInvoice.txType === 'sale'
-                    ? invoicePrintWithPrice
-                      ? 'bg-teal-50 border-teal-300 text-teal-950'
-                      : 'bg-amber-50 border-amber-300 text-amber-950'
-                    : 'bg-emerald-50 border-emerald-300 text-emerald-950'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  {previewInvoice.txType === 'purchase' ? (
-                    <Truck className="w-4 h-4 text-indigo-700 shrink-0" />
-                  ) : (
-                    <ShoppingCart className="w-4 h-4 text-teal-700 shrink-0" />
+                  {/* Patient & Customer & Invoice Meta Details (4-Card Grid) */}
+                  <div className={`bg-pink-50/70 border border-pink-200 rounded-lg ${isDense ? 'p-1.5 mb-1.5' : 'p-2.5 mb-2.5'}`}>
+                    <div className={`grid grid-cols-2 sm:grid-cols-4 gap-2 ${isDense ? 'text-[10px]' : 'text-xs'}`}>
+                      <div className="space-y-0.5">
+                        <span className="text-slate-500 text-[9.5px] block">
+                          Name (রোগী / ক্রেতার নাম):
+                        </span>
+                        <span className="font-bold text-slate-900 block truncate text-xs sm:text-[13px]">
+                          {previewInvoice.partyName || 'সাধারণ ক্রেতা (Walk-in)'}
+                        </span>
+                        <span className="text-slate-500 text-[9.5px] block font-mono">
+                          ফোন: {previewInvoice.partyPhone || 'N/A'}
+                        </span>
+                      </div>
+
+                      <div className="space-y-0.5">
+                        <span className="text-slate-500 text-[9.5px] block">
+                          Age & Sex (বয়স ও লিঙ্গ):
+                        </span>
+                        <span className="font-bold text-slate-900 block text-xs sm:text-[13px]">
+                          {previewInvoice.patientAge ? `${previewInvoice.patientAge} বছর` : '—'} ·{' '}
+                          {previewInvoice.patientSex === 'Female'
+                            ? 'মহিলা'
+                            : previewInvoice.patientSex === 'Other'
+                            ? 'Other'
+                            : 'পুরুষ'}
+                        </span>
+                        <span className="text-slate-500 text-[9.5px] block">
+                          ঠিকানা: {previewInvoice.selectedSeal === 'dental_care_2' ? 'নোয়াখালী সদর' : 'চন্দ্রগঞ্জ, লক্ষ্মীপুর'}
+                        </span>
+                      </div>
+
+                      <div className="space-y-0.5">
+                        <span className="text-slate-500 text-[9.5px] block">
+                          Invoice No (চালান / মেমো নং):
+                        </span>
+                        <span className="font-mono font-bold text-slate-900 block text-xs sm:text-[13px]">
+                          {previewInvoice.invoiceNo}
+                        </span>
+                        <span className="text-slate-500 text-[9.5px] block font-mono">
+                          তারিখ: {previewInvoice.dateStr || getTodayDateStr()}
+                        </span>
+                      </div>
+
+                      <div className="space-y-0.5">
+                        <span className="text-slate-500 text-[9.5px] block">
+                          Served By & Payment:
+                        </span>
+                        <span className="font-semibold text-slate-800 block text-[11px]">
+                          অপারেটর: {previewInvoice.staffRole === 'owner' ? 'Owner' : previewInvoice.staffName || 'Staff'}
+                        </span>
+                        <span className="font-mono font-bold text-emerald-800 block text-[11px]">
+                          {previewInvoice.paymentMethod.toUpperCase()} ·{' '}
+                          <span className={previewInvoice.dueAmount > 0 ? 'text-red-600' : 'text-emerald-700'}>
+                            {previewInvoice.dueAmount > 0 ? 'বকেয়া (DUE)' : 'পরিশোধিত (PAID)'}
+                          </span>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ক্লিনিক্যাল পর্যবেক্ষণ: ফার্মেসীর জন্য ফার্মেসী ক্লিনিক্যাল ও ডেন্টালের জন্য ডেন্টাল ক্লিনিক্যাল অপশন */}
+                  {previewInvoice.txType === 'sale' && (
+                    (() => {
+                      return currentSeal === 'iqbal_pharmacy' ? (
+                        <div className={`border border-teal-300 rounded-md bg-teal-50/50 ${isDense ? 'p-1.5 mb-1.5' : 'p-2 mb-2.5'}`}>
+                          <div className="flex items-center justify-between text-[11px] font-bold text-teal-950 pb-0.5 border-b border-teal-200 mb-1">
+                            <span className="flex items-center gap-1">
+                              <Stethoscope className="w-3 h-3 text-teal-700" />
+                              ফার্মেসী ক্লিনিক্যাল পর্যবেক্ষণ ও ভাইটালস (Clinical Findings & Vitals):
+                            </span>
+                            <span className="text-[9.5px] text-teal-800 font-normal">
+                              রক্তচাপ, সুগার, তাপমাত্রা ও পরামর্শ
+                            </span>
+                          </div>
+                          <div className={`grid grid-cols-2 sm:grid-cols-4 gap-1.5 ${isDense ? 'text-[9.5px]' : 'text-[11px]'}`}>
+                            {[
+                              'রক্তচাপ (BP)',
+                              'ডায়াবেটিস (RBS)',
+                              'তাপমাত্রা (Temp)',
+                              'ওজন (Weight)',
+                              'নাড়ির গতি (Pulse)',
+                              'প্রধান লক্ষণ (Symptoms)',
+                              'প্রাথমিক পরামর্শ (Advice)',
+                              'পরীক্ষা-নিরীক্ষা (Inv.)',
+                            ].map((key) => {
+                              const val = previewInvoice.dentalClinical?.[key];
+                              const hasVal = Boolean(val && val.trim().length > 0);
+                              return (
+                                <div
+                                  key={key}
+                                  className={`p-1 rounded border leading-tight ${
+                                    hasVal
+                                      ? 'bg-white border-teal-400 text-teal-950 shadow-2xs font-semibold'
+                                      : 'bg-transparent border-dashed border-slate-300 text-slate-500'
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-bold text-slate-800 text-[10px]">{key}:</span>
+                                    {hasVal && <span className="text-teal-700 text-[9px] font-bold">✓</span>}
+                                  </div>
+                                  <div className="text-[9.5px] mt-0.5 truncate text-slate-700 font-mono">
+                                    {hasVal ? val : '...................'}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className={`border border-amber-300 rounded-md bg-amber-50/40 ${isDense ? 'p-1.5 mb-1.5' : 'p-2 mb-2.5'}`}>
+                          <div className="flex items-center justify-between text-[11px] font-bold text-amber-950 pb-0.5 border-b border-amber-200 mb-1">
+                            <span className="flex items-center gap-1">
+                              🦷 ডেন্টাল ক্লিনিক্যাল পর্যবেক্ষণ (Clinical Findings & Dental Examination):
+                            </span>
+                            <span className="text-[9.5px] text-amber-800 font-normal">
+                              দাঁতের লক্ষণ ও পর্যবেক্ষণ
+                            </span>
+                          </div>
+                          <div className={`grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-1.5 ${isDense ? 'text-[9.5px]' : 'text-[11px]'}`}>
+                            {[
+                              'Pereocoronaties',
+                              'Pulpitis',
+                              'Calculus',
+                              'Gingivitis',
+                              'Caries',
+                              'Scaling',
+                              'Filling',
+                              'RCT',
+                              'Cap',
+                              'Bridge',
+                              'EXT',
+                              'Others',
+                              'Inv.',
+                            ].map((key) => {
+                              const val = previewInvoice.dentalClinical?.[key];
+                              const hasVal = Boolean(val && val.trim().length > 0);
+                              return (
+                                <div
+                                  key={key}
+                                  className={`p-1 rounded border leading-tight ${
+                                    hasVal
+                                      ? 'bg-white border-amber-400 text-amber-950 shadow-2xs font-semibold'
+                                      : 'bg-transparent border-dashed border-slate-300 text-slate-500'
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-bold text-slate-800 text-[10px]">{key}:</span>
+                                    {hasVal && <span className="text-emerald-700 text-[9px] font-bold">✓</span>}
+                                  </div>
+                                  <div className="text-[9.5px] mt-0.5 truncate text-slate-700 font-mono">
+                                    {hasVal ? val : '...................'}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })()
                   )}
-                  <span className="text-sm sm:text-base font-black tracking-tight">
-                    {previewInvoice.txType === 'purchase'
-                      ? 'প্রডাক্ট ক্রয় ইনভয়েস / স্টক-ইন চালান (PURCHASE INVOICE)'
-                      : previewInvoice.txType === 'sale'
-                      ? invoicePrintWithPrice
-                        ? 'প্রডাক্ট বিক্রয় ইনভয়েস / ক্যাশ মেমো (SALES INVOICE & CASH MEMO)'
-                        : 'প্রডাক্ট ডেলিভারি চালান / প্রেসক্রিপশন মেমো (DELIVERY MEMO)'
-                      : 'বকেয়া আদায় মানি রিসিট (DUE COLLECTION RECEIPT)'}
-                  </span>
-                </div>
 
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded border bg-white border-slate-300 text-slate-800">
-                    A4 ফরম্যাট
-                  </span>
-                  <span
-                    className={`text-[11px] font-mono font-bold px-2.5 py-0.5 rounded border ${
-                      previewInvoice.txType === 'purchase'
-                        ? 'bg-white border-indigo-300 text-emerald-700'
-                        : previewInvoice.txType === 'sale'
-                        ? invoicePrintWithPrice
-                          ? 'bg-white border-teal-300 text-amber-800'
-                          : 'bg-white border-amber-300 text-amber-900'
-                        : 'bg-white border-emerald-300 text-emerald-800'
-                    }`}
-                  >
-                    {(() => {
-                      const items = parsedPreviewItems;
-                      const nonStockCount = items.filter((i) => i.tailText?.includes('নন-স্টক')).length;
-                      const stockEffectQty = items
-                        .filter((i) => !i.tailText?.includes('নন-স্টক'))
-                        .reduce((sum, i) => sum + i.qty, 0);
-                      if (previewInvoice.txType === 'purchase') {
-                        return stockEffectQty > 0
-                          ? `স্টক বৃদ্ধি (+${stockEffectQty} পিস)${nonStockCount > 0 ? ` · ${nonStockCount}টি নন-স্টক` : ''}`
-                          : 'শুধু ইনভয়েস (স্টক অপরিবর্তিত)';
-                      }
-                      if (previewInvoice.txType === 'sale') {
-                        return stockEffectQty > 0
-                          ? `স্টক হ্রাস (-${stockEffectQty} পিস)${nonStockCount > 0 ? ` · ${nonStockCount}টি নন-স্টক` : ''}`
-                          : 'শুধু ইনভয়েস (স্টক অপরিবর্তিত)';
-                      }
-                      return 'লেজার বকেয়া জমা';
-                    })()}
-                  </span>
-                </div>
-              </div>
-
-              {/* Patient & Customer & Invoice Meta Details (4-Card Grid) */}
-              <div className="p-3 bg-pink-50/70 border border-pink-200 rounded-lg mb-3">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                  <div className="space-y-0.5">
-                    <span className="text-slate-500 text-[10.5px] block">
-                      Name (রোগী / ক্রেতার নাম):
-                    </span>
-                    <span className="font-bold text-slate-900 block truncate text-sm">
-                      {previewInvoice.partyName || 'সাধারণ ক্রেতা (Walk-in)'}
-                    </span>
-                    <span className="text-slate-500 text-[10.5px] block pt-0.5 font-mono">
-                      ফোন: {previewInvoice.partyPhone || 'N/A'}
-                    </span>
-                  </div>
-
-                  <div className="space-y-0.5">
-                    <span className="text-slate-500 text-[10.5px] block">
-                      Age & Sex (বয়স ও লিঙ্গ):
-                    </span>
-                    <span className="font-bold text-slate-900 block text-sm">
-                      {previewInvoice.patientAge ? `${previewInvoice.patientAge} বছর` : '—'} ·{' '}
-                      {previewInvoice.patientSex === 'Female'
-                        ? 'মহিলা'
-                        : previewInvoice.patientSex === 'Other'
-                        ? 'Other'
-                        : 'পুরুষ'}
-                    </span>
-                    <span className="text-slate-500 text-[10.5px] block pt-0.5">
-                      ঠিকানা: {previewInvoice.selectedSeal === 'dental_care_2' ? 'নোয়াখালী সদর' : 'চন্দ্রগঞ্জ, লক্ষ্মীপুর'}
-                    </span>
-                  </div>
-
-                  <div className="space-y-0.5">
-                    <span className="text-slate-500 text-[10.5px] block">
-                      Invoice No (চালান / মেমো নং):
-                    </span>
-                    <span className="font-mono font-bold text-slate-900 block text-sm">
-                      {previewInvoice.invoiceNo}
-                    </span>
-                    <span className="text-slate-500 text-[10.5px] block pt-0.5 font-mono">
-                      তারিখ: {previewInvoice.dateStr || getTodayDateStr()}
-                    </span>
-                  </div>
-
-                  <div className="space-y-0.5">
-                    <span className="text-slate-500 text-[10.5px] block">
-                      Served By & Payment:
-                    </span>
-                    <span className="font-semibold text-slate-800 block text-xs">
-                      অপারেটর: {previewInvoice.staffRole === 'owner' ? 'Owner' : previewInvoice.staffName || 'Staff'}
-                    </span>
-                    <span className="font-mono font-bold text-emerald-800 block pt-0.5 text-xs">
-                      {previewInvoice.paymentMethod.toUpperCase()} ·{' '}
-                      <span className={previewInvoice.dueAmount > 0 ? 'text-red-600' : 'text-emerald-700'}>
-                        {previewInvoice.dueAmount > 0 ? 'বকেয়া (DUE)' : 'পরিশোধিত (PAID)'}
+                  {/* Items Table (Full Width A4 Table with Clean Borders) */}
+                  <div className={isDense ? 'mb-1.5' : 'mb-2.5'}>
+                    <div className="text-xs font-bold text-slate-800 mb-1">
+                      <span>
+                        {previewInvoice.txType === 'purchase'
+                          ? 'ক্রয়কৃত ওষুধের বিবরণ ও প্যাক হিসাব:'
+                          : previewInvoice.txType === 'sale' && !invoicePrintWithPrice
+                          ? 'বিতরণকৃত ওষুধের তালিকা (ডেলিভারি চালান):'
+                          : 'বিক্রয়কৃত ওষুধের তালিকা ও হিসাব:'}
                       </span>
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* ক্লিনিক্যাল পর্যবেক্ষণ: ফার্মেসীর জন্য ফার্মেসী ক্লিনিক্যাল ও ডেন্টালের জন্য ডেন্টাল ক্লিনিক্যাল অপশন */}
-              {previewInvoice.txType === 'sale' && (
-                (() => {
-                  const currentSeal = activeInvoiceSeal || previewInvoice.selectedSeal || 'iqbal_pharmacy';
-                  return currentSeal === 'iqbal_pharmacy' ? (
-                    <div className="p-2.5 border border-teal-300 rounded-md bg-teal-50/50 mb-3">
-                      <div className="flex items-center justify-between text-xs font-bold text-teal-950 pb-1 border-b border-teal-200 mb-2">
-                        <span className="flex items-center gap-1.5">
-                          <Stethoscope className="w-3.5 h-3.5 text-teal-700" />
-                          ফার্মেসী ক্লিনিক্যাল পর্যবেক্ষণ ও ভাইটালস (Clinical Findings & Vitals):
-                        </span>
-                        <span className="text-[10px] text-teal-800 font-normal">
-                          রক্তচাপ, সুগার, তাপমাত্রা ও পরামর্শ
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                        {[
-                          'রক্তচাপ (BP)',
-                          'ডায়াবেটিস (RBS)',
-                          'তাপমাত্রা (Temp)',
-                          'ওজন (Weight)',
-                          'নাড়ির গতি (Pulse)',
-                          'প্রধান লক্ষণ (Symptoms)',
-                          'প্রাথমিক পরামর্শ (Advice)',
-                          'পরীক্ষা-নিরীক্ষা (Inv.)',
-                        ].map((key) => {
-                          const val = previewInvoice.dentalClinical?.[key];
-                          const hasVal = Boolean(val && val.trim().length > 0);
-                          return (
-                            <div
-                              key={key}
-                              className={`p-1.5 rounded border text-[11px] leading-tight ${
-                                hasVal
-                                  ? 'bg-white border-teal-400 text-teal-950 shadow-2xs font-semibold'
-                                  : 'bg-transparent border-dashed border-slate-300 text-slate-600'
-                              }`}
-                            >
-                              <div className="flex items-center justify-between">
-                                <span className="font-bold text-slate-900">{key}:</span>
-                                {hasVal && <span className="text-teal-700 text-[10px] font-bold">✓</span>}
-                              </div>
-                              <div className="text-[10.5px] mt-0.5 truncate text-slate-800 font-mono">
-                                {hasVal ? val : '...................'}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
                     </div>
-                  ) : (
-                    <div className="p-2.5 border border-amber-300 rounded-md bg-amber-50/40 mb-3">
-                      <div className="flex items-center justify-between text-xs font-bold text-amber-950 pb-1 border-b border-amber-200 mb-2">
-                        <span className="flex items-center gap-1.5">
-                          🦷 ডেন্টাল ক্লিনিক্যাল পর্যবেক্ষণ (Clinical Findings & Dental Examination):
-                        </span>
-                        <span className="text-[10px] text-amber-800 font-normal">
-                          দাঁতের লক্ষণ ও পর্যবেক্ষণ
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 text-xs">
-                        {[
-                          'Pereocoronaties',
-                          'Pulpitis',
-                          'Calculus',
-                          'Gingivitis',
-                          'Caries',
-                          'Scaling',
-                          'Filling',
-                          'RCT',
-                          'Cap',
-                          'Bridge',
-                          'EXT',
-                          'Others',
-                          'Inv.',
-                        ].map((key) => {
-                          const val = previewInvoice.dentalClinical?.[key];
-                          const hasVal = Boolean(val && val.trim().length > 0);
-                          return (
-                            <div
-                              key={key}
-                              className={`p-1.5 rounded border text-[11px] leading-tight ${
-                                hasVal
-                                  ? 'bg-white border-amber-400 text-amber-950 shadow-2xs font-semibold'
-                                  : 'bg-transparent border-dashed border-slate-300 text-slate-600'
-                              }`}
-                            >
-                              <div className="flex items-center justify-between">
-                                <span className="font-bold text-slate-900">{key}:</span>
-                                {hasVal && <span className="text-emerald-700 text-[10px] font-bold">✓</span>}
-                              </div>
-                              <div className="text-[10.5px] mt-0.5 truncate text-slate-800 font-mono">
-                                {hasVal ? val : '...................'}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })()
-              )}
 
-              {/* Items Table (Full Width A4 Table with Clean Borders) */}
-              <div className="mb-3">
-                <div className="flex items-center justify-between text-xs font-bold text-slate-800 mb-1.5">
-                  <span>
-                    {previewInvoice.txType === 'purchase'
-                      ? 'ক্রয়কৃত ওষুধের বিবরণ ও প্যাক হিসাব:'
-                      : previewInvoice.txType === 'sale' && !invoicePrintWithPrice
-                      ? 'বিতরণকৃত ওষুধের তালিকা (ডেলিভারি চালান):'
-                      : 'বিক্রয়কৃত ওষুধের তালিকা ও হিসাব:'}
-                  </span>
-                  <span className="font-mono text-slate-500 text-[11px]">
-                    মোট আইটেম: {parsedPreviewItems.length} টি
-                  </span>
-                </div>
-
-                {parsedPreviewItems.length > 0 ? (
-                  <div className="border border-slate-300 rounded overflow-hidden">
-                    <table className="w-full text-left border-collapse text-xs font-mono">
-                      <thead
-                        className={
-                          previewInvoice.txType === 'purchase'
-                            ? 'bg-indigo-100/70 border-b-2 border-slate-300 text-indigo-950 font-sans'
-                            : previewInvoice.txType === 'sale' && !invoicePrintWithPrice
-                            ? 'bg-amber-100/70 border-b-2 border-slate-300 text-amber-950 font-sans'
-                            : 'bg-teal-100/70 border-b-2 border-slate-300 text-teal-950 font-sans'
-                        }
-                      >
-                        <tr>
-                          <th className="py-2 px-2.5 text-center w-10">ক্র.নং</th>
-                          <th className="py-2 px-3">ওষুধের বিবরণ ও নির্দেশনা</th>
-                          <th className="py-2 px-2 text-center w-28">ডোজ ও নিয়ম</th>
-                          {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
-                            <th className="py-2 px-2 text-center w-24">
-                              {previewInvoice.txType === 'purchase' ? 'ক্রয় দর (৳)' : 'একক দর (৳)'}
-                            </th>
-                          )}
-                          <th className="py-2 px-2 text-center w-20">পরিমাণ</th>
-                          {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
-                            <th className="py-2 px-3 text-right w-28">
-                              {previewInvoice.txType === 'purchase' ? 'মোট ক্রয় (৳)' : 'মোট টাকা (৳)'}
-                            </th>
-                          )}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-200 bg-white">
-                        {parsedPreviewItems.map((pItem, idx) => (
-                          <tr key={idx} className={idx % 2 === 1 ? 'bg-slate-50/50' : 'bg-white'}>
-                            <td className="py-2 px-2 text-center font-bold text-slate-600">
-                              {idx + 1}
-                            </td>
-                            <td className="py-2 px-3 text-slate-900">
-                              {previewInvoice.txType === 'purchase' ? (
-                                <div>
-                                  <div className="font-bold text-slate-900 text-xs sm:text-[13px] font-sans">
-                                    {pItem.formPrefix ? `${pItem.formPrefix.toUpperCase()}. ` : ''}
-                                    {pItem.cleanName || pItem.brandAndStrength}
-                                  </div>
-                                  {pItem.packDetail && (
-                                    <div className="text-[11px] font-mono text-indigo-800 font-semibold mt-0.5">
-                                      প্যাক হিসাব: {pItem.packDetail}
+                    {parsedPreviewItems.length > 0 ? (
+                      <div className="border border-slate-300 rounded overflow-hidden">
+                        <table className={`w-full text-left border-collapse font-mono ${
+                          isMicro ? 'text-[9.5px] leading-tight' : isUltraCompact ? 'text-[10px] leading-tight' : isCompact ? 'text-[11px]' : 'text-xs'
+                        }`}>
+                          <thead
+                            className={
+                              previewInvoice.txType === 'purchase'
+                                ? 'bg-indigo-100/70 border-b-2 border-slate-300 text-indigo-950 font-sans'
+                                : previewInvoice.txType === 'sale' && !invoicePrintWithPrice
+                                ? 'bg-amber-100/70 border-b-2 border-slate-300 text-amber-950 font-sans'
+                                : 'bg-teal-100/70 border-b-2 border-slate-300 text-teal-950 font-sans'
+                            }
+                          >
+                            <tr>
+                              <th className={`text-center w-8 ${isDense ? 'py-1 px-1.5' : 'py-1.5 px-2'}`}>ক্র.নং</th>
+                              <th className={` ${isDense ? 'py-1 px-2' : 'py-1.5 px-2.5'}`}>ওষুধের বিবরণ ও নির্দেশনা</th>
+                              <th className={`text-center w-24 sm:w-28 ${isDense ? 'py-1 px-1' : 'py-1.5 px-1.5'}`}>ডোজ ও নিয়ম</th>
+                              {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
+                                <th className={`text-center w-20 sm:w-24 ${isDense ? 'py-1 px-1' : 'py-1.5 px-1.5'}`}>
+                                  {previewInvoice.txType === 'purchase' ? 'ক্রয় দর (৳)' : 'একক দর (৳)'}
+                                </th>
+                              )}
+                              <th className={`text-center w-16 sm:w-20 ${isDense ? 'py-1 px-1' : 'py-1.5 px-1.5'}`}>পরিমাণ</th>
+                              {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
+                                <th className={`text-right w-24 sm:w-28 ${isDense ? 'py-1 px-2' : 'py-1.5 px-2.5'}`}>
+                                  {previewInvoice.txType === 'purchase' ? 'মোট ক্রয় (৳)' : 'মোট টাকা (৳)'}
+                                </th>
+                              )}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-200 bg-white">
+                            {parsedPreviewItems.map((pItem, idx) => (
+                              <tr key={idx} className={idx % 2 === 1 ? 'bg-slate-50/50' : 'bg-white'}>
+                                <td className={`text-center font-bold text-slate-600 ${isDense ? 'py-0.5 px-1' : 'py-1.5 px-1.5'}`}>
+                                  {idx + 1}
+                                </td>
+                                <td className={`text-slate-900 ${isDense ? 'py-0.5 px-2' : 'py-1.5 px-2.5'}`}>
+                                  {previewInvoice.txType === 'purchase' ? (
+                                    <div>
+                                      <div className={`font-bold text-slate-900 font-sans ${isDense ? 'text-[10.5px]' : 'text-xs'}`}>
+                                        {pItem.formPrefix ? `${pItem.formPrefix.toUpperCase()}. ` : ''}
+                                        {pItem.cleanName || pItem.brandAndStrength}
+                                      </div>
+                                      {pItem.packDetail && (
+                                        <div className="text-[9.5px] font-mono text-indigo-800 font-semibold mt-0.5">
+                                          প্যাক হিসাব: {pItem.packDetail}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div>
+                                      <div className={`font-bold text-slate-900 font-sans ${isDense ? 'text-[10.5px]' : 'text-xs sm:text-[13px]'}`}>
+                                        {pItem.formPrefix ? `${pItem.formPrefix.charAt(0).toUpperCase() + pItem.formPrefix.slice(1)}. ` : ''}
+                                        {pItem.cleanName || pItem.brandAndStrength}
+                                      </div>
+                                      {pItem.tailText && !pItem.dosageInstruction && (
+                                        <div className="text-[9.5px] text-slate-500 font-sans">
+                                          {pItem.tailText}
+                                        </div>
+                                      )}
                                     </div>
                                   )}
-                                </div>
-                              ) : (
-                                <div>
-                                  <div className="font-bold text-slate-900 text-xs sm:text-[13px] font-sans">
-                                    {pItem.formPrefix ? `${pItem.formPrefix.charAt(0).toUpperCase() + pItem.formPrefix.slice(1)}. ` : ''}
-                                    {pItem.cleanName || pItem.brandAndStrength}
-                                  </div>
-                                  {pItem.tailText && !pItem.dosageInstruction && (
-                                    <div className="text-[10.5px] text-slate-500 font-sans">
-                                      {pItem.tailText}
-                                    </div>
+                                </td>
+                                <td className={`text-center ${isDense ? 'py-0.5 px-1' : 'py-1.5 px-1'}`}>
+                                  {pItem.dosageInstruction ? (
+                                    <span className={`inline-block font-mono font-bold text-red-600 bg-rose-50 border border-rose-200 rounded ${
+                                      isDense ? 'px-1 py-0 text-[9.5px]' : 'px-1.5 py-0.5 text-[10.5px]'
+                                    }`}>
+                                      {pItem.dosageInstruction}
+                                    </span>
+                                  ) : pItem.rawLine.includes('{') ? (
+                                    <span className={`inline-block font-mono font-bold text-red-600 bg-rose-50 border border-rose-200 rounded ${
+                                      isDense ? 'px-1 py-0 text-[9.5px]' : 'px-1.5 py-0.5 text-[10.5px]'
+                                    }`}>
+                                      {pItem.rawLine.split('{')[1]?.replace('}', '')}
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400 font-sans text-[10px]">নিয়মিত</span>
                                   )}
-                                </div>
-                              )}
-                            </td>
-                            <td className="py-2 px-2 text-center">
-                              {pItem.dosageInstruction ? (
-                                <span className="inline-block px-1.5 py-0.5 font-mono font-bold text-red-600 bg-rose-50 border border-rose-200 rounded text-[11px]">
-                                  {pItem.dosageInstruction}
-                                </span>
-                              ) : pItem.rawLine.includes('{') ? (
-                                <span className="inline-block px-1.5 py-0.5 font-mono font-bold text-red-600 bg-rose-50 border border-rose-200 rounded text-[11px]">
-                                  {pItem.rawLine.split('{')[1]?.replace('}', '')}
-                                </span>
-                              ) : (
-                                <span className="text-slate-400 font-sans text-[11px]">নিয়মিত</span>
-                              )}
-                            </td>
-                            {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
-                              <td className="py-2 px-2 text-center text-slate-700">
-                                ৳{formatCleanMoney(pItem.unitPrice)}
-                              </td>
-                            )}
-                            <td className="py-2 px-2 text-center font-bold text-slate-900">
-                              {pItem.qty} পিস
-                            </td>
-                            {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
-                              <td className="py-2 px-3 text-right font-bold text-slate-900">
-                                ৳{formatCleanMoney(pItem.lineTotal)}
-                              </td>
-                            )}
-                          </tr>
+                                </td>
+                                {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
+                                  <td className={`text-center text-slate-700 ${isDense ? 'py-0.5 px-1' : 'py-1.5 px-1'}`}>
+                                    ৳{formatCleanMoney(pItem.unitPrice)}
+                                  </td>
+                                )}
+                                <td className={`text-center font-bold text-slate-900 ${isDense ? 'py-0.5 px-1' : 'py-1.5 px-1'}`}>
+                                  {pItem.qty} পিস
+                                </td>
+                                {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
+                                  <td className={`text-right font-bold text-slate-900 ${isDense ? 'py-0.5 px-2' : 'py-1.5 px-2.5'}`}>
+                                    ৳{formatCleanMoney(pItem.lineTotal)}
+                                  </td>
+                                )}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="p-2.5 bg-slate-50 rounded border border-slate-300 text-xs font-mono text-slate-900 space-y-1 leading-relaxed">
+                        {formatTransactionItemsList(previewInvoice.itemsSummary).map((line, idx) => (
+                          <div key={idx}>{line}</div>
                         ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="p-3 bg-slate-50 rounded border border-slate-300 text-xs font-mono text-slate-900 space-y-1 leading-relaxed">
-                    {formatTransactionItemsList(previewInvoice.itemsSummary).map((line, idx) => (
-                      <div key={idx}>{line}</div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Financial Totals & In-Words Section */}
-              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 mb-3 pt-1">
-                {/* Left 7 Cols: Amount In Bengali Words + Return Terms */}
-                <div className="sm:col-span-7 space-y-2">
-                  <div className="p-2.5 bg-slate-50 border border-slate-300 rounded-md text-xs space-y-1">
-                    <div className="font-bold text-slate-900">
-                      কথায় (Amount in Words):
-                    </div>
-                    <div className="text-teal-900 font-bold text-[13px] bg-white p-1.5 rounded border border-slate-200">
-                      কথায়: {numberToBanglaWords(previewInvoice.grandTotal)}
-                    </div>
-                  </div>
-
-                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-md text-[11px] text-slate-600 space-y-1">
-                    <div className="font-bold text-slate-800">
-                      ওষুধ সংক্রান্ত বিশেষ দ্রষ্টব্য ও শর্তাবলী:
-                    </div>
-                    <ul className="list-disc list-inside space-y-0.5 text-[10.5px] leading-relaxed">
-                      <li>বিক্রিত ওষুধ অক্ষত ফয়েল/প্যাক থাকলে ক্যাশ মেমোসহ ৭ দিনের মধ্যে পরিবর্তনযোগ্য।</li>
-                      <li>কাটা/ছেঁড়া পাতা বা ইনসুলিন ও ফ্রিজের ওষুধ ফেরত বা পরিবর্তনযোগ্য নয়।</li>
-                      <li>সকল ওষুধ আলো ও তাপ থেকে দূরে ঠাণ্ডা ও শুষ্ক স্থানে রাখুন। শিশুদের নাগালের বাইরে রাখুন।</li>
-                    </ul>
-                  </div>
-
-                  {/* পরবর্তী সাক্ষাতের সময় ব্যবস্থাপত্র সঙ্গে আনবেন Banner */}
-                  <div className="py-1.5 px-3 bg-[#2e7d32] text-white text-center font-bold text-xs rounded tracking-wide shadow-2xs">
-                    পরবর্তী সাক্ষাতের সময় ব্যবস্থাপত্র সঙ্গে আনবেন।
-                  </div>
-                </div>
-
-                {/* Right 5 Cols: Financial Calculations Breakdown */}
-                <div className="sm:col-span-5">
-                  <div className="p-3 bg-slate-50 border border-slate-300 rounded-md space-y-1.5 text-xs font-mono tabular-nums">
-                    <div className="flex justify-between text-slate-600">
-                      <span>
-                        {previewInvoice.txType === 'purchase'
-                          ? 'মোট ক্রয় মূল্য (Sub-total):'
-                          : 'মোট বিক্রয় মূল্য (Sub-total):'}
-                      </span>
-                      <span className="font-bold">৳{previewInvoice.subTotal.toFixed(2)}</span>
-                    </div>
-
-                    <div className="flex justify-between text-slate-600">
-                      <span>ছাড় / ডিসকাউন্ট (Discount):</span>
-                      <span className="font-bold text-red-600">-৳{previewInvoice.discount.toFixed(2)}</span>
-                    </div>
-
-                    <div className="flex justify-between font-bold text-slate-900 text-sm pt-1.5 border-t-2 border-slate-300">
-                      <span>সর্বমোট প্রদেয় বিল (Grand Total):</span>
-                      <span className="text-base text-teal-900">৳{previewInvoice.grandTotal.toFixed(2)}</span>
-                    </div>
-
-                    <div className="flex justify-between text-emerald-700 font-bold pt-1 border-t border-slate-200">
-                      <span>
-                        {previewInvoice.txType === 'purchase' ? 'পরিশোধিত মূল্য' : 'নগদ জমা / পরিশোধ'} (
-                        {previewInvoice.paymentMethod.toUpperCase()}):
-                      </span>
-                      <span>৳{previewInvoice.paidAmount.toFixed(2)}</span>
-                    </div>
-
-                    <div className="flex justify-between text-red-600 font-bold items-center">
-                      <span>
-                        {previewInvoice.txType === 'purchase'
-                          ? 'কোম্পানি বাকি (Supplier Due):'
-                          : 'বকেয়া বিল (Customer Due):'}
-                      </span>
-                      <span className="text-sm">৳{previewInvoice.dueAmount.toFixed(2)}</span>
-                    </div>
-
-                    {previewInvoice.dueAmount > 0 && (
-                      <div className="pt-2 flex justify-end no-print">
-                        <button
-                          type="button"
-                          onClick={() => openPaymentModal(previewInvoice)}
-                          className="px-3.5 py-1.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-md shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <CreditCard className="w-3.5 h-3.5" />
-                          <span>Payment Now (বকেয়া পরিশোধ)</span>
-                        </button>
                       </div>
                     )}
                   </div>
+
+                  {/* Financial Totals & In-Words Section */}
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 mb-2 pt-0.5">
+                    {/* Left 7 Cols: Amount In Bengali Words + Return Terms */}
+                    <div className="sm:col-span-7 space-y-1.5">
+                      <div className={`bg-slate-50 border border-slate-300 rounded-md space-y-0.5 ${isDense ? 'p-1.5 text-[10px]' : 'p-2 text-xs'}`}>
+                        <div className="font-bold text-slate-800">
+                          কথায় (Amount in Words):
+                        </div>
+                        <div className={`text-teal-900 font-bold bg-white rounded border border-slate-200 ${isDense ? 'p-1 text-[11px]' : 'p-1.5 text-xs sm:text-[13px]'}`}>
+                          কথায়: {numberToBanglaWords(previewInvoice.grandTotal)}
+                        </div>
+                      </div>
+
+                      <div className={`bg-slate-50 border border-slate-200 rounded-md text-slate-600 space-y-0.5 ${isDense ? 'p-1.5 text-[9.5px]' : 'p-2 text-[10.5px]'}`}>
+                        <div className="font-bold text-slate-800">
+                          ওষুধ সংক্রান্ত বিশেষ দ্রষ্টব্য ও শর্তাবলী:
+                        </div>
+                        <ul className="list-disc list-inside space-y-0.5 leading-relaxed">
+                          <li>বিক্রিত ওষুধ অক্ষত ফয়েল/প্যাক থাকলে ক্যাশ মেমোসহ ৭ দিনের মধ্যে পরিবর্তনযোগ্য।</li>
+                          <li>কাটা/ছেঁড়া পাতা বা ইনসুলিন ও ফ্রিজের ওষুধ ফেরত বা পরিবর্তনযোগ্য নয়।</li>
+                          <li>সকল ওষুধ আলো ও তাপ থেকে দূরে ঠাণ্ডা ও শুষ্ক স্থানে রাখুন। শিশুদের নাগালের বাইরে রাখুন।</li>
+                        </ul>
+                      </div>
+
+                      {/* পরবর্তী সাক্ষাতের সময় ব্যবস্থাপত্র সঙ্গে আনবেন Banner */}
+                      <div className={`bg-[#2e7d32] text-white text-center font-bold rounded tracking-wide shadow-2xs ${isDense ? 'py-1 px-2 text-[10px]' : 'py-1.5 px-3 text-xs'}`}>
+                        পরবর্তী সাক্ষাতের সময় ব্যবস্থাপত্র সঙ্গে আনবেন।
+                      </div>
+                    </div>
+
+                    {/* Right 5 Cols: Financial Calculations Breakdown */}
+                    <div className="sm:col-span-5">
+                      <div className={`bg-slate-50 border border-slate-300 rounded-md font-mono tabular-nums ${isDense ? 'p-2 space-y-1 text-[11px]' : 'p-2.5 sm:p-3 space-y-1.5 text-xs'}`}>
+                        <div className="flex justify-between text-slate-600">
+                          <span>
+                            {previewInvoice.txType === 'purchase'
+                              ? 'মোট ক্রয় মূল্য (Sub-total):'
+                              : 'মোট বিক্রয় মূল্য (Sub-total):'}
+                          </span>
+                          <span className="font-bold">৳{previewInvoice.subTotal.toFixed(2)}</span>
+                        </div>
+
+                        <div className="flex justify-between text-slate-600">
+                          <span>ছাড় / ডিসকাউন্ট (Discount):</span>
+                          <span className="font-bold text-red-600">-৳{previewInvoice.discount.toFixed(2)}</span>
+                        </div>
+
+                        <div className={`flex justify-between font-bold text-slate-900 pt-1 border-t-2 border-slate-300 ${isDense ? 'text-xs' : 'text-sm'}`}>
+                          <span>সর্বমোট প্রদেয় বিল (Grand Total):</span>
+                          <span className={`text-teal-900 ${isDense ? 'text-sm' : 'text-base'}`}>৳{previewInvoice.grandTotal.toFixed(2)}</span>
+                        </div>
+
+                        <div className="flex justify-between text-emerald-700 font-bold pt-0.5 border-t border-slate-200">
+                          <span>
+                            {previewInvoice.txType === 'purchase' ? 'পরিশোধিত মূল্য' : 'নগদ জমা / পরিশোধ'} (
+                            {previewInvoice.paymentMethod.toUpperCase()}):
+                          </span>
+                          <span>৳{previewInvoice.paidAmount.toFixed(2)}</span>
+                        </div>
+
+                        {previewInvoice.dueAmount > 0 && (
+                          <div className="flex justify-between text-red-600 font-bold items-center pt-0.5">
+                            <span>
+                              {previewInvoice.txType === 'purchase'
+                                ? 'কোম্পানি বাকি (Supplier Due):'
+                                : 'বকেয়া বিল (Customer Due):'}
+                            </span>
+                            <span className="text-sm">৳{previewInvoice.dueAmount.toFixed(2)}</span>
+                          </div>
+                        )}
+
+                        {previewInvoice.dueAmount > 0 && (
+                          <div className="pt-1.5 flex justify-end no-print">
+                            <button
+                              type="button"
+                              onClick={() => openPaymentModal(previewInvoice)}
+                              className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white font-bold text-[11px] rounded shadow-xs transition-colors flex items-center gap-1 cursor-pointer"
+                            >
+                              <CreditCard className="w-3 h-3" />
+                              <span>Payment Now (বকেয়া পরিশোধ)</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
+              );
+            })()}
 
             {/* Bottom Section: Official Seal & Doctor Signatures (Print-Friendly) */}
             <div className="print-avoid-break">
@@ -4717,54 +3599,60 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                   },
                 };
                 const sealConfig = sealMap[currentSeal] || sealMap.iqbal_pharmacy;
+                const previewItemCount = parsedPreviewItems.length;
+                const isMicro = previewItemCount >= 14;
+                const isUltraCompact = previewItemCount >= 9 && previewItemCount < 14;
+                const isCompact = previewItemCount >= 5 && previewItemCount < 9;
+                const isDense = isMicro || isUltraCompact || isCompact;
+                const sealDimensions = isMicro ? 'w-18 h-18' : isUltraCompact ? 'w-20 h-20' : isCompact ? 'w-22 h-22' : 'w-26 h-26';
 
                 return (
-                  <div className="pt-4 pb-2 border-t-2 border-slate-900 grid grid-cols-1 sm:grid-cols-3 items-center gap-4">
+                  <div className={`border-t-2 border-slate-900 grid grid-cols-1 sm:grid-cols-3 items-center gap-2 ${isDense ? 'pt-2 pb-1' : 'pt-3 pb-2'}`}>
                     {/* Customer Signature */}
-                    <div className="text-center sm:text-left space-y-1">
-                      <div className="w-36 border-b border-slate-600 mx-auto sm:mx-0 mb-1" />
-                      <div className="text-xs font-bold text-slate-800">
+                    <div className="text-center sm:text-left space-y-0.5">
+                      <div className="w-28 sm:w-32 border-b border-slate-600 mx-auto sm:mx-0 mb-0.5" />
+                      <div className={`font-bold text-slate-800 ${isDense ? 'text-[11px]' : 'text-xs'}`}>
                         ক্রেতার স্বাক্ষর
                       </div>
-                      <div className="text-[10px] text-slate-500">
+                      <div className="text-[9.5px] text-slate-500">
                         Customer's Signature
                       </div>
                     </div>
 
                     {/* Salesman / Prepared By Signature */}
-                    <div className="text-center space-y-1">
-                      <div className="w-36 border-b border-slate-600 mx-auto mb-1" />
-                      <div className="text-xs font-bold text-slate-800">
+                    <div className="text-center space-y-0.5">
+                      <div className="w-28 sm:w-32 border-b border-slate-600 mx-auto mb-0.5" />
+                      <div className={`font-bold text-slate-800 ${isDense ? 'text-[11px]' : 'text-xs'}`}>
                         বিক্রয়কারীর স্বাক্ষর
                       </div>
-                      <div className="text-[10px] text-slate-500">
+                      <div className="text-[9.5px] text-slate-500">
                         {previewInvoice.staffRole === 'owner' ? 'Owner / Pharmacist' : previewInvoice.staffName || 'Salesman'}
                       </div>
                     </div>
 
                     {/* Doctor Seal & Signature Block */}
                     <div className="flex flex-col items-center sm:items-end">
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2.5">
                         {/* Circular Rubber Stamp */}
-                        <div className="w-28 h-28 rounded-full border-2 border-dashed border-blue-900 p-0.5 flex items-center justify-center relative select-none shadow-xs bg-blue-50/25">
-                          <div className="w-full h-full rounded-full border border-solid border-blue-900 flex flex-col items-center justify-center text-center p-1 text-blue-950">
-                            <div className="text-[8px] font-black uppercase tracking-tight text-blue-950 leading-tight">
+                        <div className={`${sealDimensions} rounded-full border-2 border-dashed border-blue-900 p-0.5 flex items-center justify-center relative select-none shadow-xs bg-blue-50/25`}>
+                          <div className="w-full h-full rounded-full border border-solid border-blue-900 flex flex-col items-center justify-center text-center p-0.5 text-blue-950">
+                            <div className={`font-black uppercase tracking-tight text-blue-950 leading-tight ${isDense ? 'text-[7px]' : 'text-[8px]'}`}>
                               ★ {sealConfig.title} ★
                             </div>
-                            <div className="w-12 h-px bg-blue-800 my-0.5" />
-                            <div className="text-[7.5px] font-bold text-blue-950">
+                            <div className="w-10 h-px bg-blue-800 my-0.2" />
+                            <div className={`font-bold text-blue-950 ${isDense ? 'text-[6.5px]' : 'text-[7.5px]'}`}>
                               ডেন্টিস্ট:- ইকবাল মাহমুদ
                             </div>
-                            <div className="text-[6.5px] font-semibold text-blue-900 leading-tight">
+                            <div className={`font-semibold text-blue-900 leading-tight ${isDense ? 'text-[5.5px]' : 'text-[6.5px]'}`}>
                               DMTD, LMAF, RMP, Pharmacist
                             </div>
-                            <div className="text-[7px] font-extrabold text-blue-900 tracking-wider border-y border-blue-700 py-0.5 my-0.5">
+                            <div className={`font-extrabold text-blue-900 tracking-wider border-y border-blue-700 py-0.2 my-0.2 ${isDense ? 'text-[6px]' : 'text-[7px]'}`}>
                               ★ VERIFIED & APPROVED ★
                             </div>
-                            <div className="text-[6.5px] font-mono font-bold text-blue-950">
+                            <div className={`font-mono font-bold text-blue-950 ${isDense ? 'text-[5.5px]' : 'text-[6.5px]'}`}>
                               {previewInvoice.dateStr || getTodayDateStr()}
                             </div>
-                            <div className="text-[6px] text-blue-800 font-semibold leading-tight truncate max-w-[90px]">
+                            <div className={`text-blue-800 font-semibold leading-tight truncate max-w-[80px] ${isDense ? 'text-[5.5px]' : 'text-[6px]'}`}>
                               {sealConfig.location}
                             </div>
                           </div>
@@ -4772,17 +3660,17 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
 
                         {/* Doctor's Signature Text */}
                         <div className="text-right space-y-0.5">
-                          <div className="w-36 border-b border-slate-900 ml-auto mb-1" />
-                          <div className="text-xs font-bold text-slate-900">
+                          <div className="w-28 sm:w-32 border-b border-slate-900 ml-auto mb-0.5" />
+                          <div className={`font-bold text-slate-900 ${isDense ? 'text-[11px]' : 'text-xs'}`}>
                             স্বাক্ষর ও অফিসিয়াল সিল
                           </div>
-                          <div className="text-[11px] font-semibold text-slate-800">
+                          <div className={`font-semibold text-slate-800 ${isDense ? 'text-[10px]' : 'text-[11px]'}`}>
                             ডেন্টিস্ট:- ইকবাল মাহমুদ
                           </div>
-                          <div className="text-[9.5px] text-slate-600">
+                          <div className={`text-slate-600 ${isDense ? 'text-[8.5px]' : 'text-[9.5px]'}`}>
                             DMTD (Dental), LMAF, RMP, Pharmacist
                           </div>
-                          <div className="text-[9px] text-slate-500">
+                          <div className={`text-slate-500 ${isDense ? 'text-[8px]' : 'text-[9px]'}`}>
                             {sealConfig.title}
                           </div>
                         </div>
@@ -4793,15 +3681,15 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
               })()}
 
               {/* Developer Credit Footer */}
-              <div className="pt-2 border-t border-dashed border-slate-300 text-center space-y-0.5">
-                <div className="text-[10px] font-semibold text-slate-600">
+              <div className="pt-1 border-t border-dashed border-slate-300 text-center space-y-0.2">
+                <div className="text-[9.5px] font-semibold text-slate-600">
                   মোঃ আকবর হোসেন চৌধুরী
                 </div>
-                <div className="text-[9.5px] text-slate-500">
+                <div className="text-[9px] text-slate-500">
                   ডেভেলপার ইকবাল ফার্মেসী মেডিসিন এ্যাপস্ · সুস্থ থাকুন, সঠিক নিয়মে ওষুধ সেবন করুন
                 </div>
               </div>
-
+            </div>
               {/* Modal Bottom Buttons (no-print) */}
               <div className="flex flex-wrap items-center justify-end gap-2 pt-3 border-t border-slate-200 no-print mt-2">
                 {(previewInvoice.txType === 'sale' || previewInvoice.txType === 'purchase') && (
@@ -4861,8 +3749,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
       {/* Payment Now Modal (Full / Partial Payment for any invoice with Due) */}
       {showPaymentModal && selectedPaymentInvoice && (

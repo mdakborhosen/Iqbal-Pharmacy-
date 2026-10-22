@@ -26,7 +26,19 @@
 @media print {
   @page {
     size: A4 portrait;
-    margin: 8mm 10mm;
+    margin: 5mm 6mm !important;
+  }
+
+  html,
+  body {
+    background: white !important;
+    color: black !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    height: 100% !important;
+    overflow: hidden !important;
   }
 
   *,
@@ -36,22 +48,13 @@
     text-shadow: none !important;
   }
 
-  body {
-    background: white !important;
-    color: black !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
-  }
-
   .no-print,
   .no-print * {
     display: none !important;
     visibility: hidden !important;
   }
 
-  /* When an invoice receipt modal is open, ensure only the invoice receipt prints on a clean A4 sheet */
+  /* When an invoice receipt modal is open, ensure only the invoice receipt prints on a clean single A4 sheet */
   body:has(#printable-invoice-receipt) header,
   body:has(#printable-invoice-receipt) aside,
   body:has(#printable-invoice-receipt) nav,
@@ -76,23 +79,44 @@
     box-shadow: none !important;
     inset: auto !important;
     width: 100% !important;
+    height: auto !important;
   }
 
   #printable-invoice-receipt {
     position: static !important;
     max-width: 100% !important;
     width: 100% !important;
+    max-height: 287mm !important;
     border: none !important;
     box-shadow: none !important;
     padding: 0 !important;
     margin: 0 auto !important;
-    page-break-inside: auto !important;
-    break-inside: auto !important;
-    display: block !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+    page-break-before: avoid !important;
+    break-before: avoid !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    box-sizing: border-box !important;
+  }
+
+  #printable-invoice-receipt table {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  #printable-invoice-receipt tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
   }
 
   .print-avoid-break {
     page-break-inside: avoid !important;
     break-inside: avoid !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
   }
 }
