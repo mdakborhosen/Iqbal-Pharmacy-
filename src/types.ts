@@ -131,6 +131,10 @@ export interface Transaction {
   subTotal: number;
   discount: number;
   grandTotal: number;
+  amount?: number;
+  category?: string;
+  staffId?: string;
+  timestamp?: number;
   paidAmount: number;
   dueAmount: number;
   paymentMethod: 'cash' | 'bkash' | 'nagad' | 'card' | 'due';

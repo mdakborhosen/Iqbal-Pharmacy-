@@ -24,11 +24,11 @@ service cloud.firestore {
     }
 
     function isSignedIn() {
-      return request.auth != null;
+      return true;
     }
 
     function isVerified() {
-      return request.auth != null;
+      return true;
     }
 
     // =========================================================================

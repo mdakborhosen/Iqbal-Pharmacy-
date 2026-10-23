@@ -132,7 +132,7 @@ export interface SaleStepWizardProps {
   submittingSale: boolean;
   handleSaleSubmit: (e: React.FormEvent) => void;
   submitSaleWithMode: (forceNew?: boolean) => Promise<void>;
-  onPreviewCurrentSaleInvoice: () => void;
+  onPreviewCurrentSaleInvoice: (withPrice?: boolean) => void;
   activeStaff: StaffMember;
 }
 
@@ -1323,14 +1323,22 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <button
                     type="button"
-                    onClick={onPreviewCurrentSaleInvoice}
+                    onClick={() => onPreviewCurrentSaleInvoice(true)}
                     className="px-3.5 py-1.5 text-xs font-bold text-teal-950 bg-teal-50 hover:bg-teal-100 border border-teal-300 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-2xs"
                   >
                     <Printer className="w-3.5 h-3.5 text-teal-700" />
-                    <span>A4 ইনভয়েস প্রিভিউ</span>
+                    <span>A4 ইনভয়েস (দাম সহ)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onPreviewCurrentSaleInvoice(false)}
+                    className="px-3.5 py-1.5 text-xs font-bold text-amber-950 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-amber-700" />
+                    <span>দাম ছাড়া মেমো</span>
                   </button>
                   {posCart.length > 0 && (
                     <button
@@ -1627,11 +1635,21 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      onClick={onPreviewCurrentSaleInvoice}
-                      className="px-4 py-2.5 text-xs font-bold text-teal-900 bg-teal-100 hover:bg-teal-200 border border-teal-300 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                      onClick={() => onPreviewCurrentSaleInvoice(true)}
+                      className="px-3.5 py-2.5 text-xs font-bold text-teal-900 bg-teal-100 hover:bg-teal-200 border border-teal-300 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                      title="দাম সহ A4 ইনভয়েস প্রিভিউ"
                     >
                       <Printer className="w-4 h-4 text-teal-700" />
-                      <span>A4 প্রিন্ট প্রিভিউ</span>
+                      <span>মেমো (দাম সহ)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onPreviewCurrentSaleInvoice(false)}
+                      className="px-3.5 py-2.5 text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                      title="দাম ছাড়া ডেলিভারি মেমো প্রিভিউ"
+                    >
+                      <FileText className="w-4 h-4 text-amber-700" />
+                      <span>দাম ছাড়া মেমো</span>
                     </button>
 
                     <button
@@ -1945,14 +1963,24 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                     অপারেটর: <strong>{activeStaff.roleTitle === 'owner' ? 'Owner' : activeStaff.name}</strong>
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <button
                     type="button"
-                    onClick={onPreviewCurrentSaleInvoice}
+                    onClick={() => onPreviewCurrentSaleInvoice(true)}
                     className="px-2.5 py-1 text-xs font-semibold text-teal-900 bg-teal-100 hover:bg-teal-200 border border-teal-300 rounded cursor-pointer flex items-center gap-1"
+                    title="দাম সহ সম্পূর্ণ বিক্রয় ইনভয়েস প্রিভিউ"
                   >
                     <Printer className="w-3 h-3" />
-                    <span>A4 মেমো প্রিভিউ</span>
+                    <span>মেমো (দাম সহ)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onPreviewCurrentSaleInvoice(false)}
+                    className="px-2.5 py-1 text-xs font-semibold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded cursor-pointer flex items-center gap-1"
+                    title="দাম ছাড়া ডেলিভারি চালান প্রিভিউ (টাকার কথা ও কিউআরে টাকা থাকবে না)"
+                  >
+                    <FileText className="w-3 h-3" />
+                    <span>দাম ছাড়া মেমো</span>
                   </button>
                   {posCart.length > 0 && (
                     <button

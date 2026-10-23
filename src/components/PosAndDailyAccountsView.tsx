@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import QRCode from 'qrcode';
 import {
   Activity,
   ArrowDownRight,
@@ -232,6 +233,79 @@ const makeFreshSaleInvoiceNo = () =>
 
 const makeFreshPurchaseInvoiceNo = () =>
   `PUR-${getTodayDateStr().replace(/-/g, '').slice(2)}-${Math.floor(100 + Math.random() * 900)}`;
+
+const InvoiceVerificationQrCode: React.FC<{
+  invoice: Transaction;
+  isDense?: boolean;
+  showPrice?: boolean;
+}> = ({ invoice, isDense, showPrice = true }) => {
+  const [qrUrl, setQrUrl] = useState<string>('');
+
+  useEffect(() => {
+    // If showPrice is false (দাম ছাড়া মেমো), absolutely NO price, payment, or taka info is encoded in QR code
+    const payload = JSON.stringify(
+      showPrice
+        ? {
+            invoiceNo: invoice.invoiceNo,
+            date: invoice.dateStr || getTodayDateStr(),
+            customer: invoice.partyName || 'Walk-in',
+            phone: invoice.partyPhone || 'N/A',
+            totalAmount: invoice.grandTotal ?? invoice.amount ?? 0,
+            paidAmount: invoice.paidAmount,
+            dueAmount: invoice.dueAmount,
+            status: invoice.dueAmount > 0 ? 'DUE' : 'PAID',
+            method: invoice.paymentMethod,
+            chamber: invoice.selectedSeal || 'iqbal_pharmacy',
+            app: 'Iqbal Pharmacy & Dental Care',
+          }
+        : {
+            invoiceNo: invoice.invoiceNo,
+            memoType: 'ডেলিভারি চালান (দাম ছাড়া মেমো)',
+            date: invoice.dateStr || getTodayDateStr(),
+            customer: invoice.partyName || 'Walk-in',
+            phone: invoice.partyPhone || 'N/A',
+            chamber: invoice.selectedSeal || 'iqbal_pharmacy',
+            app: 'Iqbal Pharmacy & Dental Care',
+          }
+    );
+
+    QRCode.toDataURL(payload, {
+      margin: 1,
+      width: isDense ? 76 : 90,
+      errorCorrectionLevel: 'M',
+      color: {
+        dark: '#0f172a',
+        light: '#ffffff',
+      },
+    })
+      .then(setQrUrl)
+      .catch((err) => {
+        console.error('QR code generation error:', err);
+      });
+  }, [invoice, isDense, showPrice]);
+
+  if (!qrUrl) return null;
+
+  const displayTotal = invoice.grandTotal ?? invoice.amount ?? 0;
+
+  return (
+    <div className="flex flex-col items-center justify-center text-center">
+      <div className="p-0.5 bg-white border border-slate-300 rounded shadow-2xs">
+        <img
+          src={qrUrl}
+          alt={`QR Verification for ${invoice.invoiceNo}`}
+          className={isDense ? 'w-14 h-14' : 'w-16 h-16'}
+        />
+      </div>
+      <div className={`font-mono font-bold text-slate-800 mt-0.5 ${isDense ? 'text-[7.5px]' : 'text-[8.5px]'}`}>
+        {showPrice ? 'পেমেন্ট ও বিল যাচাই QR' : 'চালান ও ডেলিভারি যাচাই QR'}
+      </div>
+      <div className={`font-mono text-slate-600 leading-tight ${isDense ? 'text-[7px]' : 'text-[7.5px]'}`}>
+        {showPrice ? `${invoice.invoiceNo} · ৳${displayTotal.toFixed(0)}` : `${invoice.invoiceNo} · ডেলিভারি মেমো`}
+      </div>
+    </div>
+  );
+};
 
 export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = ({
   catalog,
@@ -677,7 +751,8 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     setSaleStep(1);
   };
 
-  const handlePreviewCurrentSaleInvoice = () => {
+  const handlePreviewCurrentSaleInvoice = (withPrice: boolean = true) => {
+    setInvoicePrintWithPrice(withPrice);
     const cust = customers.find((c) => c.id === selectedCustomerId);
     const partyName =
       selectedCustomerId === 'walk-in'
@@ -687,6 +762,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     const itemsSummary = posCart.map((i, idx) => formatCartItemInvoiceLine(i, idx)).join('\n');
     const mockTx: Transaction = {
       id: 'preview-' + Date.now(),
+      ownerId: activeStaff.ownerId || '',
       invoiceNo: saleInvoiceNo,
       dateStr: saleDateStr,
       txType: 'sale',
@@ -694,12 +770,16 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
       amount: grandTotal,
       subTotal: cartSubTotal,
       discount: discountVal,
+      grandTotal: grandTotal,
       paidAmount: effectivePaidAmount,
       dueAmount: dueAmount,
       paymentMethod: paymentMethod,
+      partyId: selectedCustomerId,
       partyName,
       partyPhone,
       itemsSummary,
+      totalCount: posCart.length,
+      counterName: activeStaff.counterName || 'Counter-1',
       staffId: activeStaff.id,
       staffName: activeStaff.name,
       staffRole: activeStaff.roleTitle === 'owner' ? 'owner' : 'staff',
@@ -1373,6 +1453,24 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
 
           <div className="flex items-center gap-3 text-xs">
             {entryTab === 'sale_pos' ? (
+              <span className="inline-flex items-center gap-1.5 font-semibold text-teal-800 bg-teal-50 border border-teal-200 px-3 py-1 rounded-md">
+                <PackageMinus className="w-3.5 h-3.5 text-teal-700" />
+                {isEditingSale
+                  ? 'বিক্রয় ইনভয়েস এডিট: সংরক্ষণ করলে পূর্বের স্টক সমন্বয় হয়ে নতুন স্টক কমবে'
+                  : 'বিক্রয় মোড: ইনভয়েস সম্পন্ন করলে স্টক স্বয়ংক্রিয়ভাবে কমবে'}
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 font-semibold text-indigo-800 bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-md">
+                <PackageCheck className="w-3.5 h-3.5 text-indigo-700" />
+                {isEditingPurchase
+                  ? 'ক্রয় ইনভয়েস এডিট: সংরক্ষণ করলে পূর্বের স্টক সমন্বয় হয়ে নতুন স্টক বাড়বে'
+                  : 'ক্রয় মোড: ইনভয়েস সম্পন্ন করলে স্টক স্বয়ংক্রিয়ভাবে বাড়বে'}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {entryTab === 'sale_pos' ? (
           <SaleStepWizard
             saleStep={saleStep}
             setSaleStep={setSaleStep}
@@ -2796,7 +2894,10 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                         <div className="flex items-center justify-end gap-1.5">
                           <button
                             type="button"
-                            onClick={() => setPreviewInvoice(tx)}
+                            onClick={() => {
+                              setInvoicePrintWithPrice(true);
+                              setPreviewInvoice(tx);
+                            }}
                             className={`px-2.5 py-1 text-xs font-semibold rounded transition-colors inline-flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer ${
                               tx.txType === 'purchase'
                                 ? 'text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200'
@@ -2811,6 +2912,20 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                               ? 'বিক্রয় ইনভয়েস'
                               : 'রশিদ'}
                           </button>
+                          {tx.txType === 'sale' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setInvoicePrintWithPrice(false);
+                                setPreviewInvoice(tx);
+                              }}
+                              className="px-2 py-1 text-xs font-semibold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded transition-colors inline-flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer"
+                              title="দাম ছাড়া চালান / ডেলিভারি মেমো দেখুন ও প্রিন্ট করুন"
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                              দাম ছাড়া
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => handleEditInvoiceAction(tx)}
@@ -3157,8 +3272,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                     <div className="flex flex-col sm:flex-row sm:items-stretch justify-between gap-3 bg-white">
                       {/* Left Doctor Info */}
                       <div className="text-left space-y-0.5 sm:max-w-[46%]">
-                        <div className="flex items-center gap-1.5">
-                          <span className={`text-rose-900 font-black font-serif ${isDense ? 'text-xl' : 'text-2xl'}`}>Rx</span>
+                        <div>
                           <h3 className={`font-black text-rose-900 tracking-tight ${isDense ? 'text-base sm:text-lg' : 'text-xl'}`}>
                             ডেন্টিস্ট:- ইকবাল মাহমুদ
                           </h3>
@@ -3167,7 +3281,6 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                           <div className={`font-bold text-teal-900 ${isDense ? 'text-[11px]' : 'text-[13px]'}`}>
                             DMTD (Dental), LMAF, RMP, Pharmacist
                           </div>
-                          <div className="text-slate-700">ডি.এইচ.ডি.টি (ফেনী) · এস.ডি.এফ (ঢাকা)</div>
                           <div className="text-slate-700">চেম্বার এন্ড ডেন্টাল টেকনোলজিস্ট</div>
                           <div className={`font-mono font-bold text-slate-900 ${isDense ? 'text-[10px] pt-0.5' : 'text-xs pt-1'}`}>
                             মোবাইল: 01812-358839, 01315645076
@@ -3254,36 +3367,49 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
 
                       <div className="space-y-0.5">
                         <span className="text-slate-500 text-[9.5px] block">
-                          Served By & Payment:
+                          {previewInvoice.txType === 'sale' && !invoicePrintWithPrice
+                            ? 'Served By & Memo Type:'
+                            : 'Served By & Payment:'}
                         </span>
                         <span className="font-semibold text-slate-800 block text-[11px]">
                           অপারেটর: {previewInvoice.staffRole === 'owner' ? 'Owner' : previewInvoice.staffName || 'Staff'}
                         </span>
-                        <span className="font-mono font-bold text-emerald-800 block text-[11px]">
-                          {previewInvoice.paymentMethod.toUpperCase()} ·{' '}
-                          <span className={previewInvoice.dueAmount > 0 ? 'text-red-600' : 'text-emerald-700'}>
-                            {previewInvoice.dueAmount > 0 ? 'বকেয়া (DUE)' : 'পরিশোধিত (PAID)'}
+                        {previewInvoice.txType === 'sale' && !invoicePrintWithPrice ? (
+                          <span className="font-bold text-amber-800 block text-[11px]">
+                            ডেলিভারি চালান (দাম ছাড়া)
                           </span>
-                        </span>
+                        ) : (
+                          <span className="font-mono font-bold text-emerald-800 block text-[11px]">
+                            {previewInvoice.paymentMethod.toUpperCase()} ·{' '}
+                            <span className={previewInvoice.dueAmount > 0 ? 'text-red-600' : 'text-emerald-700'}>
+                              {previewInvoice.dueAmount > 0 ? 'বকেয়া (DUE)' : 'পরিশোধিত (PAID)'}
+                            </span>
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
 
-                  {/* ক্লিনিক্যাল পর্যবেক্ষণ: ফার্মেসীর জন্য ফার্মেসী ক্লিনিক্যাল ও ডেন্টালের জন্য ডেন্টাল ক্লিনিক্যাল অপশন */}
-                  {previewInvoice.txType === 'sale' && (
-                    (() => {
-                      return currentSeal === 'iqbal_pharmacy' ? (
-                        <div className={`border border-teal-300 rounded-md bg-teal-50/50 ${isDense ? 'p-1.5 mb-1.5' : 'p-2 mb-2.5'}`}>
-                          <div className="flex items-center justify-between text-[11px] font-bold text-teal-950 pb-0.5 border-b border-teal-200 mb-1">
-                            <span className="flex items-center gap-1">
-                              <Stethoscope className="w-3 h-3 text-teal-700" />
-                              ফার্মেসী ক্লিনিক্যাল পর্যবেক্ষণ ও ভাইটালস (Clinical Findings & Vitals):
-                            </span>
-                            <span className="text-[9.5px] text-teal-800 font-normal">
-                              রক্তচাপ, সুগার, তাপমাত্রা ও পরামর্শ
-                            </span>
+                  {/* Two-Column Body: Clinical Findings & Vitals on Left, Medicines Table on Right */}
+                  <div className="flex flex-row gap-2.5 items-start mb-2">
+                    {/* Left Column: Clinical Findings & Vitals */}
+                    {previewInvoice.txType === 'sale' && (
+                      <div className={`w-[27%] shrink-0 border border-teal-300 rounded-md bg-teal-50/50 p-2 ${isDense ? 'text-[9px]' : 'text-[10px]'}`}>
+                        <div className="text-[10px] sm:text-[11px] font-bold text-teal-950 pb-1 border-b border-teal-300 mb-1.5 leading-snug">
+                          <div className="flex items-center gap-1 text-teal-900">
+                            <Stethoscope className="w-3.5 h-3.5 text-teal-700 shrink-0" />
+                            <span>ক্লিনিক্যাল পর্যবেক্ষণ</span>
                           </div>
-                          <div className={`grid grid-cols-2 sm:grid-cols-4 gap-1.5 ${isDense ? 'text-[9.5px]' : 'text-[11px]'}`}>
+                          <div className="text-[8.5px] text-teal-700 font-normal">
+                            ফার্মেসী ক্লিনিক্যাল পর্যবেক্ষণ ও ভাইটালস:
+                          </div>
+                          <div className="text-[7.5px] text-teal-800 font-normal mt-0.5">
+                            রক্তচাপ, সুগার, তাপমাত্রা ও পরামর্শ
+                          </div>
+                        </div>
+
+                        {currentSeal === 'iqbal_pharmacy' ? (
+                          <div className="space-y-1">
                             {[
                               'রক্তচাপ (BP)',
                               'ডায়াবেটিস (RBS)',
@@ -3297,37 +3423,23 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                               const val = previewInvoice.dentalClinical?.[key];
                               const hasVal = Boolean(val && val.trim().length > 0);
                               return (
-                                <div
-                                  key={key}
-                                  className={`p-1 rounded border leading-tight ${
-                                    hasVal
-                                      ? 'bg-white border-teal-400 text-teal-950 shadow-2xs font-semibold'
-                                      : 'bg-transparent border-dashed border-slate-300 text-slate-500'
-                                  }`}
-                                >
-                                  <div className="flex items-center justify-between">
-                                    <span className="font-bold text-slate-800 text-[10px]">{key}:</span>
-                                    {hasVal && <span className="text-teal-700 text-[9px] font-bold">✓</span>}
+                                <div key={key} className="border-b border-teal-100/70 pb-0.5 leading-tight">
+                                  <div className="font-bold text-slate-800 flex items-center justify-between text-[8.5px] sm:text-[9px]">
+                                    <span>{key}:</span>
+                                    {hasVal && <span className="text-teal-700 text-[8px] font-bold">✓</span>}
                                   </div>
-                                  <div className="text-[9.5px] mt-0.5 truncate text-slate-700 font-mono">
+                                  <div className="text-[8.5px] text-teal-950 font-mono mt-0.5 break-words">
                                     {hasVal ? val : '...................'}
                                   </div>
                                 </div>
                               );
                             })}
                           </div>
-                        </div>
-                      ) : (
-                        <div className={`border border-amber-300 rounded-md bg-amber-50/40 ${isDense ? 'p-1.5 mb-1.5' : 'p-2 mb-2.5'}`}>
-                          <div className="flex items-center justify-between text-[11px] font-bold text-amber-950 pb-0.5 border-b border-amber-200 mb-1">
-                            <span className="flex items-center gap-1">
-                              🦷 ডেন্টাল ক্লিনিক্যাল পর্যবেক্ষণ (Clinical Findings & Dental Examination):
-                            </span>
-                            <span className="text-[9.5px] text-amber-800 font-normal">
-                              দাঁতের লক্ষণ ও পর্যবেক্ষণ
-                            </span>
-                          </div>
-                          <div className={`grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-1.5 ${isDense ? 'text-[9.5px]' : 'text-[11px]'}`}>
+                        ) : (
+                          <div className="space-y-0.5">
+                            <div className="text-[9px] font-bold text-amber-900 mb-1">
+                              🦷 ডেন্টাল ক্লিনিক্যাল পর্যবেক্ষণ:
+                            </div>
                             {[
                               'Pereocoronaties',
                               'Pulpitis',
@@ -3346,236 +3458,231 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                               const val = previewInvoice.dentalClinical?.[key];
                               const hasVal = Boolean(val && val.trim().length > 0);
                               return (
-                                <div
-                                  key={key}
-                                  className={`p-1 rounded border leading-tight ${
-                                    hasVal
-                                      ? 'bg-white border-amber-400 text-amber-950 shadow-2xs font-semibold'
-                                      : 'bg-transparent border-dashed border-slate-300 text-slate-500'
-                                  }`}
-                                >
-                                  <div className="flex items-center justify-between">
-                                    <span className="font-bold text-slate-800 text-[10px]">{key}:</span>
-                                    {hasVal && <span className="text-emerald-700 text-[9px] font-bold">✓</span>}
+                                <div key={key} className="border-b border-amber-100 pb-0.5 leading-tight">
+                                  <div className="font-bold text-slate-800 flex items-center justify-between text-[8px] sm:text-[8.5px]">
+                                    <span>{key}:</span>
+                                    {hasVal && <span className="text-emerald-700 text-[7.5px] font-bold">✓</span>}
                                   </div>
-                                  <div className="text-[9.5px] mt-0.5 truncate text-slate-700 font-mono">
+                                  <div className="text-[8px] text-amber-950 font-mono break-words">
                                     {hasVal ? val : '...................'}
                                   </div>
                                 </div>
                               );
                             })}
                           </div>
-                        </div>
-                      );
-                    })()
-                  )}
-
-                  {/* Items Table (Full Width A4 Table with Clean Borders) */}
-                  <div className={isDense ? 'mb-1.5' : 'mb-2.5'}>
-                    <div className="text-xs font-bold text-slate-800 mb-1">
-                      <span>
-                        {previewInvoice.txType === 'purchase'
-                          ? 'ক্রয়কৃত ওষুধের বিবরণ ও প্যাক হিসাব:'
-                          : previewInvoice.txType === 'sale' && !invoicePrintWithPrice
-                          ? 'বিতরণকৃত ওষুধের তালিকা (ডেলিভারি চালান):'
-                          : 'বিক্রয়কৃত ওষুধের তালিকা ও হিসাব:'}
-                      </span>
-                    </div>
-
-                    {parsedPreviewItems.length > 0 ? (
-                      <div className="border border-slate-300 rounded overflow-hidden">
-                        <table className={`w-full text-left border-collapse font-mono ${
-                          isMicro ? 'text-[9.5px] leading-tight' : isUltraCompact ? 'text-[10px] leading-tight' : isCompact ? 'text-[11px]' : 'text-xs'
-                        }`}>
-                          <thead
-                            className={
-                              previewInvoice.txType === 'purchase'
-                                ? 'bg-indigo-100/70 border-b-2 border-slate-300 text-indigo-950 font-sans'
-                                : previewInvoice.txType === 'sale' && !invoicePrintWithPrice
-                                ? 'bg-amber-100/70 border-b-2 border-slate-300 text-amber-950 font-sans'
-                                : 'bg-teal-100/70 border-b-2 border-slate-300 text-teal-950 font-sans'
-                            }
-                          >
-                            <tr>
-                              <th className={`text-center w-8 ${isDense ? 'py-1 px-1.5' : 'py-1.5 px-2'}`}>ক্র.নং</th>
-                              <th className={` ${isDense ? 'py-1 px-2' : 'py-1.5 px-2.5'}`}>ওষুধের বিবরণ ও নির্দেশনা</th>
-                              <th className={`text-center w-24 sm:w-28 ${isDense ? 'py-1 px-1' : 'py-1.5 px-1.5'}`}>ডোজ ও নিয়ম</th>
-                              {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
-                                <th className={`text-center w-20 sm:w-24 ${isDense ? 'py-1 px-1' : 'py-1.5 px-1.5'}`}>
-                                  {previewInvoice.txType === 'purchase' ? 'ক্রয় দর (৳)' : 'একক দর (৳)'}
-                                </th>
-                              )}
-                              <th className={`text-center w-16 sm:w-20 ${isDense ? 'py-1 px-1' : 'py-1.5 px-1.5'}`}>পরিমাণ</th>
-                              {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
-                                <th className={`text-right w-24 sm:w-28 ${isDense ? 'py-1 px-2' : 'py-1.5 px-2.5'}`}>
-                                  {previewInvoice.txType === 'purchase' ? 'মোট ক্রয় (৳)' : 'মোট টাকা (৳)'}
-                                </th>
-                              )}
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-200 bg-white">
-                            {parsedPreviewItems.map((pItem, idx) => (
-                              <tr key={idx} className={idx % 2 === 1 ? 'bg-slate-50/50' : 'bg-white'}>
-                                <td className={`text-center font-bold text-slate-600 ${isDense ? 'py-0.5 px-1' : 'py-1.5 px-1.5'}`}>
-                                  {idx + 1}
-                                </td>
-                                <td className={`text-slate-900 ${isDense ? 'py-0.5 px-2' : 'py-1.5 px-2.5'}`}>
-                                  {previewInvoice.txType === 'purchase' ? (
-                                    <div>
-                                      <div className={`font-bold text-slate-900 font-sans ${isDense ? 'text-[10.5px]' : 'text-xs'}`}>
-                                        {pItem.formPrefix ? `${pItem.formPrefix.toUpperCase()}. ` : ''}
-                                        {pItem.cleanName || pItem.brandAndStrength}
-                                      </div>
-                                      {pItem.packDetail && (
-                                        <div className="text-[9.5px] font-mono text-indigo-800 font-semibold mt-0.5">
-                                          প্যাক হিসাব: {pItem.packDetail}
-                                        </div>
-                                      )}
-                                    </div>
-                                  ) : (
-                                    <div>
-                                      <div className={`font-bold text-slate-900 font-sans ${isDense ? 'text-[10.5px]' : 'text-xs sm:text-[13px]'}`}>
-                                        {pItem.formPrefix ? `${pItem.formPrefix.charAt(0).toUpperCase() + pItem.formPrefix.slice(1)}. ` : ''}
-                                        {pItem.cleanName || pItem.brandAndStrength}
-                                      </div>
-                                      {pItem.tailText && !pItem.dosageInstruction && (
-                                        <div className="text-[9.5px] text-slate-500 font-sans">
-                                          {pItem.tailText}
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-                                </td>
-                                <td className={`text-center ${isDense ? 'py-0.5 px-1' : 'py-1.5 px-1'}`}>
-                                  {pItem.dosageInstruction ? (
-                                    <span className={`inline-block font-mono font-bold text-red-600 bg-rose-50 border border-rose-200 rounded ${
-                                      isDense ? 'px-1 py-0 text-[9.5px]' : 'px-1.5 py-0.5 text-[10.5px]'
-                                    }`}>
-                                      {pItem.dosageInstruction}
-                                    </span>
-                                  ) : pItem.rawLine.includes('{') ? (
-                                    <span className={`inline-block font-mono font-bold text-red-600 bg-rose-50 border border-rose-200 rounded ${
-                                      isDense ? 'px-1 py-0 text-[9.5px]' : 'px-1.5 py-0.5 text-[10.5px]'
-                                    }`}>
-                                      {pItem.rawLine.split('{')[1]?.replace('}', '')}
-                                    </span>
-                                  ) : (
-                                    <span className="text-slate-400 font-sans text-[10px]">নিয়মিত</span>
-                                  )}
-                                </td>
-                                {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
-                                  <td className={`text-center text-slate-700 ${isDense ? 'py-0.5 px-1' : 'py-1.5 px-1'}`}>
-                                    ৳{formatCleanMoney(pItem.unitPrice)}
-                                  </td>
-                                )}
-                                <td className={`text-center font-bold text-slate-900 ${isDense ? 'py-0.5 px-1' : 'py-1.5 px-1'}`}>
-                                  {pItem.qty} পিস
-                                </td>
-                                {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
-                                  <td className={`text-right font-bold text-slate-900 ${isDense ? 'py-0.5 px-2' : 'py-1.5 px-2.5'}`}>
-                                    ৳{formatCleanMoney(pItem.lineTotal)}
-                                  </td>
-                                )}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : (
-                      <div className="p-2.5 bg-slate-50 rounded border border-slate-300 text-xs font-mono text-slate-900 space-y-1 leading-relaxed">
-                        {formatTransactionItemsList(previewInvoice.itemsSummary).map((line, idx) => (
-                          <div key={idx}>{line}</div>
-                        ))}
+                        )}
                       </div>
                     )}
+
+                    {/* Right Column: Items Table (Full Width A4 Table with Clean Borders) */}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-bold text-slate-800 mb-1">
+                        <span>
+                          {previewInvoice.txType === 'purchase'
+                            ? 'ক্রয়কৃত ওষুধের বিবরণ ও প্যাক হিসাব:'
+                            : previewInvoice.txType === 'sale' && !invoicePrintWithPrice
+                            ? 'বিতরণকৃত ওষুধের তালিকা (ডেলিভারি চালান):'
+                            : 'বিক্রয়কৃত ওষুধের তালিকা ও হিসাব:'}
+                        </span>
+                      </div>
+
+                      {parsedPreviewItems.length > 0 ? (
+                        <div className="border border-slate-300 rounded overflow-hidden">
+                          <table className={`w-full text-left border-collapse font-mono ${
+                            isMicro ? 'text-[9.5px] leading-tight' : isUltraCompact ? 'text-[10px] leading-tight' : isCompact ? 'text-[11px]' : 'text-xs'
+                          }`}>
+                            <thead
+                              className={
+                                previewInvoice.txType === 'purchase'
+                                  ? 'bg-indigo-100/70 border-b-2 border-slate-300 text-indigo-950 font-sans'
+                                  : previewInvoice.txType === 'sale' && !invoicePrintWithPrice
+                                  ? 'bg-amber-100/70 border-b-2 border-slate-300 text-amber-950 font-sans'
+                                  : 'bg-teal-100/70 border-b-2 border-slate-300 text-teal-950 font-sans'
+                              }
+                            >
+                              <tr>
+                                <th className={`text-center w-8 ${isDense ? 'py-1 px-1' : 'py-1.5 px-2'}`}>ক্র.নং</th>
+                                <th className={` ${isDense ? 'py-1 px-1.5' : 'py-1.5 px-2.5'}`}>ওষুধের বিবরণ ও নির্দেশনা</th>
+                                <th className={`text-center w-22 sm:w-24 ${isDense ? 'py-1 px-1' : 'py-1.5 px-1.5'}`}>ডোজ ও নিয়ম</th>
+                                {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
+                                  <th className={`text-center w-18 sm:w-20 ${isDense ? 'py-1 px-1' : 'py-1.5 px-1.5'}`}>
+                                    {previewInvoice.txType === 'purchase' ? 'ক্রয় দর (৳)' : 'একক দর (৳)'}
+                                  </th>
+                                )}
+                                <th className={`text-center w-14 sm:w-16 ${isDense ? 'py-1 px-1' : 'py-1.5 px-1.5'}`}>পরিমাণ</th>
+                                {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
+                                  <th className={`text-right w-20 sm:w-24 ${isDense ? 'py-1 px-1.5' : 'py-1.5 px-2'}`}>
+                                    {previewInvoice.txType === 'purchase' ? 'মোট ক্রয় (৳)' : 'মোট টাকা (৳)'}
+                                  </th>
+                                )}
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-200 bg-white">
+                              {parsedPreviewItems.map((pItem, idx) => (
+                                <tr key={idx} className={idx % 2 === 1 ? 'bg-slate-50/50' : 'bg-white'}>
+                                  <td className={`text-center font-bold text-slate-600 ${isDense ? 'py-0.5 px-1' : 'py-1.5 px-1.5'}`}>
+                                    {idx + 1}
+                                  </td>
+                                  <td className={`text-slate-900 ${isDense ? 'py-0.5 px-1.5' : 'py-1.5 px-2.5'}`}>
+                                    {previewInvoice.txType === 'purchase' ? (
+                                      <div>
+                                        <div className={`font-bold text-slate-900 font-sans ${isDense ? 'text-[10px]' : 'text-xs'}`}>
+                                          {pItem.formPrefix ? `${pItem.formPrefix.toUpperCase()}. ` : ''}
+                                          {pItem.cleanName || pItem.brandAndStrength}
+                                        </div>
+                                        {pItem.packDetail && (
+                                          <div className="text-[9px] font-mono text-indigo-800 font-semibold mt-0.5">
+                                            প্যাক হিসাব: {pItem.packDetail}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <div>
+                                        <div className={`font-bold text-slate-900 font-sans ${isDense ? 'text-[10px]' : 'text-xs sm:text-[13px]'}`}>
+                                          {pItem.formPrefix ? `${pItem.formPrefix.charAt(0).toUpperCase() + pItem.formPrefix.slice(1)}. ` : ''}
+                                          {pItem.cleanName || pItem.brandAndStrength}
+                                        </div>
+                                        {pItem.tailText && !pItem.dosageInstruction && (
+                                          <div className="text-[9px] text-slate-500 font-sans">
+                                            {pItem.tailText}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td className={`text-center ${isDense ? 'py-0.5 px-1' : 'py-1.5 px-1'}`}>
+                                    {pItem.dosageInstruction ? (
+                                      <span className={`inline-block font-mono font-bold text-red-600 bg-rose-50 border border-rose-200 rounded ${
+                                        isDense ? 'px-1 py-0 text-[9px]' : 'px-1.5 py-0.5 text-[10px]'
+                                      }`}>
+                                        {pItem.dosageInstruction}
+                                      </span>
+                                    ) : pItem.rawLine.includes('{') ? (
+                                      <span className={`inline-block font-mono font-bold text-red-600 bg-rose-50 border border-rose-200 rounded ${
+                                        isDense ? 'px-1 py-0 text-[9px]' : 'px-1.5 py-0.5 text-[10px]'
+                                      }`}>
+                                        {pItem.rawLine.split('{')[1]?.replace('}', '')}
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-400 font-sans text-[9.5px]">নিয়মিত</span>
+                                    )}
+                                  </td>
+                                  {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
+                                    <td className={`text-center text-slate-700 ${isDense ? 'py-0.5 px-1' : 'py-1.5 px-1'}`}>
+                                      ৳{formatCleanMoney(pItem.unitPrice)}
+                                    </td>
+                                  )}
+                                  <td className={`text-center font-bold text-slate-900 ${isDense ? 'py-0.5 px-1' : 'py-1.5 px-1'}`}>
+                                    {pItem.qty} পিস
+                                  </td>
+                                  {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
+                                    <td className={`text-right font-bold text-slate-900 ${isDense ? 'py-0.5 px-1.5' : 'py-1.5 px-2'}`}>
+                                      ৳{formatCleanMoney(pItem.lineTotal)}
+                                    </td>
+                                  )}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <div className="p-2.5 bg-slate-50 rounded border border-slate-300 text-xs font-mono text-slate-900 space-y-1 leading-relaxed">
+                          {formatTransactionItemsList(previewInvoice.itemsSummary).map((line, idx) => (
+                            <div key={idx}>{line}</div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
-                  {/* Financial Totals & In-Words Section */}
-                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 mb-2 pt-0.5">
-                    {/* Left 7 Cols: Amount In Bengali Words + Return Terms */}
-                    <div className="sm:col-span-7 space-y-1.5">
-                      <div className={`bg-slate-50 border border-slate-300 rounded-md space-y-0.5 ${isDense ? 'p-1.5 text-[10px]' : 'p-2 text-xs'}`}>
-                        <div className="font-bold text-slate-800">
-                          কথায় (Amount in Words):
+                  {/* Financial Totals & In-Words Section (Only shown when price is enabled; omitted for no-price memo) */}
+                  {previewInvoice.txType === 'sale' && !invoicePrintWithPrice ? null : (
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 mb-2 pt-0.5">
+                      {/* Left 7 Cols: Amount In Bengali Words + Return Terms */}
+                      <div className="sm:col-span-7 space-y-1.5">
+                        <div className={`bg-slate-50 border border-slate-300 rounded-md space-y-0.5 ${isDense ? 'p-1.5 text-[10px]' : 'p-2 text-xs'}`}>
+                          <div className="font-bold text-slate-800">
+                            কথায় (Amount in Words):
+                          </div>
+                          <div className={`text-teal-900 font-bold bg-white rounded border border-slate-200 ${isDense ? 'p-1 text-[11px]' : 'p-1.5 text-xs sm:text-[13px]'}`}>
+                            কথায়: {numberToBanglaWords(previewInvoice.grandTotal)}
+                          </div>
                         </div>
-                        <div className={`text-teal-900 font-bold bg-white rounded border border-slate-200 ${isDense ? 'p-1 text-[11px]' : 'p-1.5 text-xs sm:text-[13px]'}`}>
-                          কথায়: {numberToBanglaWords(previewInvoice.grandTotal)}
+
+                        <div className={`bg-slate-50 border border-slate-200 rounded-md text-slate-600 space-y-0.5 ${isDense ? 'p-1.5 text-[9.5px]' : 'p-2 text-[10.5px]'}`}>
+                          <div className="font-bold text-slate-800">
+                            ওষুধ সংক্রান্ত বিশেষ দ্রষ্টব্য ও শর্তাবলী:
+                          </div>
+                          <ul className="list-disc list-inside space-y-0.5 leading-relaxed">
+                            <li>বিক্রিত ওষুধ অক্ষত ফয়েল/প্যাক থাকলে ক্যাশ মেমোসহ ৭ দিনের মধ্যে পরিবর্তনযোগ্য।</li>
+                            <li>কাটা/ছেঁড়া পাতা বা ইনসুলিন ও ফ্রিজের ওষুধ ফেরত বা পরিবর্তনযোগ্য নয়।</li>
+                            <li>সকল ওষুধ আলো ও তাপ থেকে দূরে ঠাণ্ডা ও শুষ্ক স্থানে রাখুন। শিশুদের নাগালের বাইরে রাখুন।</li>
+                          </ul>
+                        </div>
+
+                        {/* পরবর্তী সাক্ষাতের সময় ব্যবস্থাপত্র সঙ্গে আনবেন Banner */}
+                        <div className={`bg-[#2e7d32] text-white text-center font-bold rounded tracking-wide shadow-2xs ${isDense ? 'py-1 px-2 text-[10px]' : 'py-1.5 px-3 text-xs'}`}>
+                          পরবর্তী সাক্ষাতের সময় ব্যবস্থাপত্র সঙ্গে আনবেন।
                         </div>
                       </div>
 
-                      <div className={`bg-slate-50 border border-slate-200 rounded-md text-slate-600 space-y-0.5 ${isDense ? 'p-1.5 text-[9.5px]' : 'p-2 text-[10.5px]'}`}>
-                        <div className="font-bold text-slate-800">
-                          ওষুধ সংক্রান্ত বিশেষ দ্রষ্টব্য ও শর্তাবলী:
-                        </div>
-                        <ul className="list-disc list-inside space-y-0.5 leading-relaxed">
-                          <li>বিক্রিত ওষুধ অক্ষত ফয়েল/প্যাক থাকলে ক্যাশ মেমোসহ ৭ দিনের মধ্যে পরিবর্তনযোগ্য।</li>
-                          <li>কাটা/ছেঁড়া পাতা বা ইনসুলিন ও ফ্রিজের ওষুধ ফেরত বা পরিবর্তনযোগ্য নয়।</li>
-                          <li>সকল ওষুধ আলো ও তাপ থেকে দূরে ঠাণ্ডা ও শুষ্ক স্থানে রাখুন। শিশুদের নাগালের বাইরে রাখুন।</li>
-                        </ul>
-                      </div>
-
-                      {/* পরবর্তী সাক্ষাতের সময় ব্যবস্থাপত্র সঙ্গে আনবেন Banner */}
-                      <div className={`bg-[#2e7d32] text-white text-center font-bold rounded tracking-wide shadow-2xs ${isDense ? 'py-1 px-2 text-[10px]' : 'py-1.5 px-3 text-xs'}`}>
-                        পরবর্তী সাক্ষাতের সময় ব্যবস্থাপত্র সঙ্গে আনবেন।
-                      </div>
-                    </div>
-
-                    {/* Right 5 Cols: Financial Calculations Breakdown */}
-                    <div className="sm:col-span-5">
-                      <div className={`bg-slate-50 border border-slate-300 rounded-md font-mono tabular-nums ${isDense ? 'p-2 space-y-1 text-[11px]' : 'p-2.5 sm:p-3 space-y-1.5 text-xs'}`}>
-                        <div className="flex justify-between text-slate-600">
-                          <span>
-                            {previewInvoice.txType === 'purchase'
-                              ? 'মোট ক্রয় মূল্য (Sub-total):'
-                              : 'মোট বিক্রয় মূল্য (Sub-total):'}
-                          </span>
-                          <span className="font-bold">৳{previewInvoice.subTotal.toFixed(2)}</span>
-                        </div>
-
-                        <div className="flex justify-between text-slate-600">
-                          <span>ছাড় / ডিসকাউন্ট (Discount):</span>
-                          <span className="font-bold text-red-600">-৳{previewInvoice.discount.toFixed(2)}</span>
-                        </div>
-
-                        <div className={`flex justify-between font-bold text-slate-900 pt-1 border-t-2 border-slate-300 ${isDense ? 'text-xs' : 'text-sm'}`}>
-                          <span>সর্বমোট প্রদেয় বিল (Grand Total):</span>
-                          <span className={`text-teal-900 ${isDense ? 'text-sm' : 'text-base'}`}>৳{previewInvoice.grandTotal.toFixed(2)}</span>
-                        </div>
-
-                        <div className="flex justify-between text-emerald-700 font-bold pt-0.5 border-t border-slate-200">
-                          <span>
-                            {previewInvoice.txType === 'purchase' ? 'পরিশোধিত মূল্য' : 'নগদ জমা / পরিশোধ'} (
-                            {previewInvoice.paymentMethod.toUpperCase()}):
-                          </span>
-                          <span>৳{previewInvoice.paidAmount.toFixed(2)}</span>
-                        </div>
-
-                        {previewInvoice.dueAmount > 0 && (
-                          <div className="flex justify-between text-red-600 font-bold items-center pt-0.5">
+                      {/* Right 5 Cols: Financial Calculations Breakdown */}
+                      <div className="sm:col-span-5">
+                        <div className={`bg-slate-50 border border-slate-300 rounded-md font-mono tabular-nums ${isDense ? 'p-2 space-y-1 text-[11px]' : 'p-2.5 sm:p-3 space-y-1.5 text-xs'}`}>
+                          <div className="flex justify-between text-slate-600">
                             <span>
                               {previewInvoice.txType === 'purchase'
-                                ? 'কোম্পানি বাকি (Supplier Due):'
-                                : 'বকেয়া বিল (Customer Due):'}
+                                ? 'মোট ক্রয় মূল্য (Sub-total):'
+                                : 'মোট বিক্রয় মূল্য (Sub-total):'}
                             </span>
-                            <span className="text-sm">৳{previewInvoice.dueAmount.toFixed(2)}</span>
+                            <span className="font-bold">৳{previewInvoice.subTotal.toFixed(2)}</span>
                           </div>
-                        )}
 
-                        {previewInvoice.dueAmount > 0 && (
-                          <div className="pt-1.5 flex justify-end no-print">
-                            <button
-                              type="button"
-                              onClick={() => openPaymentModal(previewInvoice)}
-                              className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white font-bold text-[11px] rounded shadow-xs transition-colors flex items-center gap-1 cursor-pointer"
-                            >
-                              <CreditCard className="w-3 h-3" />
-                              <span>Payment Now (বকেয়া পরিশোধ)</span>
-                            </button>
+                          <div className="flex justify-between text-slate-600">
+                            <span>ছাড় / ডিসকাউন্ট (Discount):</span>
+                            <span className="font-bold text-red-600">-৳{previewInvoice.discount.toFixed(2)}</span>
                           </div>
-                        )}
+
+                          <div className={`flex justify-between font-bold text-slate-900 pt-1 border-t-2 border-slate-300 ${isDense ? 'text-xs' : 'text-sm'}`}>
+                            <span>সর্বমোট প্রদেয় বিল (Grand Total):</span>
+                            <span className={`text-teal-900 ${isDense ? 'text-sm' : 'text-base'}`}>৳{previewInvoice.grandTotal.toFixed(2)}</span>
+                          </div>
+
+                          <div className="flex justify-between text-emerald-700 font-bold pt-0.5 border-t border-slate-200">
+                            <span>
+                              {previewInvoice.txType === 'purchase' ? 'পরিশোধিত মূল্য' : 'নগদ জমা / পরিশোধ'} (
+                              {previewInvoice.paymentMethod.toUpperCase()}):
+                            </span>
+                            <span>৳{previewInvoice.paidAmount.toFixed(2)}</span>
+                          </div>
+
+                          {previewInvoice.dueAmount > 0 && (
+                            <div className="flex justify-between text-red-600 font-bold items-center pt-0.5">
+                              <span>
+                                {previewInvoice.txType === 'purchase'
+                                  ? 'কোম্পানি বাকি (Supplier Due):'
+                                  : 'বকেয়া বিল (Customer Due):'}
+                              </span>
+                              <span className="text-sm">৳{previewInvoice.dueAmount.toFixed(2)}</span>
+                            </div>
+                          )}
+
+                          {previewInvoice.dueAmount > 0 && (
+                            <div className="pt-1.5 flex justify-end no-print">
+                              <button
+                                type="button"
+                                onClick={() => openPaymentModal(previewInvoice)}
+                                className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white font-bold text-[11px] rounded shadow-xs transition-colors flex items-center gap-1 cursor-pointer"
+                              >
+                                <CreditCard className="w-3 h-3" />
+                                <span>Payment Now (বকেয়া পরিশোধ)</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               );
             })()}
@@ -3605,28 +3712,38 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                 const isCompact = previewItemCount >= 5 && previewItemCount < 9;
                 const isDense = isMicro || isUltraCompact || isCompact;
                 const sealDimensions = isMicro ? 'w-18 h-18' : isUltraCompact ? 'w-20 h-20' : isCompact ? 'w-22 h-22' : 'w-26 h-26';
+                const showInvoicePrice = previewInvoice.txType !== 'sale' || invoicePrintWithPrice;
 
                 return (
-                  <div className={`border-t-2 border-slate-900 grid grid-cols-1 sm:grid-cols-3 items-center gap-2 ${isDense ? 'pt-2 pb-1' : 'pt-3 pb-2'}`}>
+                  <div className={`border-t-2 border-slate-900 grid grid-cols-1 sm:grid-cols-4 items-center gap-2 ${isDense ? 'pt-2 pb-1' : 'pt-3 pb-2'}`}>
                     {/* Customer Signature */}
                     <div className="text-center sm:text-left space-y-0.5">
-                      <div className="w-28 sm:w-32 border-b border-slate-600 mx-auto sm:mx-0 mb-0.5" />
-                      <div className={`font-bold text-slate-800 ${isDense ? 'text-[11px]' : 'text-xs'}`}>
-                        ক্রেতার স্বাক্ষর
+                      <div className="w-24 sm:w-28 border-b border-slate-600 mx-auto sm:mx-0 mb-0.5" />
+                      <div className={`font-bold text-slate-800 ${isDense ? 'text-[10px]' : 'text-[11px]'}`}>
+                        {showInvoicePrice ? 'ক্রেতার স্বাক্ষর' : 'গ্রহীতার স্বাক্ষর'}
                       </div>
-                      <div className="text-[9.5px] text-slate-500">
-                        Customer's Signature
+                      <div className="text-[9px] text-slate-500">
+                        {showInvoicePrice ? "Customer's Signature" : "Receiver's Signature"}
                       </div>
+                    </div>
+
+                    {/* QR Code for Verification (Invoice No, Amount & Customer Details) */}
+                    <div className="flex justify-center py-0.5">
+                      <InvoiceVerificationQrCode
+                        invoice={previewInvoice}
+                        isDense={isDense}
+                        showPrice={showInvoicePrice}
+                      />
                     </div>
 
                     {/* Salesman / Prepared By Signature */}
                     <div className="text-center space-y-0.5">
-                      <div className="w-28 sm:w-32 border-b border-slate-600 mx-auto mb-0.5" />
-                      <div className={`font-bold text-slate-800 ${isDense ? 'text-[11px]' : 'text-xs'}`}>
-                        বিক্রয়কারীর স্বাক্ষর
+                      <div className="w-24 sm:w-28 border-b border-slate-600 mx-auto mb-0.5" />
+                      <div className={`font-bold text-slate-800 ${isDense ? 'text-[10px]' : 'text-[11px]'}`}>
+                        {showInvoicePrice ? 'বিক্রয়কারীর স্বাক্ষর' : 'বিতরণকারীর স্বাক্ষর'}
                       </div>
-                      <div className="text-[9.5px] text-slate-500">
-                        {previewInvoice.staffRole === 'owner' ? 'Owner / Pharmacist' : previewInvoice.staffName || 'Salesman'}
+                      <div className="text-[9px] text-slate-500">
+                        {previewInvoice.staffRole === 'owner' ? 'Owner / Pharmacist' : previewInvoice.staffName || 'Staff'}
                       </div>
                     </div>
 
