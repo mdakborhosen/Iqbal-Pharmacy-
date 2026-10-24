@@ -23,6 +23,24 @@ if (typeof window !== 'undefined') {
     }
   });
 
+  // Global helper for hard-refreshing app and purging all service worker & browser storage caches
+  (window as any).purgeAppCacheAndReload = async () => {
+    try {
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(registrations.map((r) => r.unregister()));
+      }
+      localStorage.setItem('iqbal_deploy_version', `force_${Date.now()}`);
+    } catch {
+      // ignore
+    }
+    window.location.href = window.location.origin + window.location.pathname + '?v=' + Date.now();
+  };
+
   // Auto-reload immediately when a new service worker version is deployed on Cloudflare Pages
   if ('serviceWorker' in navigator) {
     let refreshing = false;

@@ -600,6 +600,60 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
             </div>
           </form>
         </div>
+
+        {/* Cloudflare Pages & Mobile App Cache Update Panel */}
+        <div className="bg-white border border-teal-200 rounded-lg p-5 shadow-xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-teal-100 text-teal-800 font-bold text-xs">
+                  ⚡
+                </span>
+                <h3 className="text-sm font-bold text-slate-900">
+                  ক্লাউডফ্লেয়ার (Cloudflare Pages) ও মোবাইল আপডেট কন্ট্রোল
+                </h3>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                লাইভ ডোমেইন: <code className="bg-slate-100 text-teal-800 px-1.5 py-0.5 rounded font-mono font-semibold">https://macy.pages.dev</code>
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof (window as any).purgeAppCacheAndReload === 'function') {
+                  (window as any).purgeAppCacheAndReload();
+                } else {
+                  window.location.reload();
+                }
+              }}
+              className="px-4 py-2 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 active:scale-95 transition-transform rounded-md shadow-xs flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>মোবাইল ক্যাশ ক্লিয়ার ও রিফ্রেশ করুন</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+            <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-md space-y-2">
+              <div className="font-bold text-amber-900 flex items-center gap-1.5">
+                <span>⚠️ ক্লাউডফ্লেয়ারে নতুন ফিচার না আসার কারণ:</span>
+              </div>
+              <p className="text-slate-700 leading-relaxed text-[11.5px]">
+                AI Studio হলো আপনার ডেভেলপমেন্ট এনভায়রনমেন্ট। এখানে করা আপডেটগুলো ক্লাউডফ্লেয়ারের <code className="font-bold text-amber-950">macy.pages.dev</code> এ যেতে হলে আপনার GitHub রিপোজিটরিতে কোড পুশ করতে হয় অথবা ক্লাউডফ্লেয়ারে প্রজেক্টের <code className="font-bold text-amber-950">dist</code> ফোল্ডারটি আপলোড করতে হয়।
+              </p>
+            </div>
+
+            <div className="p-3.5 bg-teal-50/60 border border-teal-200 rounded-md space-y-2">
+              <div className="font-bold text-teal-950 flex items-center gap-1.5">
+                <span>📱 মোবাইলে পুরনো স্ক্রিন আটকে থাকলে সমাধান:</span>
+              </div>
+              <p className="text-slate-700 leading-relaxed text-[11.5px]">
+                মোবাইলের ক্রোম ব্রাউজার Service Worker থেকে পুরনো ক্যাশ করা ফাইল লোড করে। উপরের <strong>"মোবাইল ক্যাশ ক্লিয়ার ও রিফ্রেশ করুন"</strong> বাটনে ক্লিক করলে বা ফোনের ব্রাউজার সেটিংসে গিয়ে <span className="underline font-semibold">Site settings → Clear & reset</span> দিলেই নতুন আপডেট চলে আসবে।
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Add / Edit Staff Member Modal */}

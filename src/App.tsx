@@ -45,6 +45,7 @@ import {
   LogOut,
   Menu,
   Package,
+  RefreshCw,
   Settings,
   Unlock,
   ShieldCheck,
@@ -5268,6 +5269,23 @@ export default function App() {
             aria-label="সেটিংস"
           >
             <Settings className="w-5 h-5 text-slate-700" />
+          </button>
+
+          {/* Quick Purge & Reload Button for Cloudflare & Mobile */}
+          <button
+            type="button"
+            onClick={() => {
+              if (typeof (window as any).purgeAppCacheAndReload === 'function') {
+                (window as any).purgeAppCacheAndReload();
+              } else {
+                window.location.reload();
+              }
+            }}
+            className="p-1.5 text-slate-600 hover:text-teal-700 hover:bg-teal-50 rounded-lg transition-colors flex items-center justify-center cursor-pointer shrink-0"
+            title="নতুন আপডেট লোড ও ক্যাশ রিফ্রেশ করুন"
+            aria-label="রিফ্রেশ"
+          >
+            <RefreshCw className="w-4.5 h-4.5 text-slate-600 hover:text-teal-700 hover:rotate-180 transition-transform duration-300" />
           </button>
 
           {isCloudLoggedIn ? (

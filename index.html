@@ -69,16 +69,41 @@
           }
         }, true);
       })();
+
+      // Auto Purge Stale ServiceWorker & Browser Cache on New Version Release
+      (function() {
+        var APP_DEPLOY_VERSION = 'v2.5.0-20261024-r1';
+        try {
+          var lastVer = localStorage.getItem('iqbal_deploy_version');
+          if (lastVer !== APP_DEPLOY_VERSION) {
+            localStorage.setItem('iqbal_deploy_version', APP_DEPLOY_VERSION);
+            if ('caches' in window) {
+              caches.keys().then(function(names) {
+                for (var i = 0; i < names.length; i++) {
+                  caches.delete(names[i]);
+                }
+              });
+            }
+            if ('serviceWorker' in navigator) {
+              navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                for (var j = 0; j < registrations.length; j++) {
+                  registrations[j].unregister();
+                }
+              });
+            }
+          }
+        } catch(e) {}
+      })();
     </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <title>ইকবাল ফার্মেসী — ওষুধের মূল্য তুলনা ও ফার্মেসি ম্যানেজমেন্ট</title>
-    <meta name="description" content="ইকবাল ফার্মেসী — বাংলাদেশের সকল কোম্পানির ওষুধের মূল্য যাচাই, একই জেনেরিক গ্রুপের বিকল্প ওষুধের দাম তুলনা, ফার্মেসি ইনভেন্টরি, দৈনিক ক্রয়-বিক্রয় হিসাব এবং কাস্টমার লেজার ম্যানেজমেন্ট সিস্টেম।" />
-    <meta property="og:title" content="ইকবাল ফার্মেসী" />
-    <meta property="og:description" content="ইকবাল ফার্মেসী — বাংলাদেশের সকল কোম্পানির ওষুধের মূল্য যাচাই, একই জেনেরিক গ্রুপের বিকল্প ওষুধের দাম তুলনা, ফার্মেসি ইনভেন্টরি, দৈনিক ক্রয়-বিক্রয় হিসাব এবং কাস্টমার লেজার ম্যানেজমেন্ট সিস্টেম।" />
+    <title>OshudhBazar & PharmaPOS BD — ইকবাল ফার্মেসী</title>
+    <meta name="description" content="বাংলাদেশের সকল কোম্পানির ওষুধের মূল্য যাচাই, একই জেনেরিক গ্রুপের বিকল্প ওষুধের দাম তুলনা, ফার্মেসি ইনভেন্টরি, দৈনিক ক্রয়-বিক্রয় হিসাব এবং কাস্টমার লেজার ম্যানেজমেন্ট সিস্টেম।" />
+    <meta property="og:title" content="OshudhBazar & PharmaPOS BD — ইকবাল ফার্মেসী" />
+    <meta property="og:description" content="বাংলাদেশের সকল কোম্পানির ওষুধের মূল্য যাচাই, একই জেনেরিক গ্রুপের বিকল্প ওষুধের দাম তুলনা, ফার্মেসি ইনভেন্টরি, দৈনিক ক্রয়-বিক্রয় হিসাব এবং কাস্টমার লেজার ম্যানেজমেন্ট সিস্টেম।" />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="theme-color" content="#0f766e" />
