@@ -4,7 +4,7 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 
-const PORT = 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const DB_FILE_PATH = path.resolve(process.cwd(), 'pharmacy-persistent-db.json');
 const DB_BACKUP_FILE_PATH = path.resolve(process.cwd(), '.pharmacy-persistent-db.backup.json');
 
@@ -101,6 +101,11 @@ function mergeEntityArray(
 async function startServer() {
   const app = express();
   app.use(express.json({ limit: '25mb' }));
+
+  // Cloud Run and container health check probes
+  app.get(['/health', '/api/health', '/_health'], (_req, res) => {
+    res.status(200).json({ status: 'ok', uptime: process.uptime(), timestamp: Date.now() });
+  });
 
   app.get('/api/pharmacy-state', (_req, res) => {
     const record = readPersistentDb();
@@ -338,7 +343,11 @@ Return STRICTLY a JSON object matching these keys.`;
     }
   });
 
-  if (process.env.NODE_ENV !== 'production') {
+  const distPath = path.join(process.cwd(), 'dist');
+  const distIndexPath = path.join(distPath, 'index.html');
+  const isProduction = process.env.NODE_ENV === 'production' || (fs.existsSync(distIndexPath) && process.env.NODE_ENV !== 'development');
+
+  if (!isProduction) {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
@@ -348,15 +357,32 @@ Return STRICTLY a JSON object matching these keys.`;
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    app.use(express.static(distPath, { maxAge: '1d', index: false }));
     app.get('*', (_req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      if (fs.existsSync(distIndexPath)) {
+        res.sendFile(distIndexPath);
+      } else {
+        res.status(404).send('Application bundle is compiling. Please refresh in a moment.');
+      }
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Iqbal Pharmacy persistent server running on http://0.0.0.0:${PORT}`);
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Iqbal Pharmacy persistent server running on http://0.0.0.0:${PORT} (PID ${process.pid})`);
+  });
+
+  process.on('SIGTERM', () => {
+    console.log('SIGTERM signal received: closing HTTP server');
+    server.close(() => {
+      console.log('HTTP server closed');
+      process.exit(0);
+    });
+  });
+
+  process.on('SIGINT', () => {
+    server.close(() => {
+      process.exit(0);
+    });
   });
 }
 
