@@ -3146,21 +3146,21 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
               const sealMap = {
                 iqbal_pharmacy: {
                   title: 'ইকবাল ফার্মেসী',
-                  sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (DMTD (Dental), LMAF, RMP, Pharmacist)',
+                  sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (ডি.এম.টি.ডি (ডেন্টাল), এল.এম.এ.এফ (ঢাকা), আর.এম.পি (ঢাকা), ফার্মাসিস্ট, ওরাল এন্ড ডেন্টাল টেকনোলজিষ্ট)',
                   address: 'ঠিকানা:- নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।',
                   mobile: 'মোবাইল:- 01812-358839, 01315645076',
                   location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
                 },
                 dental_care_1: {
                   title: 'ইকবাল ডেন্টাল কেয়ার-১',
-                  sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (DMTD (Dental), LMAF, RMP, Pharmacist)',
+                  sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (ডি.এম.টি.ডি (ডেন্টাল), এল.এম.এ.এফ (ঢাকা), আর.এম.পি (ঢাকা), ফার্মাসিস্ট, ওরাল এন্ড ডেন্টাল টেকনোলজিষ্ট)',
                   address: 'ঠিকানা:- নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।',
                   mobile: 'মোবাইল:- 01812-358839, 01315645076',
                   location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
                 },
                 dental_care_2: {
                   title: 'ইকবাল ডেন্টাল কেয়ার-২ (ওদারহাট ডেন্টাল কেয়ার)',
-                  sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (DMTD (Dental), LMAF, RMP, Pharmacist)',
+                  sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (ডি.এম.টি.ডি (ডেন্টাল), এল.এম.এ.এফ (ঢাকা), আর.এম.পি (ঢাকা), ফার্মাসিস্ট, ওরাল এন্ড ডেন্টাল টেকনোলজিষ্ট)',
                   address: 'ঠিকানা:- উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী।',
                   mobile: 'মোবাইল:- 01812-358839, 01315645076',
                   location: 'উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী',
@@ -3271,18 +3271,20 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                   <div className={`border-b-2 border-slate-900 ${isDense ? 'pb-2 mb-2' : 'pb-3 mb-3'}`}>
                     <div className="flex flex-col sm:flex-row sm:items-stretch justify-between gap-3 bg-white">
                       {/* Left Doctor Info */}
-                      <div className="text-left space-y-0.5 sm:max-w-[46%]">
+                      <div className="text-left space-y-0.5 sm:max-w-[48%]">
                         <div>
                           <h3 className={`font-black text-rose-900 tracking-tight ${isDense ? 'text-base sm:text-lg' : 'text-xl'}`}>
                             ডেন্টিস্ট:- ইকবাল মাহমুদ
                           </h3>
                         </div>
-                        <div className={`font-semibold text-slate-800 leading-snug space-y-0.5 ${isDense ? 'text-[10px]' : 'text-xs'}`}>
-                          <div className={`font-bold text-teal-900 ${isDense ? 'text-[11px]' : 'text-[13px]'}`}>
-                            DMTD (Dental), LMAF, RMP, Pharmacist
+                        <div className={`font-semibold text-slate-800 leading-snug space-y-0.5 ${isDense ? 'text-[9.5px]' : 'text-[11px]'}`}>
+                          <div className={`font-bold text-teal-900 ${isDense ? 'text-[10px]' : 'text-[11.5px]'}`}>
+                            ডি.এম.টি.ডি (ডেন্টাল) · এল.এম.এ.এফ (ঢাকা) · আর.এম.পি (ঢাকা)
                           </div>
-                          <div className="text-slate-700">চেম্বার এন্ড ডেন্টাল টেকনোলজিস্ট</div>
-                          <div className={`font-mono font-bold text-slate-900 ${isDense ? 'text-[10px] pt-0.5' : 'text-xs pt-1'}`}>
+                          <div className="text-slate-700 font-medium">
+                            ফার্মাসিস্ট · ওরাল এন্ড ডেন্টাল টেকনোলজিষ্ট
+                          </div>
+                          <div className={`font-mono font-bold text-slate-900 ${isDense ? 'text-[10px] pt-0.5' : 'text-xs pt-0.5'}`}>
                             মোবাইল: 01812-358839, 01315645076
                           </div>
                           <div className={`font-bold text-teal-800 ${isDense ? 'text-[10px]' : 'text-[11px]'}`}>
@@ -3761,7 +3763,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                               ডেন্টিস্ট:- ইকবাল মাহমুদ
                             </div>
                             <div className={`font-semibold text-blue-900 leading-tight ${isDense ? 'text-[5.5px]' : 'text-[6.5px]'}`}>
-                              DMTD, LMAF, RMP, Pharmacist
+                              ডি.এম.টি.ডি · এল.এম.এ.এফ · আর.এম.পি
                             </div>
                             <div className={`font-extrabold text-blue-900 tracking-wider border-y border-blue-700 py-0.2 my-0.2 ${isDense ? 'text-[6px]' : 'text-[7px]'}`}>
                               ★ VERIFIED & APPROVED ★
@@ -3785,7 +3787,10 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                             ডেন্টিস্ট:- ইকবাল মাহমুদ
                           </div>
                           <div className={`text-slate-600 ${isDense ? 'text-[8.5px]' : 'text-[9.5px]'}`}>
-                            DMTD (Dental), LMAF, RMP, Pharmacist
+                            ডি.এম.টি.ডি (ডেন্টাল) · এল.এম.এ.এফ (ঢাকা) · আর.এম.পি (ঢাকা)
+                          </div>
+                          <div className={`text-teal-800 font-medium ${isDense ? 'text-[7.5px]' : 'text-[8.5px]'}`}>
+                            ফার্মাসিস্ট · ওরাল এন্ড ডেন্টাল টেকনোলজিষ্ট
                           </div>
                           <div className={`text-slate-500 ${isDense ? 'text-[8px]' : 'text-[9px]'}`}>
                             {sealConfig.title}

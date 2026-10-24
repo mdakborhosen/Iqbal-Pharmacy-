@@ -516,6 +516,8 @@ export default function App() {
   const [seedingCloud, setSeedingCloud] = useState(false);
   const [showIOSInstallModal, setShowIOSInstallModal] = useState(false);
   const [showScannerModal, setShowScannerModal] = useState(false);
+  const [showExtraOptions, setShowExtraOptions] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const isLoggedOutExplicitly =
     typeof window !== 'undefined' &&
@@ -524,6 +526,7 @@ export default function App() {
 
   const isCloudLoggedIn = Boolean(cloudSession && !isLoggedOutExplicitly);
   const activeCloudUid = isCloudLoggedIn ? (cloudSession?.uid || user?.uid || null) : null;
+  const effectiveCloudUid = user?.uid || cloudSession?.uid || SHARED_PHARMACY_OWNER_ID;
 
   const isOnline = useOnlineStatus();
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
@@ -1166,9 +1169,10 @@ export default function App() {
       .catch(() => {});
   }, [authReady, user, cloudSession?.email]);
 
-  // Shared Pharmacy Real-Time Firestore Listeners (accessible across ALL logged-in accounts)
+  // Shared Pharmacy Real-Time Firestore Listeners (accessible across ALL devices, IPs & Cloudflare Pages)
   useEffect(() => {
-    if (!authReady || !user || !serverHydrated) return;
+    if (!serverHydrated) return;
+    const effectiveOwnerId = user?.uid || cloudSession?.uid || SHARED_PHARMACY_OWNER_ID;
 
     const deduplicateCloudDocs = <T extends { id: string; updatedAtMs?: number }>(
       rawDocs: { rawId: string; item: T }[]
@@ -1290,7 +1294,7 @@ export default function App() {
 
           setShopProfile((prev) => {
             if ((prev.updatedAtMs || 0) > (nextShop.updatedAtMs || 0) + 2000) {
-              setDoc(doc(db, 'shops', SHARED_SHOP_DOC_ID), buildShopCloudPayload(prev, user.uid)).catch(() => {});
+              setDoc(doc(db, 'shops', SHARED_SHOP_DOC_ID), buildShopCloudPayload(prev, effectiveOwnerId)).catch(() => {});
               return prev;
             }
             saveLocal(STORAGE_KEYS.SHOP, nextShop);
@@ -1299,7 +1303,7 @@ export default function App() {
         } else {
           // Seed shop profile to cloud if empty
           setShopProfile((prev) => {
-            setDoc(doc(db, 'shops', SHARED_SHOP_DOC_ID), buildShopCloudPayload(prev, user.uid)).catch(() => {});
+            setDoc(doc(db, 'shops', SHARED_SHOP_DOC_ID), buildShopCloudPayload(prev, effectiveOwnerId)).catch(() => {});
             return prev;
           });
         }
@@ -1334,7 +1338,7 @@ export default function App() {
               const canonId = getCanonicalDocId(item.id);
               setDoc(
                 doc(db, 'inventory', canonId),
-                buildInventoryCloudPayload(item, user.uid)
+                buildInventoryCloudPayload(item, effectiveOwnerId)
               ).catch(() => {});
             }
           }
@@ -1345,7 +1349,7 @@ export default function App() {
               if (winning) {
                 setDoc(
                   doc(db, 'inventory', canonId),
-                  buildInventoryCloudPayload(winning, user.uid)
+                  buildInventoryCloudPayload(winning, effectiveOwnerId)
                 )
                   .then(() => deleteDoc(doc(db, 'inventory', staleId)))
                   .catch(() => {});
@@ -1382,7 +1386,7 @@ export default function App() {
             const canonId = getCanonicalDocId(item.id);
             setDoc(
               doc(db, 'customers', canonId),
-              buildCustomerCloudPayload(item, user.uid)
+              buildCustomerCloudPayload(item, effectiveOwnerId)
             ).catch(() => {});
           }
           for (const staleId of staleSuffixIds) {
@@ -1391,7 +1395,7 @@ export default function App() {
             if (winning) {
               setDoc(
                 doc(db, 'customers', canonId),
-                buildCustomerCloudPayload(winning, user.uid)
+                buildCustomerCloudPayload(winning, effectiveOwnerId)
               )
                 .then(() => deleteDoc(doc(db, 'customers', staleId)))
                 .catch(() => {});
@@ -1432,7 +1436,7 @@ export default function App() {
             const canonId = getCanonicalDocId(item.id);
             setDoc(
               doc(db, 'transactions', canonId),
-              buildTransactionCloudPayload(item, user.uid)
+              buildTransactionCloudPayload(item, effectiveOwnerId)
             ).catch(() => {});
           }
           for (const staleId of staleSuffixIds) {
@@ -1441,7 +1445,7 @@ export default function App() {
             if (winning) {
               setDoc(
                 doc(db, 'transactions', canonId),
-                buildTransactionCloudPayload(winning, user.uid)
+                buildTransactionCloudPayload(winning, effectiveOwnerId)
               )
                 .then(() => deleteDoc(doc(db, 'transactions', staleId)))
                 .catch(() => {});
@@ -1476,7 +1480,7 @@ export default function App() {
 
           for (const item of toUploadToCloud) {
             const canonId = getCanonicalDocId(item.id);
-            setDoc(doc(db, 'staff', canonId), buildStaffCloudPayload(item, user.uid)).catch(
+            setDoc(doc(db, 'staff', canonId), buildStaffCloudPayload(item, effectiveOwnerId)).catch(
               () => {}
             );
           }
@@ -1484,7 +1488,7 @@ export default function App() {
             const canonId = getCanonicalDocId(staleId);
             const winning = finalMerged.find((m) => m.id === canonId);
             if (winning) {
-              setDoc(doc(db, 'staff', canonId), buildStaffCloudPayload(winning, user.uid))
+              setDoc(doc(db, 'staff', canonId), buildStaffCloudPayload(winning, effectiveOwnerId))
                 .then(() => deleteDoc(doc(db, 'staff', staleId)))
                 .catch(() => {});
             }
@@ -1529,7 +1533,7 @@ export default function App() {
             const canonId = getCanonicalDocId(item.id);
             setDoc(
               doc(db, 'custom_medicines', canonId),
-              buildCustomMedCloudPayload(item, user.uid)
+              buildCustomMedCloudPayload(item, effectiveOwnerId)
             ).catch(() => {});
           }
           return merged;
@@ -1562,7 +1566,7 @@ export default function App() {
             const canonId = getCanonicalDocId(item.id);
             setDoc(
               doc(db, 'price_watches', canonId),
-              buildPriceWatchCloudPayload(item, user.uid)
+              buildPriceWatchCloudPayload(item, effectiveOwnerId)
             ).catch(() => {});
           }
           return merged;
@@ -1595,7 +1599,7 @@ export default function App() {
             const canonId = getCanonicalDocId(item.id);
             setDoc(
               doc(db, 'price_alerts', canonId),
-              buildPriceAlertCloudPayload(item, user.uid)
+              buildPriceAlertCloudPayload(item, effectiveOwnerId)
             ).catch(() => {});
           }
           return merged;
@@ -1614,7 +1618,7 @@ export default function App() {
       unsubWatches();
       unsubAlerts();
     };
-  }, [authReady, user]);
+  }, [serverHydrated, user?.uid, cloudSession?.uid]);
 
   // Combined Medicine Catalog (Built-in 21,250+ DGDA core products can NEVER be deleted, but their purchasePrice & unitPrice can be modified)
   const fullCatalog = useMemo<MedicineCatalogItem[]>(() => {
@@ -3342,30 +3346,28 @@ export default function App() {
       });
     }
 
-    if (user) {
-      try {
+    try {
+      await setDoc(
+        doc(db, 'transactions', txId),
+        buildTransactionCloudPayload(newTx, effectiveCloudUid)
+      );
+
+      for (const invItem of modifiedInvMap.values()) {
+        const canonInvId = getCanonicalDocId(invItem.id);
         await setDoc(
-          doc(db, 'transactions', txId),
-          buildTransactionCloudPayload(newTx, user.uid)
+          doc(db, 'inventory', canonInvId),
+          buildInventoryCloudPayload(invItem, effectiveCloudUid)
         );
-
-        for (const invItem of modifiedInvMap.values()) {
-          const canonInvId = getCanonicalDocId(invItem.id);
-          await setDoc(
-            doc(db, 'inventory', canonInvId),
-            buildInventoryCloudPayload(invItem, user.uid)
-          );
-        }
-
-        for (const cObj of updatedCustomersForCloud) {
-          await setDoc(
-            doc(db, 'customers', getCanonicalDocId(cObj.id)),
-            buildCustomerCloudPayload(cObj, user.uid)
-          );
-        }
-      } catch (error) {
-        handleFirestoreError(error, OperationType.WRITE, 'transactions');
       }
+
+      for (const cObj of updatedCustomersForCloud) {
+        await setDoc(
+          doc(db, 'customers', getCanonicalDocId(cObj.id)),
+          buildCustomerCloudPayload(cObj, effectiveCloudUid)
+        );
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'transactions');
     }
 
     setPosCart([]);
@@ -3639,23 +3641,21 @@ export default function App() {
     setInventory(nextInventoryList);
     saveLocal(STORAGE_KEYS.INVENTORY, nextInventoryList);
 
-    if (user) {
-      try {
-        await setDoc(
-          doc(db, 'transactions', txId),
-          buildTransactionCloudPayload(newTx, user.uid)
-        );
+    try {
+      await setDoc(
+        doc(db, 'transactions', txId),
+        buildTransactionCloudPayload(newTx, effectiveCloudUid)
+      );
 
-        for (const invItem of changedInvMap.values()) {
-          const canonInvId = getCanonicalDocId(invItem.id);
-          await setDoc(
-            doc(db, 'inventory', canonInvId),
-            buildInventoryCloudPayload(invItem, user.uid)
-          );
-        }
-      } catch (error) {
-        handleFirestoreError(error, OperationType.WRITE, 'transactions');
+      for (const invItem of changedInvMap.values()) {
+        const canonInvId = getCanonicalDocId(invItem.id);
+        await setDoc(
+          doc(db, 'inventory', canonInvId),
+          buildInventoryCloudPayload(invItem, effectiveCloudUid)
+        );
       }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'transactions');
     }
 
     setPurchaseCart([]);
@@ -3709,15 +3709,13 @@ export default function App() {
       return next;
     });
 
-    if (user) {
-      try {
-        await setDoc(
-          doc(db, 'transactions', canonTxId),
-          buildTransactionCloudPayload(updatedTxObj, user.uid)
-        );
-      } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, `transactions/${canonTxId}`);
-      }
+    try {
+      await setDoc(
+        doc(db, 'transactions', canonTxId),
+        buildTransactionCloudPayload(updatedTxObj, effectiveCloudUid)
+      );
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `transactions/${canonTxId}`);
     }
     showToast(`ভাউচার (${existingTx.invoiceNo}) সফলভাবে এডিট করা হয়েছে!`);
   };
@@ -3819,25 +3817,23 @@ export default function App() {
       });
     }
 
-    if (user) {
-      try {
+    try {
+      await setDoc(
+        doc(db, 'transactions', canonTxId),
+        buildTransactionCloudPayload(updatedInvoice, effectiveCloudUid)
+      );
+      await setDoc(
+        doc(db, 'transactions', dueTxId),
+        buildTransactionCloudPayload(dueTx, effectiveCloudUid)
+      );
+      if (updatedCust) {
         await setDoc(
-          doc(db, 'transactions', canonTxId),
-          buildTransactionCloudPayload(updatedInvoice, user.uid)
+          doc(db, 'customers', getCanonicalDocId(updatedCust.id)),
+          buildCustomerCloudPayload(updatedCust, effectiveCloudUid)
         );
-        await setDoc(
-          doc(db, 'transactions', dueTxId),
-          buildTransactionCloudPayload(dueTx, user.uid)
-        );
-        if (updatedCust) {
-          await setDoc(
-            doc(db, 'customers', getCanonicalDocId(updatedCust.id)),
-            buildCustomerCloudPayload(updatedCust, user.uid)
-          );
-        }
-      } catch (error) {
-        handleFirestoreError(error, OperationType.WRITE, 'pay_invoice_due');
       }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'pay_invoice_due');
     }
 
     showToast(
@@ -3888,33 +3884,29 @@ export default function App() {
       if (modifiedInv.length > 0) {
         setInventory(nextInv);
         saveLocal(STORAGE_KEYS.INVENTORY, nextInv);
-        if (user) {
-          for (const invItem of modifiedInv) {
-            try {
-              await setDoc(
-                doc(db, 'inventory', getCanonicalDocId(invItem.id)),
-                buildInventoryCloudPayload(invItem, user.uid)
-              );
-            } catch {
-              // ignore if not synced to cloud yet
-            }
+        for (const invItem of modifiedInv) {
+          try {
+            await setDoc(
+              doc(db, 'inventory', getCanonicalDocId(invItem.id)),
+              buildInventoryCloudPayload(invItem, effectiveCloudUid)
+            );
+          } catch {
+            // ignore
           }
         }
       }
     }
 
-    if (user) {
+    try {
+      await deleteDoc(doc(db, 'transactions', canonTxId));
+    } catch {
+      // ignore
+    }
+    if (tx.id !== canonTxId) {
       try {
-        await deleteDoc(doc(db, 'transactions', canonTxId));
+        await deleteDoc(doc(db, 'transactions', tx.id));
       } catch {
-        // ignore if local demo transaction was not in Firestore yet
-      }
-      if (tx.id !== canonTxId) {
-        try {
-          await deleteDoc(doc(db, 'transactions', tx.id));
-        } catch {
-          // ignore
-        }
+        // ignore
       }
     }
     showToast(`লেনদেন (${tx.invoiceNo}) ডিলিট করা হয়েছে এবং স্টক সমন্বয় হয়েছে`);
@@ -4532,18 +4524,16 @@ export default function App() {
       saveLocal(STORAGE_KEYS.INVENTORY, next);
       return next;
     });
-    if (user) {
+    try {
+      await deleteDoc(doc(db, 'inventory', canonId));
+    } catch {
+      // ignore if local demo item was not in Firestore yet
+    }
+    if (id !== canonId) {
       try {
-        await deleteDoc(doc(db, 'inventory', canonId));
+        await deleteDoc(doc(db, 'inventory', id));
       } catch {
-        // ignore if local demo item was not in Firestore yet
-      }
-      if (id !== canonId) {
-        try {
-          await deleteDoc(doc(db, 'inventory', id));
-        } catch {
-          // ignore
-        }
+        // ignore
       }
     }
     showToast('কাস্টম স্টক আইটেম মুছে ফেলা হয়েছে');
@@ -4591,15 +4581,13 @@ export default function App() {
       });
     }
 
-    if (user) {
-      try {
-        await setDoc(
-          doc(db, 'customers', custId),
-          buildCustomerCloudPayload(newCust, user.uid)
-        );
-      } catch (error) {
-        handleFirestoreError(error, OperationType.WRITE, `customers/${custId}`);
-      }
+    try {
+      await setDoc(
+        doc(db, 'customers', custId),
+        buildCustomerCloudPayload(newCust, effectiveCloudUid)
+      );
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `customers/${custId}`);
     }
     showToast(`${data.name}-এর কাস্টমার লেজার সংরক্ষিত হয়েছে!`);
   };
@@ -4614,18 +4602,16 @@ export default function App() {
       saveLocal(STORAGE_KEYS.CUSTOMERS, next);
       return next;
     });
-    if (user) {
+    try {
+      await deleteDoc(doc(db, 'customers', canonId));
+    } catch {
+      // ignore if local demo customer was not in Firestore yet
+    }
+    if (id !== canonId) {
       try {
-        await deleteDoc(doc(db, 'customers', canonId));
+        await deleteDoc(doc(db, 'customers', id));
       } catch {
-        // ignore if local demo customer was not in Firestore yet
-      }
-      if (id !== canonId) {
-        try {
-          await deleteDoc(doc(db, 'customers', id));
-        } catch {
-          // ignore
-        }
+        // ignore
       }
     }
     showToast('কাস্টমার লেজার স্থায়ীভাবে মুছে ফেলা হয়েছে');
@@ -4692,19 +4678,17 @@ export default function App() {
       return next;
     });
 
-    if (user) {
-      try {
-        await setDoc(
-          doc(db, 'transactions', txId),
-          buildTransactionCloudPayload(dueTx, user.uid)
-        );
-        await setDoc(
-          doc(db, 'customers', canonCustId),
-          buildCustomerCloudPayload(updatedCustObj, user.uid)
-        );
-      } catch (error) {
-        handleFirestoreError(error, OperationType.WRITE, 'customers_due_payment');
-      }
+    try {
+      await setDoc(
+        doc(db, 'transactions', txId),
+        buildTransactionCloudPayload(dueTx, effectiveCloudUid)
+      );
+      await setDoc(
+        doc(db, 'customers', canonCustId),
+        buildCustomerCloudPayload(updatedCustObj, effectiveCloudUid)
+      );
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'customers_due_payment');
     }
     showToast(`৳${amt.toFixed(2)} বকেয়া আদায় লেজারে সংরক্ষিত হয়েছে!`);
   };
@@ -4826,26 +4810,24 @@ export default function App() {
       return next;
     });
 
-    if (user) {
+    try {
+      await setDoc(
+        doc(db, 'custom_medicines', medId),
+        buildCustomMedCloudPayload(newMed, effectiveCloudUid)
+      );
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `custom_medicines/${medId}`);
+    }
+
+    if (matchedInvItemForCloud) {
+      const invItem = matchedInvItemForCloud as InventoryItem;
       try {
         await setDoc(
-          doc(db, 'custom_medicines', medId),
-          buildCustomMedCloudPayload(newMed, user.uid)
+          doc(db, 'inventory', getCanonicalDocId(invItem.id)),
+          buildInventoryCloudPayload(invItem, effectiveCloudUid)
         );
-      } catch (error) {
-        handleFirestoreError(error, OperationType.WRITE, `custom_medicines/${medId}`);
-      }
-
-      if (matchedInvItemForCloud) {
-        const invItem = matchedInvItemForCloud as InventoryItem;
-        try {
-          await setDoc(
-            doc(db, 'inventory', getCanonicalDocId(invItem.id)),
-            buildInventoryCloudPayload(invItem, user.uid)
-          );
-        } catch {
-          // ignore
-        }
+      } catch {
+        // ignore
       }
     }
     showToast(
@@ -4872,12 +4854,10 @@ export default function App() {
       saveLocal(STORAGE_KEYS.CUSTOM_MEDS, next);
       return next;
     });
-    if (user) {
-      try {
-        await deleteDoc(doc(db, 'custom_medicines', canonId));
-      } catch {
-        // ignore if medicine was built-in or not in Firestore
-      }
+    try {
+      await deleteDoc(doc(db, 'custom_medicines', canonId));
+    } catch {
+      // ignore if medicine was built-in or not in Firestore
     }
     showToast('কাস্টম ওষুধটি তালিকা থেকে মুছে ফেলা হয়েছে');
   };
@@ -4936,15 +4916,13 @@ export default function App() {
       saveLocal(STORAGE_KEYS.PRICE_WATCHES, next);
       return next;
     });
-    if (user) {
-      try {
-        await setDoc(
-          doc(db, 'price_watches', watchId),
-          buildPriceWatchCloudPayload(newWatch, user.uid)
-        );
-      } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, `price_watches/${watchId}`);
-      }
+    try {
+      await setDoc(
+        doc(db, 'price_watches', watchId),
+        buildPriceWatchCloudPayload(newWatch, effectiveCloudUid)
+      );
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, `price_watches/${watchId}`);
     }
     showToast(`${med.brandName} মূল্য নিরীক্ষণ ও অ্যালার্ট তালিকায় যুক্ত হয়েছে!`);
   };
@@ -4964,11 +4942,11 @@ export default function App() {
       saveLocal(STORAGE_KEYS.PRICE_ALERTS, next);
       return next;
     });
-    if (user && updatedAlert) {
+    if (updatedAlert) {
       try {
         await setDoc(
           doc(db, 'price_alerts', canonId),
-          buildPriceAlertCloudPayload(updatedAlert, user.uid)
+          buildPriceAlertCloudPayload(updatedAlert, effectiveCloudUid)
         );
       } catch (error) {
         handleFirestoreError(error, OperationType.UPDATE, `price_alerts/${canonId}`);
@@ -4986,12 +4964,10 @@ export default function App() {
       saveLocal(STORAGE_KEYS.PRICE_ALERTS, next);
       return next;
     });
-    if (user) {
-      try {
-        await deleteDoc(doc(db, 'price_alerts', canonId));
-      } catch {
-        // ignore if local demo alert was not in Firestore yet
-      }
+    try {
+      await deleteDoc(doc(db, 'price_alerts', canonId));
+    } catch {
+      // ignore if local demo alert was not in Firestore yet
     }
     showToast('মূল্য অ্যালার্ট বিজ্ঞপ্তি মুছে ফেলা হয়েছে');
   };
@@ -5011,15 +4987,13 @@ export default function App() {
     setShopProfile(nextShop);
     saveLocal(STORAGE_KEYS.SHOP, nextShop);
 
-    if (user) {
-      try {
-        await setDoc(
-          doc(db, 'shops', SHARED_SHOP_DOC_ID),
-          buildShopCloudPayload(nextShop, user.uid)
-        );
-      } catch (error) {
-        handleFirestoreError(error, OperationType.WRITE, `shops/${SHARED_SHOP_DOC_ID}`);
-      }
+    try {
+      await setDoc(
+        doc(db, 'shops', SHARED_SHOP_DOC_ID),
+        buildShopCloudPayload(nextShop, effectiveCloudUid)
+      );
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `shops/${SHARED_SHOP_DOC_ID}`);
     }
     showToast('দোকানের একাউন্ট তথ্য সংরক্ষিত হয়েছে!');
   };
@@ -5063,16 +5037,13 @@ export default function App() {
       });
     }
 
-    const activeAuthUser = auth.currentUser || user;
-    if (activeAuthUser) {
-      try {
-        await setDoc(
-          doc(db, 'staff', stId),
-          buildStaffCloudPayload(newStaff, activeAuthUser.uid)
-        );
-      } catch (error) {
-        handleFirestoreError(error, OperationType.WRITE, `staff/${stId}`);
-      }
+    try {
+      await setDoc(
+        doc(db, 'staff', stId),
+        buildStaffCloudPayload(newStaff, effectiveCloudUid)
+      );
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `staff/${stId}`);
     }
     showToast(`${enforcedName} প্রোফাইল সংরক্ষিত হয়েছে!`);
   };
@@ -5090,18 +5061,16 @@ export default function App() {
       }
       return remaining;
     });
-    if (user) {
+    try {
+      await deleteDoc(doc(db, 'staff', canonId));
+    } catch {
+      // ignore if local demo staff was not in Firestore yet
+    }
+    if (id !== canonId) {
       try {
-        await deleteDoc(doc(db, 'staff', canonId));
+        await deleteDoc(doc(db, 'staff', id));
       } catch {
-        // ignore if local demo staff was not in Firestore yet
-      }
-      if (id !== canonId) {
-        try {
-          await deleteDoc(doc(db, 'staff', id));
-        } catch {
-          // ignore
-        }
+        // ignore
       }
     }
     showToast('স্টাফ প্রোফাইল স্থায়ীভাবে ডিলিট করা হয়েছে');
@@ -5365,29 +5334,50 @@ export default function App() {
       {/* Workspace Body: Left Sidebar (260px) + Main Content Viewport */}
       <div className="flex-1 flex">
         {/* Desktop Sidebar */}
-        <aside className="hidden lg:flex lg:w-64 xl:w-72 flex-col justify-between bg-white border-r border-slate-200 p-5 shrink-0 no-print">
-          <div className="space-y-6">
-            {/* Shop Identity Summary */}
-            <div className="pb-4 border-b border-slate-200 space-y-0.5">
-              <div className="text-base font-bold text-teal-800">
-                {shopProfile.shopName || 'ইকবাল ফার্মেসী'}
-              </div>
-              <div className="text-xs font-semibold text-slate-800">
-                ডেন্টিস্ট:- ইকবাল মাহমুদ (DMTD (Dental), LMAF, RMP, Pharmacist)
-              </div>
-              <div className="text-[11px] text-slate-600 leading-snug">
-                ঠিকানা:- {shopProfile.address}
-              </div>
-              <div className="text-xs text-slate-700 font-mono">
-                মোবাইল:- {shopProfile.phone}
+        <aside
+          className={`hidden lg:flex flex-col justify-between bg-white border-r border-slate-200 transition-all duration-200 shrink-0 no-print ${
+            sidebarCollapsed ? 'w-18 p-3' : 'w-64 xl:w-72 p-4 sm:p-5'
+          }`}
+        >
+          <div className="space-y-4">
+            {/* Shop Identity Summary with Collapse Button */}
+            <div className="pb-3 border-b border-slate-200">
+              <div className="flex items-start justify-between gap-1">
+                {!sidebarCollapsed && (
+                  <div className="space-y-0.5 min-w-0">
+                    <div className="text-sm font-bold text-teal-800 truncate">
+                      {shopProfile.shopName || 'ইকবাল ফার্মেসী'}
+                    </div>
+                    <div className="text-[11px] font-semibold text-slate-800 leading-snug line-clamp-2">
+                      ডেন্টিস্ট:- ইকবাল মাহমুদ (ডি.এম.টি.ডি (ডেন্টাল) · এল.এম.এ.এফ (ঢাকা) · আর.এম.পি (ঢাকা) · ফার্মাসিস্ট · ওরাল এন্ড ডেন্টাল টেকনোলজিষ্ট)
+                    </div>
+                    <div className="text-[10.5px] text-slate-600 truncate">
+                      ঠিকানা:- {shopProfile.address}
+                    </div>
+                    <div className="text-[10.5px] text-slate-700 font-mono">
+                      মোবাইল:- {shopProfile.phone}
+                    </div>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                  className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer shrink-0"
+                  title={sidebarCollapsed ? 'সাইডবার প্রসারিত করুন' : 'সাইডবার ছোট করুন'}
+                  aria-label="Toggle sidebar collapse"
+                >
+                  <Menu className="w-4 h-4" />
+                </button>
               </div>
             </div>
 
             {/* Sidebar Navigation List */}
             <div className="space-y-1">
-              <div className="text-xs font-semibold text-slate-400 px-3 pb-1">
-                মূল মেনু ও মডিউল
-              </div>
+              {!sidebarCollapsed && (
+                <div className="text-[11px] font-bold text-slate-400 px-3 pb-0.5">
+                  মূল মেনু ও মডিউল
+                </div>
+              )}
               {navItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = activeSection === item.id;
@@ -5396,23 +5386,24 @@ export default function App() {
                     key={item.id}
                     type="button"
                     onClick={() => setActiveSection(item.id)}
-                    className={`w-full flex items-center justify-between px-3 py-2.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                    title={item.label}
+                    className={`w-full flex items-center justify-between px-3 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
                       isActive
-                        ? 'bg-slate-900 text-white'
+                        ? 'bg-slate-900 text-white shadow-xs'
                         : 'text-slate-700 hover:bg-slate-100'
-                    }`}
+                    } ${sidebarCollapsed ? 'justify-center px-2 py-2.5' : ''}`}
                   >
                     <span className="flex items-center gap-2.5 truncate">
                       <Icon className="w-4 h-4 shrink-0" />
-                      <span className="truncate">{item.label}</span>
+                      {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
                     </span>
-                    {item.id === 'pos_accounts' && posCart.length > 0 && (
-                      <span className="font-mono tabular-nums text-xs px-1.5 py-0.5 rounded bg-teal-600 text-white">
+                    {!sidebarCollapsed && item.id === 'pos_accounts' && posCart.length > 0 && (
+                      <span className="font-mono tabular-nums text-[10px] px-1.5 py-0.2 rounded-full bg-teal-600 text-white">
                         {posCart.length}
                       </span>
                     )}
-                    {item.id === 'compare' && unreadAlertsCount > 0 && (
-                      <span className="font-mono tabular-nums text-xs px-1.5 py-0.5 rounded bg-amber-500 text-white">
+                    {!sidebarCollapsed && item.id === 'compare' && unreadAlertsCount > 0 && (
+                      <span className="font-mono tabular-nums text-[10px] px-1.5 py-0.2 rounded-full bg-amber-500 text-white">
                         {unreadAlertsCount}
                       </span>
                     )}
@@ -5421,111 +5412,144 @@ export default function App() {
               })}
             </div>
 
-            {/* Active Operator / Staff Switcher in Sidebar */}
-            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
-              <div className="text-xs font-semibold text-slate-700">
-                সক্রিয় অপারেটর (Owner / স্টাফ)
-              </div>
-              <select
-                value={activeStaff.id}
-                onChange={(e) => {
-                  const found = staffList.find((s) => s.id === e.target.value);
-                  if (found) {
-                    setActiveStaff(found);
-                    showToast(`সক্রিয় অপারেটর: ${getOperatorName(found)}`);
-                  }
-                }}
-                aria-label="সক্রিয় অপারেটর নির্বাচন"
-                className="w-full px-2.5 py-1.5 text-xs font-medium bg-white border border-slate-200 rounded-md"
-              >
-                {staffList.map((st) => (
-                  <option key={st.id} value={st.id}>
-                    {st.roleTitle === 'owner' ? 'Owner' : st.name} — {st.counterName}
-                  </option>
-                ))}
-              </select>
-              <div className="text-xs text-slate-500">
-                সেল এন্ট্রিতে নাম দেখাবে:{' '}
-                <strong className="text-slate-900">{getOperatorName(activeStaff)}</strong>
-              </div>
-            </div>
-
-            {/* PWA In-App Install Prompt Button (Mandatory per pwa-integration skill) */}
-            {!isInstalled && (isInstallable || isIOS) && (
-              <div className="p-3.5 bg-teal-50 border border-teal-200 rounded-lg space-y-2">
-                <div className="text-xs font-bold text-teal-950">
-                  অফলাইন অ্যাপ হিসেবে ইনস্টল করুন
-                </div>
-                <p className="text-xs text-teal-800">
-                  ইন্টারনেট ছাড়াই যেকোনো সময় ওষুধের মূল্য যাচাই ও ইনভয়েস তৈরি করতে অ্যাপটি ডিভাইসে ইনস্টল করুন।
-                </p>
+            {/* Collapsible Extra Options Card (অতিরিক্ত অপশনগুলো সব সময় চালু থাকবে না) */}
+            {!sidebarCollapsed && (
+              <div className="space-y-2 pt-2 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => {
-                    if (isInstallable) install();
-                    else if (isIOS) setShowIOSInstallModal(true);
-                  }}
-                  className="w-full py-2 px-3 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-md flex items-center justify-center gap-1.5 cursor-pointer"
+                  onClick={() => setShowExtraOptions(!showExtraOptions)}
+                  className="w-full flex items-center justify-between px-3 py-2 text-xs font-bold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg cursor-pointer transition-colors"
                 >
-                  <Download className="w-3.5 h-3.5" />
-                  অ্যাপ ইনস্টল করুন (Install PWA)
+                  <span className="flex items-center gap-2">
+                    <Settings className="w-3.5 h-3.5 text-slate-500" />
+                    <span>অতিরিক্ত অপশন ও টুলস</span>
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-normal">
+                    {showExtraOptions ? 'বন্ধ করুন ▲' : 'খুলুন ▼'}
+                  </span>
                 </button>
+
+                {showExtraOptions && (
+                  <div className="p-3 bg-slate-50/80 border border-slate-200 rounded-lg space-y-3 animate-fadeIn">
+                    {/* Active Operator Switcher */}
+                    <div className="space-y-1">
+                      <div className="text-[11px] font-bold text-slate-700">
+                        সক্রিয় অপারেটর (Owner / স্টাফ)
+                      </div>
+                      <select
+                        value={activeStaff.id}
+                        onChange={(e) => {
+                          const found = staffList.find((s) => s.id === e.target.value);
+                          if (found) {
+                            setActiveStaff(found);
+                            showToast(`সক্রিয় অপারেটর: ${getOperatorName(found)}`);
+                          }
+                        }}
+                        aria-label="সক্রিয় অপারেটর নির্বাচন"
+                        className="w-full px-2 py-1 text-xs font-medium bg-white border border-slate-200 rounded-md"
+                      >
+                        {staffList.map((st) => (
+                          <option key={st.id} value={st.id}>
+                            {st.roleTitle === 'owner' ? 'Owner' : st.name} — {st.counterName}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* PWA Install Button if available */}
+                    {!isInstalled && (isInstallable || isIOS) && (
+                      <div className="p-2.5 bg-teal-50 border border-teal-200 rounded-md space-y-1.5">
+                        <div className="text-[11px] font-bold text-teal-950">
+                          অফলাইন PWA ইনস্টল
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isInstallable) install();
+                            else if (isIOS) setShowIOSInstallModal(true);
+                          }}
+                          className="w-full py-1.5 px-2 text-[11px] font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded flex items-center justify-center gap-1 cursor-pointer"
+                        >
+                          <Download className="w-3 h-3" />
+                          <span>অ্যাপ ইনস্টল করুন</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Backup & Restore */}
+                    <div className="flex gap-1.5 pt-1">
+                      <button
+                        type="button"
+                        onClick={handleDownloadBackup}
+                        className="flex-1 py-1 px-2 text-[10.5px] font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded flex items-center justify-center gap-1 cursor-pointer"
+                      >
+                        <Download className="w-3 h-3 text-emerald-700" />
+                        <span>ব্যাকআপ</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => backupFileInputRef.current?.click()}
+                        className="flex-1 py-1 px-2 text-[10.5px] font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded flex items-center justify-center gap-1 cursor-pointer"
+                      >
+                        <Upload className="w-3 h-3 text-teal-700" />
+                        <span>রিস্টোর</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
 
           {/* Online / Offline Dual Mode Status & Cloud Sync */}
-          <div className="pt-4 border-t border-slate-200 space-y-2.5">
-            <div className="flex items-center justify-between text-xs">
-              <span className="flex items-center gap-1.5 font-semibold text-slate-700">
-                {isOnline ? (
-                  <>
-                    <Wifi className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>অনলাইন মোড সক্রিয়</span>
-                  </>
-                ) : (
-                  <>
-                    <WifiOff className="w-3.5 h-3.5 text-amber-600" />
-                    <span className="text-amber-700">অফলাইন মোড সক্রিয়</span>
-                  </>
-                )}
-              </span>
-              <span className="text-slate-400">Offline-Ready</span>
-            </div>
-
-            {isCloudLoggedIn ? (
-              <div className="space-y-2">
-                <div className="text-xs text-slate-600 flex items-center gap-1.5">
-                  <Cloud className="w-4 h-4 text-teal-700 shrink-0" />
-                  <span className="truncate">
-                    ক্লাউড সিঙ্ক: {cloudSession?.email || user?.email || 'mhakbor2001@gmail.com'}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleSeedCloudData}
-                  disabled={seedingCloud}
-                  className="w-full py-1.5 px-3 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md cursor-pointer disabled:opacity-50"
-                >
-                  {seedingCloud ? 'সিঙ্ক হচ্ছে...' : 'সকল ডেটা ক্লাউডে সিঙ্ক করুন'}
-                </button>
+          {!sidebarCollapsed && (
+            <div className="pt-3 border-t border-slate-200 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="flex items-center gap-1.5 font-semibold text-slate-700">
+                  {isOnline ? (
+                    <>
+                      <Wifi className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>অনলাইন মোড</span>
+                    </>
+                  ) : (
+                    <>
+                      <WifiOff className="w-3.5 h-3.5 text-amber-600" />
+                      <span className="text-amber-700">অফলাইন মোড</span>
+                    </>
+                  )}
+                </span>
+                <span className="text-[10.5px] text-slate-400">অফলাইন-রেডি</span>
               </div>
-            ) : (
-              <div className="space-y-2">
-                <div className="text-xs text-slate-500 leading-relaxed">
-                  অ্যাপটি অনলাইন ও অফলাইন উভয় মাধ্যমে স্বয়ংক্রিয়ভাবে ডেটা সংরক্ষণ করছে।
+
+              {isCloudLoggedIn ? (
+                <div className="space-y-1.5">
+                  <div className="text-[11px] text-slate-600 flex items-center gap-1.5 truncate">
+                    <Cloud className="w-3.5 h-3.5 text-teal-700 shrink-0" />
+                    <span className="truncate">
+                      {cloudSession?.email || user?.email || 'mhakbor2001@gmail.com'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSeedCloudData}
+                    disabled={seedingCloud}
+                    className="w-full py-1.5 px-2.5 text-xs font-semibold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-md cursor-pointer disabled:opacity-50"
+                  >
+                    {seedingCloud ? 'সিঙ্ক হচ্ছে...' : 'ক্লাউড সিঙ্ক করুন'}
+                  </button>
                 </div>
+              ) : (
                 <button
                   type="button"
                   onClick={() => setShowCloudLoginModal(true)}
                   className="w-full py-2 px-3 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <LogIn className="w-3.5 h-3.5" />
-                  দোকান ক্লাউড লগইন করুন
+                  দোকান ক্লাউড লগইন
                 </button>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
         </aside>
 
         {/* Main Workspace Canvas */}
@@ -5557,241 +5581,7 @@ export default function App() {
             </div>
           )}
 
-          {/* If Locked Out / Not Logged In: Show Full Pharmacy Lock Screen */}
-          {!isCloudLoggedIn ? (
-            <div className="max-w-xl mx-auto py-6 sm:py-10">
-              <div className="bg-white border border-slate-200 rounded-2xl shadow-xl p-6 sm:p-8 space-y-6">
-                {/* Lockout Header */}
-                <div className="text-center space-y-2.5">
-                  <div className="w-16 h-16 mx-auto rounded-full bg-amber-50 border-2 border-amber-200 flex items-center justify-center text-amber-600 shadow-sm">
-                    <Lock className="w-8 h-8" />
-                  </div>
-                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-200">
-                    <span>🔒 ফার্মেসী সিস্টেম লকআউট অবস্থায় রয়েছে</span>
-                  </div>
-                  <h2 className="text-xl sm:text-2xl font-bold text-slate-900">
-                    {shopProfile.shopName || 'ইকবাল ফার্মেসী'}
-                  </h2>
-                  <p className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
-                    দোকানের সেলস, ইনভেন্টরি, কাস্টমার লেজার ও হিসাব সুরক্ষার জন্য সিস্টেমটি লকআউট করা আছে। কাজ শুরু করতে মালিক (Owner) অথবা স্টাফের আইডি ও পাসওয়ার্ড দিয়ে আনলক করুন।
-                  </p>
-                </div>
-
-                {/* Tabs: Login vs Register Owner */}
-                <div className="flex border-b border-slate-200">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCloudAuthTab('login');
-                      setLoginErrorMessage(null);
-                    }}
-                    className={`flex-1 py-2.5 text-xs font-bold text-center border-b-2 cursor-pointer transition-colors ${
-                      cloudAuthTab === 'login'
-                        ? 'border-teal-700 text-teal-800'
-                        : 'border-transparent text-slate-500 hover:text-slate-900'
-                    }`}
-                  >
-                    Owner ও স্টাফ আনলক / লগইন
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCloudAuthTab('register_owner');
-                      setLoginErrorMessage(null);
-                    }}
-                    className={`flex-1 py-2.5 text-xs font-bold text-center border-b-2 cursor-pointer transition-colors ${
-                      cloudAuthTab === 'register_owner'
-                        ? 'border-teal-700 text-teal-800'
-                        : 'border-transparent text-slate-500 hover:text-slate-900'
-                    }`}
-                  >
-                    নতুন Owner আইডি খুলুন
-                  </button>
-                </div>
-
-                {loginErrorMessage && (
-                  <div className="p-3 bg-red-50 border border-red-200 rounded-md text-xs text-red-700 font-semibold flex items-center gap-2">
-                    <span>⚠️ {loginErrorMessage}</span>
-                  </div>
-                )}
-
-                {/* TAB 1: Universal Login Form */}
-                {cloudAuthTab === 'login' && (
-                  <form onSubmit={handleUniversalLoginSubmit} className="space-y-4">
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1">
-                        মোবাইল নম্বর অথবা ইমেইল / জিমেইল *
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={cloudLoginEmail}
-                        onChange={(e) => {
-                          setCloudLoginEmail(e.target.value);
-                          setLoginErrorMessage(null);
-                        }}
-                        placeholder="01812-358839 অথবা example@gmail.com"
-                        className="w-full px-3 py-2 text-sm border border-slate-200 rounded-md font-mono"
-                      />
-                    </div>
-
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="text-xs font-medium text-slate-700">
-                          লগইন পাসওয়ার্ড *
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => setShowLoginPassword(!showLoginPassword)}
-                          className="text-[11px] text-teal-700 hover:text-teal-900 cursor-pointer inline-flex items-center gap-1"
-                        >
-                          {showLoginPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                          {showLoginPassword ? 'লুকান' : 'দেখুন'}
-                        </button>
-                      </div>
-                      <input
-                        type={showLoginPassword ? 'text' : 'password'}
-                        required
-                        value={cloudLoginPassword}
-                        onChange={(e) => {
-                          setCloudLoginPassword(e.target.value);
-                          setLoginErrorMessage(null);
-                        }}
-                        placeholder="••••••••"
-                        className="w-full px-3 py-2 text-sm border border-slate-200 rounded-md font-mono"
-                      />
-                    </div>
-
-
-                    <button
-                      type="submit"
-                      disabled={cloudLoginLoading}
-                      className="w-full py-2.5 px-4 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-md cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5 shadow-sm"
-                    >
-                      <Unlock className="w-4 h-4" />
-                      {cloudLoginLoading ? 'আনলক হচ্ছে...' : 'সিস্টেম আনলক ও লগইন করুন'}
-                    </button>
-                  </form>
-                )}
-
-                {/* TAB 2: Register New Owner */}
-                {cloudAuthTab === 'register_owner' && (
-                  <form onSubmit={handleRegisterOwnerSubmit} className="space-y-3.5">
-                    <div className="p-3 bg-teal-50 border border-teal-200 rounded-md text-xs text-teal-900 leading-relaxed">
-                      <strong>নতুন Owner আইডি রেজিস্ট্রেশন:</strong> নিজের ফার্মেসীর নাম, মোবাইল নম্বর ও পাসওয়ার্ড দিয়ে একাউন্ট তৈরি করুন।
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1">
-                        ফার্মেসী / দোকানের নাম *
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={registerShopName}
-                        onChange={(e) => setRegisterShopName(e.target.value)}
-                        placeholder="যেমন: ইকবাল ফার্মেসী"
-                        className="w-full px-3 py-2 text-sm border border-slate-200 rounded-md"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs font-medium text-slate-700 mb-1">
-                          মালিকের নাম *
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={registerOwnerName}
-                          onChange={(e) => setRegisterOwnerName(e.target.value)}
-                          placeholder="মালিকের নাম"
-                          className="w-full px-3 py-2 text-sm border border-slate-200 rounded-md"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-slate-700 mb-1">
-                          মোবাইল নম্বর *
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={registerPhone}
-                          onChange={(e) => setRegisterPhone(e.target.value)}
-                          placeholder="018XXXXXXXX"
-                          className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-md"
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1">
-                        ইমেইল / জিমেইল (ঐচ্ছিক)
-                      </label>
-                      <input
-                        type="email"
-                        value={registerEmail}
-                        onChange={(e) => setRegisterEmail(e.target.value)}
-                        placeholder="owner@gmail.com"
-                        className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-md"
-                      />
-                    </div>
-
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="text-xs font-medium text-slate-700">
-                          পাসওয়ার্ড সেট করুন *
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => setShowRegisterPassword(!showRegisterPassword)}
-                          className="text-[11px] text-teal-700 hover:text-teal-900 cursor-pointer inline-flex items-center gap-1"
-                        >
-                          {showRegisterPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                          {showRegisterPassword ? 'লুকান' : 'দেখুন'}
-                        </button>
-                      </div>
-                      <input
-                        type={showRegisterPassword ? 'text' : 'password'}
-                        required
-                        value={registerPassword}
-                        onChange={(e) => setRegisterPassword(e.target.value)}
-                        placeholder="নূন্যতম ৬ অক্ষর"
-                        className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-md"
-                      />
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={cloudLoginLoading}
-                      className="w-full py-2.5 px-4 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-md cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
-                    >
-                      <ShieldCheck className="w-4 h-4" />
-                      {cloudLoginLoading ? 'একাউন্ট তৈরি হচ্ছে...' : 'নতুন Owner একাউন্ট তৈরি ও আনলক করুন'}
-                    </button>
-
-                    <div className="mt-3 p-2.5 bg-amber-50 border border-amber-200 rounded text-[11px] text-amber-900 leading-normal space-y-1">
-                      <div className="font-semibold flex items-center gap-1 text-amber-950">
-                        <span>☁️ Cloudflare Pages ও Firestore ডেপ্লয় নোট:</span>
-                      </div>
-                      <p>
-                        Cloudflare (যেমন: <code className="bg-amber-100 px-1 py-0.5 rounded">*.pages.dev</code>) এ অ্যাপ ডেপ্লয় করার পর Firebase Console এ যান:
-                      </p>
-                      <ul className="list-disc pl-4 space-y-0.5 text-[10.5px]">
-                        <li><strong>Authentication &gt; Settings &gt; Authorized Domains:</strong> আপনার ক্লাউডফ্লেয়ার ডোমেন যুক্ত করুন।</li>
-                        <li><strong>Authentication &gt; Sign-in method:</strong> Email/Password এবং Anonymous চালু রাখুন।</li>
-                      </ul>
-                      <p className="text-[10px] text-amber-800">
-                        (ডোমেন অনুমোদন ছাড়াও আপনার অফলাইন ও লোকাল রেজিস্টার্ড একাউন্ট স্বয়ংক্রিয়ভাবে কার্যকর থাকবে)।
-                      </p>
-                    </div>
-                  </form>
-                )}
-              </div>
-            </div>
-          ) : (
-            <>
-              {/* Active View Render */}
+          {/* Active View Render */}
               {activeSection === 'dashboard' && (
                 <DashboardView
                   transactions={transactions}
@@ -5928,8 +5718,6 @@ export default function App() {
                   onDeleteStaffMember={handleDeleteStaffMember}
                 />
               )}
-            </>
-          )}
         </main>
       </div>
 

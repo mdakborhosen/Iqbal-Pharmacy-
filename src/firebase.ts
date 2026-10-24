@@ -72,7 +72,7 @@ export const DEFAULT_SHOP_CLOUD_SESSION: ShopCloudSession = {
 
 export function loadSavedShopCloudSession(): ShopCloudSession | null {
   try {
-    // If the user explicitly logged out, never restore any session
+    // If the user explicitly logged out, do not restore
     if (
       localStorage.getItem(LOGGED_OUT_FLAG_KEY) === '1' ||
       sessionStorage.getItem(EXPLICIT_LOGOUT_KEY) === '1'
@@ -84,9 +84,9 @@ export function loadSavedShopCloudSession(): ShopCloudSession | null {
       const parsed = JSON.parse(raw) as ShopCloudSession;
       if (parsed && parsed.uid && (parsed.email || parsed.phone)) return parsed;
     }
-    return null;
+    return DEFAULT_SHOP_CLOUD_SESSION;
   } catch {
-    return null;
+    return DEFAULT_SHOP_CLOUD_SESSION;
   }
 }
 
