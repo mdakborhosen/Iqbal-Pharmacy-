@@ -22,6 +22,25 @@ if (typeof window !== 'undefined') {
       event.preventDefault();
     }
   });
+
+  // Auto-reload immediately when a new service worker version is deployed on Cloudflare Pages
+  if ('serviceWorker' in navigator) {
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!refreshing) {
+        refreshing = true;
+        window.location.reload();
+      }
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        navigator.serviceWorker.getRegistration().then((reg) => {
+          reg?.update().catch(() => {});
+        }).catch(() => {});
+      }
+    });
+  }
 }
 
 createRoot(document.getElementById('root')!).render(<App />);

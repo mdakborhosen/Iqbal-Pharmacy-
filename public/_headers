@@ -1,0 +1,26 @@
+# Cloudflare Pages Headers Configuration
+# Ensures index.html, service worker, and app updates are never cached stale on Cloudflare Edge or mobile browser
+
+/index.html
+  Cache-Control: no-cache, no-store, must-revalidate
+  Pragma: no-cache
+  Expires: 0
+
+/sw.js
+  Cache-Control: no-cache, no-store, must-revalidate
+  Pragma: no-cache
+  Expires: 0
+
+/registerSW.js
+  Cache-Control: no-cache, no-store, must-revalidate
+  Pragma: no-cache
+  Expires: 0
+
+/manifest.webmanifest
+  Cache-Control: no-cache, no-store, must-revalidate
+  Pragma: no-cache
+  Expires: 0
+
+# Static hashed assets (JS/CSS) can be cached safely because their filenames change on every build
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
