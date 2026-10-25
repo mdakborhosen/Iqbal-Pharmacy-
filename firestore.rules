@@ -12,7 +12,7 @@ service cloud.firestore {
     // Global Hardened Primitives
     // =========================================================================
     function isValidId(id) {
-      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string && id.size() >= 1 && id.size() <= 128;
     }
 
     function incoming() {
@@ -41,7 +41,7 @@ service cloud.firestore {
       ]) && data.keys().hasOnly([
         'ownerId', 'shopName', 'licenseNo', 'phone', 'address', 'createdAt', 'updatedAt'
       ])
-      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128
       && data.shopName is string && data.shopName.size() >= 1 && data.shopName.size() <= 120
       && data.licenseNo is string && data.licenseNo.size() >= 1 && data.licenseNo.size() <= 60
       && data.phone is string && data.phone.size() >= 1 && data.phone.size() <= 30
@@ -62,7 +62,7 @@ service cloud.firestore {
         'stripPrice', 'stockQty', 'minStockLevel', 'batchNo', 'expiryDate',
         'shelfLocation', 'createdAt', 'updatedAt'
       ])
-      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128
       && data.medicineId is string && data.medicineId.size() >= 1 && data.medicineId.size() <= 100
       && data.brandName is string && data.brandName.size() >= 1 && data.brandName.size() <= 120
       && data.genericName is string && data.genericName.size() >= 1 && data.genericName.size() <= 150
@@ -90,7 +90,7 @@ service cloud.firestore {
         'ownerId', 'name', 'phone', 'address', 'totalPurchased',
         'totalPaid', 'totalDue', 'createdAt', 'updatedAt'
       ])
-      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128
       && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
       && data.phone is string && data.phone.size() >= 1 && data.phone.size() <= 30
       && data.address is string && data.address.size() >= 1 && data.address.size() <= 250
@@ -116,7 +116,7 @@ service cloud.firestore {
         'paymentMethod', 'staffName', 'staffRole', 'counterName',
         'createdAt', 'updatedAt'
       ])
-      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128
       && data.txType is string && data.txType.size() <= 20 && data.txType in ['sale', 'purchase', 'due_payment']
       && data.invoiceNo is string && data.invoiceNo.size() >= 1 && data.invoiceNo.size() <= 60
       && data.dateStr is string && data.dateStr.size() >= 1 && data.dateStr.size() <= 20
@@ -150,9 +150,9 @@ service cloud.firestore {
         'ownerId', 'name', 'roleTitle', 'phone', 'email', 'password', 'shift',
         'counterName', 'active', 'lastLoginAt', 'createdAt', 'updatedAt'
       ])
-      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128
       && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
-      && data.roleTitle is string && data.roleTitle.size() <= 30 && data.roleTitle in ['owner', 'manager', 'pharmacist', 'salesman']
+      && data.roleTitle is string && data.roleTitle.size() >= 1 && data.roleTitle.size() <= 60
       && data.phone is string && data.phone.size() >= 1 && data.phone.size() <= 30
       && (!('email' in data) || (data.email is string && data.email.size() <= 120))
       && (!('password' in data) || (data.password is string && data.password.size() <= 100))
@@ -176,7 +176,7 @@ service cloud.firestore {
         'stripPrice', 'therapeuticClass', 'indication',
         'createdAt', 'updatedAt'
       ])
-      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128
       && data.brandName is string && data.brandName.size() >= 1 && data.brandName.size() <= 120
       && data.genericName is string && data.genericName.size() >= 1 && data.genericName.size() <= 150
       && data.companyName is string && data.companyName.size() >= 1 && data.companyName.size() <= 120
@@ -202,7 +202,7 @@ service cloud.firestore {
         'strength', 'baselineUnitPrice', 'currentUnitPrice', 'targetAlertPrice',
         'notifyOnAnyChange', 'createdAt', 'updatedAt'
       ])
-      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128
       && data.medicineId is string && data.medicineId.size() >= 1 && data.medicineId.size() <= 100
       && data.brandName is string && data.brandName.size() >= 1 && data.brandName.size() <= 120
       && data.genericName is string && data.genericName.size() >= 1 && data.genericName.size() <= 150
@@ -226,7 +226,7 @@ service cloud.firestore {
         'strength', 'oldUnitPrice', 'newUnitPrice', 'oldStripPrice',
         'newStripPrice', 'changedBy', 'dateStr', 'isRead', 'createdAt', 'updatedAt'
       ])
-      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128
       && data.medicineId is string && data.medicineId.size() >= 1 && data.medicineId.size() <= 100
       && data.brandName is string && data.brandName.size() >= 1 && data.brandName.size() <= 120
       && data.genericName is string && data.genericName.size() >= 1 && data.genericName.size() <= 150

@@ -29,6 +29,7 @@ import {
   matchesMedicineQuery,
   normalizePharmaSearchText,
   searchAndRankMedicines,
+  formatCleanMoney,
 } from '../data/bdMedicines';
 import { InventoryItem, MedicineCatalogItem } from '../types';
 
@@ -1348,7 +1349,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                     </label>
                     <input
                       type="number"
-                      step="0.01"
+                      step="any"
                       min="0"
                       required
                       value={purchasePrice}
@@ -1362,7 +1363,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                     </label>
                     <input
                       type="number"
-                      step="0.01"
+                      step="any"
                       min="0"
                       required
                       value={unitPrice}
@@ -1371,7 +1372,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                         const val = parseFloat(e.target.value);
                         if (!Number.isNaN(val)) {
                           const mult = currentFormMeta.defaultUnitsPerStrip;
-                          setStripPrice((val * mult).toFixed(2));
+                          setStripPrice(formatCleanMoney(val * mult));
                         }
                       }}
                       className="w-full px-3 py-2 text-sm font-mono font-bold text-teal-900 bg-white border border-teal-300 rounded-md focus:border-teal-600 focus:outline-none"
@@ -1383,7 +1384,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                     </label>
                     <input
                       type="number"
-                      step="0.01"
+                      step="any"
                       min="0"
                       required
                       value={stripPrice}

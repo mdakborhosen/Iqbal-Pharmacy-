@@ -1002,7 +1002,7 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                       <input
                         ref={saleCustomPriceInputRef}
                         type="number"
-                        step="0.01"
+                        step="any"
                         min="0.1"
                         required
                         placeholder="12.00"
@@ -1463,7 +1463,7 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                             <td className="py-2.5 px-2 text-center">
                               <input
                                 type="number"
-                                step="0.01"
+                                step="any"
                                 min="0.01"
                                 value={purPriceVal}
                                 onChange={(e) =>
@@ -1480,7 +1480,7 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                             <td className="py-2.5 px-2 text-center">
                               <input
                                 type="number"
-                                step="0.01"
+                                step="any"
                                 min="0.1"
                                 value={item.unitPrice}
                                 onChange={(e) =>
@@ -1790,7 +1790,7 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                   <input
                     ref={saleCustomPriceInputRef}
                     type="number"
-                    step="0.01"
+                    step="any"
                     min="0.1"
                     required
                     placeholder="12.00"
@@ -1806,7 +1806,7 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                   </label>
                   <input
                     type="number"
-                    step="0.01"
+                    step="any"
                     min="0.01"
                     placeholder="১০.৫৬"
                     value={saleCustomPurPrice}

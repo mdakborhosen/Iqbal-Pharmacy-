@@ -38,6 +38,7 @@ import {
   isCoreDatabaseMedicineId,
   matchesMedicineQuery,
   searchAndRankMedicines,
+  formatCleanMoney,
 } from '../data/bdMedicines';
 import { InventoryItem, MedicineCatalogItem, PriceAlert, PriceWatch } from '../types';
 
@@ -2130,7 +2131,7 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                     </label>
                     <input
                       type="number"
-                      step="0.01"
+                      step="any"
                       min="0.01"
                       required
                       value={medPurchasePrice}
@@ -2144,15 +2145,15 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                     </label>
                     <input
                       type="number"
-                      step="0.01"
-                      min="0.1"
+                      step="any"
+                      min="0.01"
                       required
                       value={medUnitPrice}
                       onChange={(e) => {
                         setMedUnitPrice(e.target.value);
                         const val = parseFloat(e.target.value);
                         if (!Number.isNaN(val)) {
-                          setMedStripPrice((val * modalFormMeta.defaultUnitsPerStrip).toFixed(2));
+                          setMedStripPrice(formatCleanMoney(val * modalFormMeta.defaultUnitsPerStrip));
                         }
                       }}
                       className="w-full px-3 py-2 text-sm font-mono font-bold text-teal-900 bg-white border border-teal-300 rounded-md focus:border-teal-600 focus:outline-none"
@@ -2164,8 +2165,8 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                     </label>
                     <input
                       type="number"
-                      step="0.01"
-                      min="1"
+                      step="any"
+                      min="0.01"
                       required
                       value={medStripPrice}
                       onChange={(e) => setMedStripPrice(e.target.value)}

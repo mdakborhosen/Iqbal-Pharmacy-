@@ -5032,10 +5032,20 @@ export function getInvoiceFormPrefix(form: string): string {
   return short || 'tab';
 }
 
-export function formatCleanMoney(val: number): string {
-  const num = Number(val);
+export function formatCleanMoney(val: number | string | null | undefined): string {
+  if (val === null || val === undefined || val === '') return '0';
+  const str = String(val).trim();
+  if (!str) return '0';
+  const num = Number(str);
   if (!Number.isFinite(num)) return '0';
-  return String(Number(num.toFixed(2)));
+  if (Number.isInteger(num)) return num.toString();
+  // Preserve user-specified precision if passed as numeric string (e.g. "100.63826280000")
+  if (typeof val === 'string' && /^-?\d+\.\d+$/.test(str)) {
+    return str;
+  }
+  // Output up to 12 decimal places, trimming trailing zeros
+  const fixed = num.toFixed(12).replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
+  return fixed;
 }
 
 export function formatCartItemInvoiceLine(

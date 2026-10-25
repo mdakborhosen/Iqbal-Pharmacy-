@@ -2377,7 +2377,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                   </label>
                                   <input
                                     type="number"
-                                    step="0.01"
+                                    step="any"
                                     min="0.01"
                                     value={item.packRate || ''}
                                     onChange={(e) => {
@@ -2401,7 +2401,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                   </label>
                                   <input
                                     type="number"
-                                    step="0.01"
+                                    step="any"
                                     min="0.01"
                                     value={item.purchasePrice || ''}
                                     onChange={(e) => {
@@ -2422,7 +2422,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                 <span className="text-[10px] text-slate-500">পিস দর:</span>
                                 <input
                                   type="number"
-                                  step="0.01"
+                                  step="any"
                                   min="0.01"
                                   value={item.purchasePrice || ''}
                                   onChange={(e) => {
@@ -2447,7 +2447,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                               <span className="text-xs font-bold text-slate-500">৳</span>
                               <input
                                 type="number"
-                                step="0.01"
+                                step="any"
                                 min="0"
                                 value={lineTotal > 0 ? lineTotal : ''}
                                 onChange={(e) => {
@@ -3052,7 +3052,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                   </label>
                   <input
                     type="number"
-                    step="0.01"
+                    step="any"
                     min="0"
                     required
                     value={editSubTotal}
@@ -3066,7 +3066,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                   </label>
                   <input
                     type="number"
-                    step="0.01"
+                    step="any"
                     min="0"
                     value={editDiscount}
                     onChange={(e) => setEditDiscount(e.target.value)}
@@ -3079,7 +3079,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                   </label>
                   <input
                     type="number"
-                    step="0.01"
+                    step="any"
                     min="0"
                     required
                     value={editPaidAmount}

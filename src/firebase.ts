@@ -84,9 +84,9 @@ export function loadSavedShopCloudSession(): ShopCloudSession | null {
       const parsed = JSON.parse(raw) as ShopCloudSession;
       if (parsed && parsed.uid && (parsed.email || parsed.phone)) return parsed;
     }
-    return DEFAULT_SHOP_CLOUD_SESSION;
+    return null;
   } catch {
-    return DEFAULT_SHOP_CLOUD_SESSION;
+    return null;
   }
 }
 
@@ -542,8 +542,9 @@ export function sanitizeString(val: string, maxLen: number, fallback = 'N/A'): s
   return trimmed.slice(0, maxLen);
 }
 
-export function sanitizeNumber(val: number, min = 0, max = 100000000): number {
-  if (typeof val !== 'number' || Number.isNaN(val)) return min;
-  return Math.min(max, Math.max(min, Number(val.toFixed(2))));
+export function sanitizeNumber(val: number | string | null | undefined, min = 0, max = 100000000): number {
+  const num = Number(val);
+  if (typeof num !== 'number' || Number.isNaN(num) || !Number.isFinite(num)) return min;
+  return Math.min(max, Math.max(min, num));
 }
 

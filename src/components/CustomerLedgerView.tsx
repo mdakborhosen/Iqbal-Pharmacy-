@@ -415,8 +415,8 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
                       </label>
                       <input
                         type="number"
-                        step="1"
-                        min="1"
+                        step="any"
+                        min="0.00000001"
                         max={activeCustomer.totalDue}
                         required
                         value={collectAmountStr}
@@ -635,7 +635,7 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
                     <input
                       type="number"
                       min="0"
-                      step="1"
+                      step="any"
                       value={custPurchased}
                       onChange={(e) => setCustPurchased(e.target.value)}
                       className="w-full px-2.5 py-2 text-xs font-mono border border-slate-200 rounded-md"
@@ -648,7 +648,7 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
                     <input
                       type="number"
                       min="0"
-                      step="1"
+                      step="any"
                       value={custPaid}
                       onChange={(e) => setCustPaid(e.target.value)}
                       className="w-full px-2.5 py-2 text-xs font-mono border border-slate-200 rounded-md"
@@ -661,7 +661,7 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
                     <input
                       type="number"
                       min="0"
-                      step="1"
+                      step="any"
                       value={custDue}
                       onChange={(e) => setCustDue(e.target.value)}
                       className="w-full px-2.5 py-2 text-xs font-mono border border-slate-200 rounded-md"
@@ -676,7 +676,7 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
                   <input
                     type="number"
                     min="0"
-                    step="1"
+                    step="any"
                     value={custDue}
                     onChange={(e) => setCustDue(e.target.value)}
                     className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-md"

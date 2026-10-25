@@ -20,6 +20,7 @@ import {
   Users,
 } from 'lucide-react';
 import { ShopCloudSession } from '../firebase';
+import { AppLanguage } from '../i18n';
 import { ShopProfile, StaffMember, Transaction } from '../types';
 
 interface StaffAndShopViewProps {
@@ -30,6 +31,7 @@ interface StaffAndShopViewProps {
   cloudSession: ShopCloudSession | null;
   isCloudLoggedIn: boolean;
   seedingCloud: boolean;
+  lang?: AppLanguage;
   onOpenCloudLoginModal: () => void;
   onQuickCloudLogin: () => Promise<void>;
   onCloudLogout: () => Promise<void>;
@@ -53,6 +55,7 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
   cloudSession,
   isCloudLoggedIn,
   seedingCloud,
+  lang = 'bn',
   onOpenCloudLoginModal,
   onQuickCloudLogin,
   onCloudLogout,
@@ -206,17 +209,25 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
         <div className="space-y-1">
           <div className="flex items-center gap-2 text-xs font-semibold text-teal-700">
             <Cloud className="w-4 h-4" />
-            <span>দোকান ক্লাউড লগইন ও মাল্টি-ডিভাইস অটো সিঙ্ক</span>
+            <span>{lang === 'bn' ? 'দোকান ক্লাউড লগইন ও মাল্টি-ডিভাইস অটো সিঙ্ক' : 'Shop Cloud Login & Multi-Device Live Sync'}</span>
           </div>
           <h2 className="text-base font-bold text-slate-900">
             {isCloudLoggedIn
-              ? `ক্লাউড একাউন্ট সক্রিয়: ${cloudSession?.shopName || shopProfile.shopName} (${cloudSession?.email || 'mhakbor2001@gmail.com'})`
-              : 'দোকান ক্লাউড একাউন্টে লগইন করে সকল ডিভাইসে রিয়েল-টাইম ডেটা সিঙ্ক চালু করুন'}
+              ? (lang === 'bn'
+                  ? `ক্লাউড একাউন্ট সক্রিয়: ${cloudSession?.shopName || shopProfile.shopName} (${cloudSession?.email || 'mhakbor2001@gmail.com'})`
+                  : `Cloud Account Active: ${cloudSession?.shopName || shopProfile.shopName} (${cloudSession?.email || 'mhakbor2001@gmail.com'})`)
+              : (lang === 'bn'
+                  ? 'দোকান ক্লাউড একাউন্টে লগইন করে সকল ডিভাইসে রিয়েল-টাইম ডেটা সিঙ্ক চালু করুন'
+                  : 'Log in to Shop Cloud Account to enable real-time multi-device sync')}
           </h2>
           <p className="text-xs text-slate-600">
             {isCloudLoggedIn
-              ? `লগইনকৃত একাউন্ট: ${cloudSession?.displayName || 'ইকবাল মাহমুদ (Owner)'} · মোবাইল: ${cloudSession?.phone || shopProfile.phone} · সকল ইনভয়েস, স্টক ও কাস্টমার লেজার ক্লাউড ও লোকাল স্টোরেজে সুরক্ষিত।`
-              : '১-ক্লিকে ইকবাল ফার্মেসী ক্লাউড লগইন অথবা ইমেইল/মোবাইল ও পাসওয়ার্ড দিয়ে দোকান ক্লাউডে লগইন করুন।'}
+              ? (lang === 'bn'
+                  ? `লগইনকৃত একাউন্ট: ${cloudSession?.displayName || 'দোকান মালিক'} · মোবাইল: ${cloudSession?.phone || shopProfile.phone} · সকল ইনভয়েস, স্টক ও কাস্টমার লেজার ক্লাউড ও লোকাল স্টোরেজে সুরক্ষিত।`
+                  : `Logged in as: ${cloudSession?.displayName || 'Shop Owner'} · Phone: ${cloudSession?.phone || shopProfile.phone} · All invoices, stock, and customer ledgers are backed up.`)
+              : (lang === 'bn'
+                  ? '১-ক্লিকে ইকবাল ফার্মেসী ক্লাউড লগইন অথবা ইমেইল/মোবাইল ও পাসওয়ার্ড দিয়ে দোকান ক্লাউডে লগইন করুন।'
+                  : '1-Click instant login or sign in with your email/mobile and password.')}
           </p>
         </div>
 
@@ -230,22 +241,25 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
                 className="px-3.5 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-md flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${seedingCloud ? 'animate-spin' : ''}`} />
-                {seedingCloud ? 'সিঙ্ক হচ্ছে...' : 'এখনই ক্লাউডে সিঙ্ক করুন'}
+                {seedingCloud
+                  ? (lang === 'bn' ? 'সিঙ্ক হচ্ছে...' : 'Syncing...')
+                  : (lang === 'bn' ? 'এখনই ক্লাউডে সিঙ্ক করুন' : 'Sync to Cloud Now')}
               </button>
               <button
                 type="button"
                 onClick={onOpenCloudLoginModal}
                 className="px-3.5 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md cursor-pointer"
               >
-                একাউন্ট তথ্য / পরিবর্তন
+                {lang === 'bn' ? 'একাউন্ট তথ্য / পরিবর্তন' : 'Account Details / Switch'}
               </button>
               <button
                 type="button"
                 onClick={onCloudLogout}
-                className="px-3.5 py-2 text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 rounded-md flex items-center gap-1.5 cursor-pointer"
+                className="px-3.5 py-2 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-md flex items-center gap-1.5 cursor-pointer shadow-2xs active:scale-95"
+                title={lang === 'bn' ? 'একাউন্ট ও ক্লাউড লগআউট' : 'Logout Account'}
               >
                 <LogOut className="w-3.5 h-3.5" />
-                লগআউট
+                {lang === 'bn' ? 'লগআউট' : 'Logout'}
               </button>
             </>
           ) : (
@@ -256,7 +270,7 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
                 className="px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-md flex items-center gap-1.5 cursor-pointer"
               >
                 <LogIn className="w-3.5 h-3.5" />
-                ১-ক্লিকে দোকান ক্লাউড লগইন
+                {lang === 'bn' ? '১-ক্লিকে দোকান ক্লাউড লগইন' : '1-Click Cloud Login'}
               </button>
               <button
                 type="button"
@@ -264,7 +278,7 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
                 className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md flex items-center gap-1.5 cursor-pointer"
               >
                 <Cloud className="w-3.5 h-3.5" />
-                ইমেইল / পাসওয়ার্ড লগইন অপশন
+                {lang === 'bn' ? 'ইমেইল / পাসওয়ার্ড লগইন' : 'Email / Password Login'}
               </button>
             </>
           )}
