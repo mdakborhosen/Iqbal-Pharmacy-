@@ -64,6 +64,7 @@ import { InventoryView } from './components/InventoryView';
 import { MedicineCompareView } from './components/MedicineCompareView';
 import { PosAndDailyAccountsView } from './components/PosAndDailyAccountsView';
 import { StaffAndShopView } from './components/StaffAndShopView';
+import { PublicHealthcarePortal } from './components/PublicHealthcarePortal';
 import {
   BD_COMPANIES_DIRECTORY,
   BD_GENERICS_DIRECTORY,
@@ -486,6 +487,52 @@ export default function App() {
         localStorage.getItem(STORAGE_KEYS.TRANSACTIONS) !== null ||
         localStorage.getItem(STORAGE_KEYS.CUSTOM_MEDS) !== null)
   );
+  // Public Portal vs Admin / POS Mode Route Detection
+  // Visiting https://iqbal-pharmacy.pages.dev/ (root /) displays public health portal only
+  // Visiting https://iqbal-pharmacy.pages.dev/admin (or /admin, /#admin, ?admin=true) displays the complete Pharmacy & Dental Management System
+  const [isAdminRoute, setIsAdminRoute] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const p = (window.location.pathname || '').toLowerCase();
+    const h = (window.location.hash || '').toLowerCase();
+    const s = (window.location.search || '').toLowerCase();
+    return (
+      p.startsWith('/admin') ||
+      p.startsWith('/pos') ||
+      p.startsWith('/dashboard') ||
+      h.includes('admin') ||
+      h.includes('pos') ||
+      h.includes('dashboard') ||
+      s.includes('admin') ||
+      s.includes('pos')
+    );
+  });
+
+  useEffect(() => {
+    const handleRouteSync = () => {
+      if (typeof window === 'undefined') return;
+      const p = (window.location.pathname || '').toLowerCase();
+      const h = (window.location.hash || '').toLowerCase();
+      const s = (window.location.search || '').toLowerCase();
+      setIsAdminRoute(
+        p.startsWith('/admin') ||
+        p.startsWith('/pos') ||
+        p.startsWith('/dashboard') ||
+        h.includes('admin') ||
+        h.includes('pos') ||
+        h.includes('dashboard') ||
+        s.includes('admin') ||
+        s.includes('pos')
+      );
+    };
+
+    window.addEventListener('popstate', handleRouteSync);
+    window.addEventListener('hashchange', handleRouteSync);
+    return () => {
+      window.removeEventListener('popstate', handleRouteSync);
+      window.removeEventListener('hashchange', handleRouteSync);
+    };
+  }, []);
+
   const serverHydratedRef = useRef<boolean>(false);
   const [serverHydrated, setServerHydrated] = useState<boolean>(false);
   const backupFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1794,11 +1841,17 @@ export default function App() {
   };
 
   // Shop Cloud Login & Logout Handlers
-  const handleQuickCloudLogin = async (prefillEmail?: string, prefillPass?: string) => {
+  const handleQuickCloudLogin = async (prefillEmail?: unknown, prefillPass?: unknown) => {
     setCloudLoginLoading(true);
     try {
-      const emailToUse = prefillEmail || cloudLoginEmail.trim() || '01812-358839';
-      const passToUse = prefillPass || cloudLoginPassword.trim() || 'IqbalPharmacy#2026';
+      const emailToUse =
+        typeof prefillEmail === 'string' && prefillEmail.trim()
+          ? prefillEmail.trim()
+          : (typeof cloudLoginEmail === 'string' && cloudLoginEmail.trim() ? cloudLoginEmail.trim() : '01812-358839');
+      const passToUse =
+        typeof prefillPass === 'string' && prefillPass.trim()
+          ? prefillPass.trim()
+          : (typeof cloudLoginPassword === 'string' && cloudLoginPassword.trim() ? cloudLoginPassword.trim() : 'IqbalPharmacy#2026');
       await handleUniversalLoginSubmit(undefined, emailToUse, passToUse);
     } finally {
       setCloudLoginLoading(false);
@@ -1807,15 +1860,26 @@ export default function App() {
 
   const handleUniversalLoginSubmit = async (
     e?: React.FormEvent,
-    overrideIdent?: string,
-    overridePass?: string
+    overrideIdent?: unknown,
+    overridePass?: unknown
   ) => {
-    if (e) e.preventDefault();
+    if (e && typeof (e as any).preventDefault === 'function') {
+      (e as any).preventDefault();
+    }
     setLoginErrorMessage(null);
     setCloudLoginLoading(true);
     try {
-      const cleanIdent = (overrideIdent !== undefined ? overrideIdent : cloudLoginEmail).trim();
-      const cleanPass = (overridePass !== undefined ? overridePass : cloudLoginPassword).trim();
+      const rawIdent =
+        typeof overrideIdent === 'string'
+          ? overrideIdent
+          : (typeof cloudLoginEmail === 'string' ? cloudLoginEmail : '');
+      const rawPass =
+        typeof overridePass === 'string'
+          ? overridePass
+          : (typeof cloudLoginPassword === 'string' ? cloudLoginPassword : '');
+
+      const cleanIdent = rawIdent.trim();
+      const cleanPass = rawPass.trim();
       const isEmail = cleanIdent.includes('@');
       const cleanDigits = cleanIdent.replace(/[^0-9]/g, '');
 
@@ -5153,6 +5217,12 @@ export default function App() {
   ], [lang]);
 
   const activeNavObj = navItems.find((n) => n.id === activeSection) || navItems[0];
+
+  // If visiting root URL (/) or public domain, show only the Public Healthcare Portal for Iqbal Pharmacy and Dental Care 1 & 2
+  // Admin dashboard and POS software is accessed only via /admin
+  if (!isAdminRoute) {
+    return <PublicHealthcarePortal />;
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">

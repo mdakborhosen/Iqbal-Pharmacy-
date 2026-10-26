@@ -266,7 +266,7 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
             <>
               <button
                 type="button"
-                onClick={onQuickCloudLogin}
+                onClick={() => onQuickCloudLogin()}
                 className="px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-md flex items-center gap-1.5 cursor-pointer"
               >
                 <LogIn className="w-3.5 h-3.5" />
