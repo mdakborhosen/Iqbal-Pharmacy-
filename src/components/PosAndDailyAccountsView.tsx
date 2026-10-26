@@ -242,34 +242,12 @@ const InvoiceVerificationQrCode: React.FC<{
   const [qrUrl, setQrUrl] = useState<string>('');
 
   useEffect(() => {
-    // If showPrice is false (দাম ছাড়া মেমো), absolutely NO price, payment, or taka info is encoded in QR code
-    const payload = JSON.stringify(
-      showPrice
-        ? {
-            invoiceNo: invoice.invoiceNo,
-            date: invoice.dateStr || getTodayDateStr(),
-            customer: invoice.partyName || 'Walk-in',
-            phone: invoice.partyPhone || 'N/A',
-            totalAmount: invoice.grandTotal ?? invoice.amount ?? 0,
-            paidAmount: invoice.paidAmount,
-            dueAmount: invoice.dueAmount,
-            status: invoice.dueAmount > 0 ? 'DUE' : 'PAID',
-            method: invoice.paymentMethod,
-            chamber: invoice.selectedSeal || 'iqbal_pharmacy',
-            app: 'Iqbal Pharmacy & Dental Care',
-          }
-        : {
-            invoiceNo: invoice.invoiceNo,
-            memoType: 'ডেলিভারি চালান (দাম ছাড়া মেমো)',
-            date: invoice.dateStr || getTodayDateStr(),
-            customer: invoice.partyName || 'Walk-in',
-            phone: invoice.partyPhone || 'N/A',
-            chamber: invoice.selectedSeal || 'iqbal_pharmacy',
-            app: 'Iqbal Pharmacy & Dental Care',
-          }
-    );
+    // User requested: Scanning the QR code opens https://iqbal-pharmacy.pages.dev/ with verify param
+    // Any mobile camera will immediately detect this as an official invoice verification link
+    const invoiceCode = encodeURIComponent(invoice.invoiceNo || 'INV-01');
+    const qrTargetUrl = `https://iqbal-pharmacy.pages.dev/?verify=${invoiceCode}`;
 
-    QRCode.toDataURL(payload, {
+    QRCode.toDataURL(qrTargetUrl, {
       margin: 1,
       width: isDense ? 76 : 90,
       errorCorrectionLevel: 'M',

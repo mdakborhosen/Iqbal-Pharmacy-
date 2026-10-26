@@ -223,8 +223,12 @@ export async function signInShopCloudAccount(params?: {
       }
     }
 
-    // 1. Check Firestore registered_users across devices and IPs with highest priority
-    const cleanPhoneDigits = phone.replace(/[^0-9]/g, '');
+    // 1. Detect whether the login input is a phone number or an email
+    const inputDigits = rawInput.replace(/[^0-9]/g, '');
+    const isInputPhone = !rawInput.includes('@') && inputDigits.length >= 8;
+    const phoneParamDigits = (params?.phone || '').replace(/[^0-9]/g, '');
+    const targetPhoneDigits = isInputPhone ? inputDigits : phoneParamDigits;
+
     let matchedCloudUser: {
       ownerId?: string;
       email?: string;
@@ -234,30 +238,66 @@ export async function signInShopCloudAccount(params?: {
       password?: string;
     } | null = null;
 
-    if (cleanPhoneDigits) {
-      try {
-        let snap = await getDoc(doc(db, 'registered_users', `user_phone_${cleanPhoneDigits}`));
-        if (!snap.exists() && cleanPhoneDigits.length > 10) {
-          const bd11 = '0' + cleanPhoneDigits.slice(-10);
-          snap = await getDoc(doc(db, 'registered_users', `user_phone_${bd11}`));
+    // Check by Phone (supporting 11-digit 01..., 13-digit 8801..., or 10-digit 1...)
+    if (targetPhoneDigits) {
+      const candidates = [
+        targetPhoneDigits,
+        targetPhoneDigits.length >= 10 ? '0' + targetPhoneDigits.slice(-10) : '',
+        targetPhoneDigits.length >= 10 ? '880' + targetPhoneDigits.slice(-10) : '',
+        targetPhoneDigits.length >= 10 ? targetPhoneDigits.slice(-10) : '',
+      ].filter(Boolean);
+
+      for (const pCandidate of candidates) {
+        if (matchedCloudUser) break;
+        try {
+          const snap = await getDoc(doc(db, 'registered_users', `user_phone_${pCandidate}`));
+          if (snap.exists()) {
+            matchedCloudUser = snap.data() as typeof matchedCloudUser;
+            break;
+          }
+        } catch (cloudErr) {
+          // ignore network or offline error
         }
-        if (snap.exists()) {
-          matchedCloudUser = snap.data() as typeof matchedCloudUser;
-        }
-      } catch (cloudErr) {
-        console.warn('Check cloud registered_users by phone:', cloudErr);
       }
     }
 
-    if (!matchedCloudUser && cleanEmail) {
+    // Check by Email
+    if (!matchedCloudUser && cleanEmail && !isInputPhone) {
       try {
         const safeEmailKey = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_');
-        const snap = await getDoc(doc(db, 'registered_users', `user_email_${safeEmailKey}`));
+        let snap = await getDoc(doc(db, 'registered_users', `user_email_${safeEmailKey}`));
+        if (!snap.exists()) {
+          snap = await getDoc(doc(db, 'registered_users', cleanEmail));
+        }
         if (snap.exists()) {
           matchedCloudUser = snap.data() as typeof matchedCloudUser;
         }
       } catch (cloudErr) {
-        console.warn('Check cloud registered_users by email:', cloudErr);
+        // ignore
+      }
+    }
+
+    // Check in shared shop profile for registered owner accounts
+    if (!matchedCloudUser) {
+      try {
+        const shopSnap = await getDoc(doc(db, 'shops', 'shared_iqbal_pharmacy_v1'));
+        if (shopSnap.exists()) {
+          const sData = shopSnap.data() as Record<string, unknown>;
+          const ownersMap = (sData?.registeredOwners || {}) as Record<string, typeof matchedCloudUser>;
+          for (const key of Object.keys(ownersMap)) {
+            const acc = ownersMap[key];
+            if (!acc) continue;
+            const accPhoneDigits = (acc.phone || '').replace(/[^0-9]/g, '');
+            const matchPhone = targetPhoneDigits && (accPhoneDigits.endsWith(targetPhoneDigits.slice(-10)) || targetPhoneDigits.endsWith(accPhoneDigits.slice(-10)));
+            const matchEmail = acc.email && acc.email.toLowerCase() === cleanEmail.toLowerCase();
+            if (matchPhone || matchEmail) {
+              matchedCloudUser = acc;
+              break;
+            }
+          }
+        }
+      } catch {
+        // ignore
       }
     }
 
@@ -272,15 +312,15 @@ export async function signInShopCloudAccount(params?: {
       }
     }
 
-    // 2. Check offline local registered owners
+    // 2. Check offline local registered owners (fallback when device was offline)
     if (!firebaseUid) {
       try {
         const raw = localStorage.getItem('pharma_local_registered_owners');
         const localAccounts = raw ? JSON.parse(raw) : {};
         const found =
           localAccounts[cleanEmail] ||
-          (cleanPhoneDigits ? localAccounts[cleanPhoneDigits] : null) ||
-          (cleanPhoneDigits.length > 10 ? localAccounts['0' + cleanPhoneDigits.slice(-10)] : null) ||
+          (targetPhoneDigits ? localAccounts[targetPhoneDigits] : null) ||
+          (targetPhoneDigits.length >= 10 ? localAccounts['0' + targetPhoneDigits.slice(-10)] : null) ||
           (phone ? localAccounts[phone] : null);
 
         if (found) {
@@ -299,18 +339,22 @@ export async function signInShopCloudAccount(params?: {
       }
     }
 
-    // 3. Check Default Master Owner Credentials
+    // 3. Check Default Master Owner Credentials (works unconditionally on ANY device, IP or browser)
     if (!firebaseUid) {
       const isDefaultOwnerIdent =
         cleanEmail === 'mhakbor2001@gmail.com' ||
-        cleanPhoneDigits === '01812358839' ||
-        cleanPhoneDigits === '8801812358839';
+        targetPhoneDigits.endsWith('01812358839') ||
+        targetPhoneDigits.endsWith('1812358839') ||
+        rawInput === '01812-358839';
       if (isDefaultOwnerIdent && cleanPassword === 'IqbalPharmacy#2026') {
         firebaseUid = 'shop_owner_default';
+        displayName = 'ইকবাল মাহমুদ (Owner)';
+        shopName = 'ইকবাল ফার্মেসী';
+        resolvedEmail = 'mhakbor2001@gmail.com';
       }
     }
 
-    // 4. Try Firebase Auth with email & password
+    // 4. Try Firebase Auth with email & password if online and not rejected
     if (!firebaseUid) {
       try {
         const cred = await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
@@ -449,6 +493,33 @@ export async function registerNewShopOwnerAccount(params: {
     }
     const safeEmailKey = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_');
     await setDoc(doc(db, 'registered_users', `user_email_${safeEmailKey}`), userDocData);
+    if (cleanEmail) {
+      await setDoc(doc(db, 'registered_users', cleanEmail), userDocData).catch(() => {});
+    }
+
+    // Also persist into shared shop document so all browsers & devices discover this owner immediately
+    try {
+      const ownerKey = cleanPhoneDigits ? `p_${cleanPhoneDigits}` : `e_${safeEmailKey}`;
+      await setDoc(
+        doc(db, 'shops', 'shared_iqbal_pharmacy_v1'),
+        {
+          registeredOwners: {
+            [ownerKey]: {
+              ownerId: firebaseUid || 'shared_iqbal_pharmacy',
+              email: cleanEmail,
+              phone,
+              ownerName: displayName,
+              shopName,
+              password: cleanPassword,
+            },
+          },
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+    } catch {
+      // ignore merge error
+    }
   } catch (cloudErr) {
     console.warn('Failed to save to registered_users collection:', cloudErr);
   }
