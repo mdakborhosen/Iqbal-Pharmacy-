@@ -5221,7 +5221,12 @@ export default function App() {
   // If visiting root URL (/) or public domain, show only the Public Healthcare Portal for Iqbal Pharmacy and Dental Care 1 & 2
   // Admin dashboard and POS software is accessed only via /admin
   if (!isAdminRoute) {
-    return <PublicHealthcarePortal />;
+    return (
+      <PublicHealthcarePortal
+        transactions={transactions}
+        shopProfile={shopProfile}
+      />
+    );
   }
 
   return (

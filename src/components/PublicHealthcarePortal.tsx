@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Phone,
   MapPin,
@@ -20,8 +20,11 @@ import {
   Layers,
   Search,
   ExternalLink,
-  Check
+  Check,
+  QrCode
 } from 'lucide-react';
+import { Transaction, ShopProfile } from '../types';
+import { InvoiceVerificationModal } from './InvoiceVerificationModal';
 
 export interface DentalService {
   id: string;
@@ -343,11 +346,40 @@ export const DENTAL_SERVICES_DATA: DentalService[] = [
   }
 ];
 
-export const PublicHealthcarePortal: React.FC = () => {
+interface PublicHealthcarePortalProps {
+  transactions?: Transaction[];
+  shopProfile?: ShopProfile;
+}
+
+export const PublicHealthcarePortal: React.FC<PublicHealthcarePortalProps> = ({
+  transactions = [],
+  shopProfile,
+}) => {
+  const [isVerifyModalOpen, setIsVerifyModalOpen] = useState(false);
+  const [verifyInitialQuery, setVerifyInitialQuery] = useState('');
   const [selectedService, setSelectedService] = useState<DentalService | null>(null);
   const [showFlyerModal, setShowFlyerModal] = useState(false);
   const [patientName, setPatientName] = useState('');
   const [patientPhone, setPatientPhone] = useState('');
+
+  // Check URL params for QR verification code or patient ID (e.g. ?verify=INV-261020-187)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const verifyParam =
+        urlParams.get('verify') ||
+        urlParams.get('invoice') ||
+        urlParams.get('patientId') ||
+        urlParams.get('q');
+      if (verifyParam && verifyParam.trim()) {
+        setVerifyInitialQuery(verifyParam.trim());
+        setIsVerifyModalOpen(true);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
   const [targetFacility, setTargetFacility] = useState('ইকবাল ডেন্টাল কেয়ার-১');
   const [patientMessage, setPatientMessage] = useState('');
   const [inquirySent, setInquirySent] = useState(false);
@@ -498,6 +530,17 @@ export const PublicHealthcarePortal: React.FC = () => {
           </nav>
 
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setVerifyInitialQuery('');
+                setIsVerifyModalOpen(true);
+              }}
+              className="px-3 py-2 text-xs font-bold text-teal-900 bg-teal-50 hover:bg-teal-100 border border-teal-300 rounded-lg shadow-2xs flex items-center gap-1.5 transition-all cursor-pointer"
+            >
+              <QrCode className="w-3.5 h-3.5 text-teal-700" />
+              <span>ইনভয়েস যাচাই করুন</span>
+            </button>
             <a
               href="tel:01812358839"
               className="px-4 py-2.5 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-lg shadow-sm flex items-center gap-1.5 transition-all"
@@ -517,9 +560,11 @@ export const PublicHealthcarePortal: React.FC = () => {
               <ShieldCheck className="w-4 h-4 text-teal-700" />
               <span>ডিজিডিএ অনুমোদিত মডেল ফার্মেসী ও অভিজ্ঞ ডেন্টিস্টের বিশেষায়িত ক্লিনিক</span>
             </div>
+
             <h2 className="text-2xl sm:text-4xl font-black text-slate-900 tracking-tight leading-tight">
               আপনার ও আপনার পরিবারের জন্য বিশ্বস্ত ফার্মেসী ও বিশেষায়িত ডেন্টাল কেয়ার
             </h2>
+
             <p className="text-xs sm:text-base text-slate-600 leading-relaxed max-w-2xl mx-auto">
               ইকবাল হেলথকেয়ারে আমরা দিচ্ছি শতভাগ আসল ও সংরক্ষিত জীবনরক্ষাকারী ঔষধ, অভিজ্ঞ গ্র্যাজুয়েট দন্ত চিকিৎসকের চিকিৎসা এবং স্বাস্থ্যসেবার অনন্য নিশ্চয়তা।
             </p>
@@ -543,6 +588,17 @@ export const PublicHealthcarePortal: React.FC = () => {
               >
                 ইকবাল ডেন্টাল কেয়ার-২
               </a>
+              <button
+                type="button"
+                onClick={() => {
+                  setVerifyInitialQuery('');
+                  setIsVerifyModalOpen(true);
+                }}
+                className="px-5 py-2.5 text-xs font-bold rounded-lg bg-teal-950 hover:bg-slate-900 text-white shadow-sm transition-all flex items-center gap-1.5 cursor-pointer border border-teal-800"
+              >
+                <QrCode className="w-3.5 h-3.5 text-emerald-400" />
+                <span>ইনভয়েস যাচাই করুন</span>
+              </button>
               <a
                 href="#dental-services"
                 className="px-5 py-2.5 text-xs font-bold rounded-lg bg-emerald-700 text-white hover:bg-emerald-800 shadow-sm transition-all flex items-center gap-1.5"
@@ -1408,6 +1464,14 @@ export const PublicHealthcarePortal: React.FC = () => {
           </div>
         </div>
       </footer>
+
+      {/* Invoice Verification & Patient History Modal */}
+      <InvoiceVerificationModal
+        isOpen={isVerifyModalOpen}
+        onClose={() => setIsVerifyModalOpen(false)}
+        initialQuery={verifyInitialQuery}
+        transactions={transactions}
+      />
     </div>
   );
 };

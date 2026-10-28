@@ -55,6 +55,7 @@ import {
   Transaction,
 } from '../types';
 import { SaleStepWizard } from './SaleStepWizard';
+import { MonthlyReportModal } from './MonthlyReportModal';
 
 interface PosAndDailyAccountsViewProps {
   catalog: MedicineCatalogItem[];
@@ -322,9 +323,11 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
   onEditTransaction,
   onPayInvoiceDue,
   onDeleteTransaction,
+  shopProfile,
   onSaveMedicineCatalog,
   onOpenScanner,
 }) => {
+  const [isMonthlyReportOpen, setIsMonthlyReportOpen] = useState(false);
   const invoiceBuilderRef = useRef<HTMLDivElement | null>(null);
   const saleSearchInputRef = useRef<HTMLInputElement | null>(null);
   const saleCustomNameInputRef = useRef<HTMLInputElement | null>(null);
@@ -2638,6 +2641,17 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
+            {/* Monthly Sales & Purchase Printable PDF Report Trigger */}
+            <button
+              type="button"
+              onClick={() => setIsMonthlyReportOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-teal-900 bg-teal-50 hover:bg-teal-100 border border-teal-300 rounded-md shadow-2xs transition-all active:scale-95 cursor-pointer shrink-0"
+              title="মাসিক বিক্রয় ও ক্রয় অডিট রিপোর্ট এবং মুদ্রণযোগ্য PDF তৈরি করুন"
+            >
+              <FileText className="w-3.5 h-3.5 text-teal-700" />
+              <span>📊 মাসিক রিপোর্ট (PDF / প্রিন্ট)</span>
+            </button>
+
             <input
               type="date"
               value={dateFilter}
@@ -2659,7 +2673,6 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
             >
               {showAllDates ? 'সকল তারিখ দেখানো হচ্ছে' : 'সকল তারিখের হিসাব'}
             </button>
-
             <select
               value={staffRoleFilter}
               onChange={(e) => setStaffRoleFilter(e.target.value as 'ALL' | 'owner' | 'staff')}
@@ -4061,6 +4074,15 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
           </div>
         </div>
       )}
+
+      {/* Monthly Sales & Purchase Printable PDF Report Modal */}
+      <MonthlyReportModal
+        isOpen={isMonthlyReportOpen}
+        onClose={() => setIsMonthlyReportOpen(false)}
+        transactions={transactions}
+        inventory={inventory}
+        shopProfile={shopProfile}
+      />
     </div>
   );
 };
