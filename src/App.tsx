@@ -1174,30 +1174,33 @@ export default function App() {
             if (prev && prev.uid === saved.uid && prev.email === saved.email) return prev;
             return saved;
           });
-        } else {
+        } else if (!currUser.isAnonymous && currUser.email) {
           const synced: ShopCloudSession = {
             uid: currUser.uid,
-            email: currUser.email || 'mhakbor2001@gmail.com',
-            displayName: currUser.displayName || 'ইকবাল মাহমুদ (Owner)',
+            email: currUser.email,
+            displayName: currUser.displayName || 'দোকান ব্যবহারকারী',
             shopName: shopProfileRef.current.shopName || 'ইকবাল ফার্মেসী',
             phone: shopProfileRef.current.phone || '01812-358839',
             operatorRole: 'owner',
             loggedInAt: Date.now(),
           };
           saveShopCloudSession(synced);
-          setCloudSession((prev) => {
-            if (prev && prev.uid === synced.uid && prev.email === synced.email) return prev;
-            return synced;
-          });
+          setCloudSession(synced);
+        } else {
+          // Anonymous or unauthenticated: keep logged out
+          setCloudSession(null);
         }
       } else {
         const saved = loadSavedShopCloudSession();
-        setCloudSession((prev) => {
-          if (prev && saved && prev.uid === saved.uid && prev.email === saved.email) return prev;
-          return saved;
-        });
-        // Automatically establish Firebase Auth connection so all devices & IPs can sync live data
-        signInAnonymously(auth).catch(() => {});
+        if (saved && !isExplicitlyLoggedOut) {
+          setCloudSession(saved);
+        } else {
+          setCloudSession(null);
+        }
+        // Connect anonymously in background if permitted so Firestore rules allow reading data
+        if (!isExplicitlyLoggedOut) {
+          signInAnonymously(auth).catch(() => {});
+        }
       }
       setAuthReady(true);
     });
@@ -1228,7 +1231,7 @@ export default function App() {
 
   // Shared Pharmacy Real-Time Firestore Listeners (accessible across ALL devices, IPs & Cloudflare Pages)
   useEffect(() => {
-    if (!serverHydrated) return;
+    if (!authReady) return;
     const effectiveOwnerId = user?.uid || cloudSession?.uid || SHARED_PHARMACY_OWNER_ID;
 
     const deduplicateCloudDocs = <T extends { id: string; updatedAtMs?: number }>(
@@ -2385,8 +2388,8 @@ export default function App() {
     }
     showToast(
       lang === 'bn'
-        ? 'দোকান ক্লাউড ও একাউন্ট থেকে সফলভাবে লগআউট সম্পন্ন হয়েছে।'
-        : 'Successfully logged out from account and cloud.'
+        ? 'ফায়ারস্টোর ডাটাবেস ও একাউন্ট থেকে সফলভাবে লগআউট সম্পন্ন হয়েছে।'
+        : 'Successfully logged out from Firestore account.'
     );
   };
 
@@ -5411,19 +5414,19 @@ export default function App() {
                 type="button"
                 onClick={() => setShowCloudLoginModal(true)}
                 className="hidden xl:flex px-2.5 py-1.5 text-xs font-semibold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-md transition-colors items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
-                title={lang === 'bn' ? 'দোকান ক্লাউড একাউন্ট বিস্তারিত' : 'Shop Cloud Account Details'}
+                title={lang === 'bn' ? 'ফায়ারস্টোর একাউন্ট বিস্তারিত' : 'Firestore Account Details'}
               >
                 <Cloud className="w-3.5 h-3.5 text-teal-700" />
-                <span>{lang === 'bn' ? `ক্লাউড সক্রিয় (${cloudSession?.email?.split('@')[0] || 'মালিক'})` : `Cloud Active (${cloudSession?.email?.split('@')[0] || 'Owner'})`}</span>
+                <span>{lang === 'bn' ? `ফায়ারস্টোর সক্রিয় (${cloudSession?.email?.split('@')[0] || cloudSession?.phone || 'Owner'})` : `Firestore Active (${cloudSession?.email?.split('@')[0] || cloudSession?.phone || 'Owner'})`}</span>
               </button>
               <button
                 type="button"
                 onClick={handleCloudLogout}
-                className="px-2 sm:px-3 py-1.5 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-all flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer shadow-2xs active:scale-95"
-                title={lang === 'bn' ? 'একাউন্ট ও ক্লাউড লগআউট করুন' : 'Log out from Account and Cloud'}
+                className="px-2.5 sm:px-3 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer shadow-xs active:scale-95"
+                title={lang === 'bn' ? 'ফায়ারস্টোর ও একাউন্ট লগআউট করুন' : 'Log out from Account and Firestore'}
                 aria-label="Logout"
               >
-                <LogOut className="w-3.5 h-3.5 text-rose-600" />
+                <LogOut className="w-3.5 h-3.5 text-white" />
                 <span>{lang === 'bn' ? 'লগআউট' : 'Logout'}</span>
               </button>
             </div>
@@ -5431,8 +5434,8 @@ export default function App() {
             <button
               type="button"
               onClick={() => setShowCloudLoginModal(true)}
-              className="px-2.5 sm:px-3.5 py-1.5 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer shadow-2xs active:scale-95"
-              title={lang === 'bn' ? 'দোকান ক্লাউড লগইন' : 'Shop Cloud Login'}
+              className="px-2.5 sm:px-3.5 py-1.5 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer shadow-xs active:scale-95"
+              title={lang === 'bn' ? 'ফায়ারস্টোর ডাটাবেস লগইন' : 'Firestore Database Login'}
             >
               <LogIn className="w-3.5 h-3.5" />
               <span>{lang === 'bn' ? 'লগইন' : 'Login'}</span>
@@ -5445,42 +5448,49 @@ export default function App() {
       {mobileMenuOpen && (
         <div className="lg:hidden bg-white border-b border-slate-200 px-4 py-3 space-y-2 no-print shadow-md">
           {/* Mobile drawer quick actions: Language & Logout */}
-          <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-            <button
-              type="button"
-              onClick={() => {
-                toggleLanguage();
-                setMobileMenuOpen(false);
-              }}
-              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300 bg-slate-50 text-slate-800 flex items-center gap-1.5"
-            >
-              <span>{lang === 'bn' ? '🌐 Switch to English' : '🌐 বাংলায় পরিবর্তন করুন'}</span>
-            </button>
-
-            {isCloudLoggedIn ? (
+          <div className="flex flex-col gap-2 pb-2 border-b border-slate-100">
+            <div className="flex items-center justify-between">
               <button
                 type="button"
                 onClick={() => {
-                  handleCloudLogout();
+                  toggleLanguage();
                   setMobileMenuOpen(false);
                 }}
-                className="px-3 py-1.5 text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg flex items-center gap-1.5"
+                className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300 bg-slate-50 text-slate-800 flex items-center gap-1.5"
               >
-                <LogOut className="w-3.5 h-3.5 text-rose-600" />
-                <span>{lang === 'bn' ? 'লগআউট' : 'Logout'}</span>
+                <span>{lang === 'bn' ? '🌐 Switch to English' : '🌐 বাংলায় পরিবর্তন করুন'}</span>
               </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  setShowCloudLoginModal(true);
-                  setMobileMenuOpen(false);
-                }}
-                className="px-3 py-1.5 text-xs font-bold text-white bg-slate-900 rounded-lg flex items-center gap-1.5"
-              >
-                <LogIn className="w-3.5 h-3.5" />
-                <span>{lang === 'bn' ? 'লগইন' : 'Login'}</span>
-              </button>
+              {isCloudLoggedIn ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleCloudLogout();
+                    setMobileMenuOpen(false);
+                  }}
+                  className="px-3 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg flex items-center gap-1.5 shadow-xs"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>{lang === 'bn' ? 'লগআউট' : 'Logout'}</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCloudLoginModal(true);
+                    setMobileMenuOpen(false);
+                  }}
+                  className="px-3 py-1.5 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-lg flex items-center gap-1.5 shadow-xs"
+                >
+                  <LogIn className="w-3.5 h-3.5" />
+                  <span>{lang === 'bn' ? 'লগইন' : 'Login'}</span>
+                </button>
+              )}
+            </div>
+            {isCloudLoggedIn && cloudSession && (
+              <div className="text-[11px] font-medium text-teal-800 bg-teal-50 px-2.5 py-1 rounded border border-teal-200 flex items-center justify-between">
+                <span>👤 {cloudSession.displayName}</span>
+                <span className="font-mono">{cloudSession.phone || cloudSession.email}</span>
+              </div>
             )}
           </div>
 
@@ -5949,6 +5959,7 @@ export default function App() {
                     type="button"
                     onClick={async () => {
                       await handleCloudLogout();
+                      setShowCloudLoginModal(false);
                     }}
                     className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white font-semibold rounded text-xs cursor-pointer flex items-center gap-1"
                   >

@@ -204,30 +204,35 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Shop Cloud Login & Real-Time Multi-Device Sync Control Bar */}
-      <div className="bg-white border border-slate-200 rounded-lg p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+      {/* Firestore Database Login & Real-Time Multi-Device Sync Control Bar */}
+      <div className="bg-white border border-slate-200 rounded-lg p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xs">
         <div className="space-y-1">
           <div className="flex items-center gap-2 text-xs font-semibold text-teal-700">
             <Cloud className="w-4 h-4" />
-            <span>{lang === 'bn' ? 'দোকান ক্লাউড লগইন ও মাল্টি-ডিভাইস অটো সিঙ্ক' : 'Shop Cloud Login & Multi-Device Live Sync'}</span>
+            <span>{lang === 'bn' ? 'ফায়ারস্টোর ডাটাবেস ও রিয়েল-টাইম মাল্টি-ডিভাইস সিঙ্ক' : 'Firestore Live Database & Multi-Device Sync'}</span>
+            {!isCloudLoggedIn && (
+              <span className="px-2 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-800 rounded-full border border-amber-200">
+                {lang === 'bn' ? 'লগইন নেই (গেস্ট মোড)' : 'Logged Out (Guest Mode)'}
+              </span>
+            )}
           </div>
           <h2 className="text-base font-bold text-slate-900">
             {isCloudLoggedIn
               ? (lang === 'bn'
-                  ? `ক্লাউড একাউন্ট সক্রিয়: ${cloudSession?.shopName || shopProfile.shopName} (${cloudSession?.email || 'mhakbor2001@gmail.com'})`
-                  : `Cloud Account Active: ${cloudSession?.shopName || shopProfile.shopName} (${cloudSession?.email || 'mhakbor2001@gmail.com'})`)
+                  ? `ফায়ারস্টোর ডাটাবেস সক্রিয়: ${cloudSession?.shopName || shopProfile.shopName} (${cloudSession?.email || cloudSession?.phone || 'Owner'})`
+                  : `Firestore Connected: ${cloudSession?.shopName || shopProfile.shopName} (${cloudSession?.email || cloudSession?.phone || 'Owner'})`)
               : (lang === 'bn'
-                  ? 'দোকান ক্লাউড একাউন্টে লগইন করে সকল ডিভাইসে রিয়েল-টাইম ডেটা সিঙ্ক চালু করুন'
-                  : 'Log in to Shop Cloud Account to enable real-time multi-device sync')}
+                  ? 'ফায়ারস্টোর ডাটাবেসে লগইন করে সকল ডিভাইসে রিয়েল-টাইম ডেটা সিঙ্ক ও ব্যাকআপ চালু করুন'
+                  : 'Log in to Firestore Database to enable real-time multi-device sync')}
           </h2>
           <p className="text-xs text-slate-600">
             {isCloudLoggedIn
               ? (lang === 'bn'
-                  ? `লগইনকৃত একাউন্ট: ${cloudSession?.displayName || 'দোকান মালিক'} · মোবাইল: ${cloudSession?.phone || shopProfile.phone} · সকল ইনভয়েস, স্টক ও কাস্টমার লেজার ক্লাউড ও লোকাল স্টোরেজে সুরক্ষিত।`
-                  : `Logged in as: ${cloudSession?.displayName || 'Shop Owner'} · Phone: ${cloudSession?.phone || shopProfile.phone} · All invoices, stock, and customer ledgers are backed up.`)
+                  ? `লগইনকৃত আইডি: ${cloudSession?.displayName || 'দোকান মালিক'} · মোবাইল: ${cloudSession?.phone || shopProfile.phone} · সকল ইনভয়েস, স্টক ও কাস্টমার লেজার সরাসরি ফায়ারস্টোরে লাইভ সিঙ্ক হচ্ছে।`
+                  : `Logged in as: ${cloudSession?.displayName || 'Shop Owner'} · Phone: ${cloudSession?.phone || shopProfile.phone} · All data is saved directly in Firebase Firestore.`)
               : (lang === 'bn'
-                  ? '১-ক্লিকে ইকবাল ফার্মেসী ক্লাউড লগইন অথবা ইমেইল/মোবাইল ও পাসওয়ার্ড দিয়ে দোকান ক্লাউডে লগইন করুন।'
-                  : '1-Click instant login or sign in with your email/mobile and password.')}
+                  ? '১-ক্লিকে ইকবাল ফার্মেসী ফায়ারস্টোর লগইন করুন অথবা মোবাইল/ইমেইল ও পাসওয়ার্ড দিয়ে লগইন করে সম্পূর্ণ এক্সেস নিন।'
+                  : '1-Click instant login or sign in with your email/mobile and password to connect Firestore.')}
           </p>
         </div>
 
@@ -243,7 +248,7 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
                 <RefreshCw className={`w-3.5 h-3.5 ${seedingCloud ? 'animate-spin' : ''}`} />
                 {seedingCloud
                   ? (lang === 'bn' ? 'সিঙ্ক হচ্ছে...' : 'Syncing...')
-                  : (lang === 'bn' ? 'এখনই ক্লাউডে সিঙ্ক করুন' : 'Sync to Cloud Now')}
+                  : (lang === 'bn' ? 'এখনই ফায়ারস্টোরে সিঙ্ক করুন' : 'Sync to Firestore Now')}
               </button>
               <button
                 type="button"
@@ -255,11 +260,11 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
               <button
                 type="button"
                 onClick={onCloudLogout}
-                className="px-3.5 py-2 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-md flex items-center gap-1.5 cursor-pointer shadow-2xs active:scale-95"
-                title={lang === 'bn' ? 'একাউন্ট ও ক্লাউড লগআউট' : 'Logout Account'}
+                className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-md flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95 transition-all"
+                title={lang === 'bn' ? 'ফায়ারস্টোর ও একাউন্ট থেকে সম্পূর্ণ লগআউট' : 'Logout Account from Firestore'}
               >
                 <LogOut className="w-3.5 h-3.5" />
-                {lang === 'bn' ? 'লগআউট' : 'Logout'}
+                {lang === 'bn' ? 'একাউন্ট লগআউট' : 'Logout'}
               </button>
             </>
           ) : (
@@ -267,15 +272,15 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
               <button
                 type="button"
                 onClick={() => onQuickCloudLogin()}
-                className="px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-md flex items-center gap-1.5 cursor-pointer"
+                className="px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-md flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
               >
                 <LogIn className="w-3.5 h-3.5" />
-                {lang === 'bn' ? '১-ক্লিকে দোকান ক্লাউড লগইন' : '1-Click Cloud Login'}
+                {lang === 'bn' ? '১-ক্লিকে ফায়ারস্টোর লগইন' : '1-Click Firestore Login'}
               </button>
               <button
                 type="button"
                 onClick={onOpenCloudLoginModal}
-                className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md flex items-center gap-1.5 cursor-pointer"
+                className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
               >
                 <Cloud className="w-3.5 h-3.5" />
                 {lang === 'bn' ? 'ইমেইল / পাসওয়ার্ড লগইন' : 'Email / Password Login'}
@@ -324,18 +329,21 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-200 text-sm">
                 {staffList.map((st) => {
-                  const isCurrent = st.id === activeStaff.id;
+                  const isCurrent = isCloudLoggedIn && st.id === activeStaff.id;
                   const displayName = st.roleTitle === 'owner' ? 'Owner' : st.name;
                   const isPwVisible = Boolean(visiblePasswords[st.id]);
                   const hasPw = Boolean(st.password);
                   const isCopied = copiedStaffId === st.id;
                   const isCurrentUserOwner =
-                    cloudSession?.operatorRole === 'owner' || activeStaff.roleTitle === 'owner';
-                  const canViewThisPassword = isCurrentUserOwner || st.id === activeStaff.id;
+                    Boolean(isCloudLoggedIn && (cloudSession?.operatorRole === 'owner' || activeStaff.roleTitle === 'owner'));
+                  const canViewThisPassword = Boolean(isCloudLoggedIn && (isCurrentUserOwner || st.id === activeStaff.id));
                   const isCurrentlyLoggedIn =
-                    isCurrent ||
-                    cloudSession?.staffId === st.id ||
-                    (cloudSession?.operatorRole === 'owner' && st.roleTitle === 'owner');
+                    Boolean(
+                      isCloudLoggedIn &&
+                        (cloudSession?.staffId === st.id ||
+                          (cloudSession?.operatorRole === 'owner' && st.roleTitle === 'owner') ||
+                          (st.id === activeStaff.id && activeStaff.id !== 'staff-offline-counter'))
+                    );
 
                   const perf = staffPerformance.get(displayName) || {
                     memoCount: 0,
