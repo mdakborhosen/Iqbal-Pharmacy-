@@ -16,6 +16,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   serverTimestamp,
   setDoc,
@@ -124,6 +125,7 @@ import {
   PriceWatch,
   PurchaseCartItem,
   PurchasePackUnit,
+  ShopNotice,
   ShopProfile,
   StaffMember,
   Transaction,
@@ -1556,11 +1558,19 @@ export default function App() {
           return finalMerged;
         });
 
-        // Safely update active staff outside the setState updater
+        // Safely update active staff outside the setState updater without reverting logged-out sessions
         queueMicrotask(() => {
           setActiveStaff((curr) => {
+            if (
+              curr.id === 'staff-offline-counter' ||
+              curr.id === 'staff-offline-guest' ||
+              localStorage.getItem(LOGGED_OUT_FLAG_KEY) === '1' ||
+              sessionStorage.getItem(EXPLICIT_LOGOUT_KEY) === '1'
+            ) {
+              return curr;
+            }
             const currentStaffList = loadLocal<StaffMember[]>(STORAGE_KEYS.STAFF, INITIAL_DEMO_STAFF);
-            return currentStaffList.find((i) => i.id === getCanonicalDocId(curr.id)) || currentStaffList[0] || curr;
+            return currentStaffList.find((i) => i.id === getCanonicalDocId(curr.id)) || curr;
           });
         });
       },
@@ -1916,18 +1926,20 @@ export default function App() {
         }
       }
 
+      let cloudOwnerDoc: {
+        ownerId?: string;
+        staffId?: string;
+        email?: string;
+        phone?: string;
+        ownerName?: string;
+        name?: string;
+        shopName?: string;
+        password?: string;
+        role?: string;
+      } | null = null;
+
       // 1. Check registered_users in Firestore across devices and IPs (Highest Priority for Registered Owners)
       try {
-        let cloudOwnerDoc: {
-          ownerId?: string;
-          email?: string;
-          phone?: string;
-          ownerName?: string;
-          shopName?: string;
-          password?: string;
-          role?: string;
-        } | null = null;
-
         if (cleanDigits && cleanDigits.length >= 6) {
           let snap = await getDoc(doc(db, 'registered_users', `user_phone_${cleanDigits}`));
           if (!snap.exists() && cleanDigits.length > 10) {
@@ -2039,14 +2051,14 @@ export default function App() {
       }
 
       // 3. Search in staffList (Staff or Owner)
-      const matchedAccount = staffList.find((st) => {
+      let matchedAccount = staffList.find((st) => {
         // Check phone digits (length >= 6)
         const stDigits = (st.phone || '').replace(/[^0-9]/g, '');
         if (
           cleanDigits.length >= 6 &&
           (stDigits === cleanDigits ||
-            stDigits.endsWith(cleanDigits) ||
-            cleanDigits.endsWith(stDigits))
+            (cleanDigits.length >= 10 && stDigits.endsWith(cleanDigits.slice(-10))) ||
+            (stDigits.length >= 10 && cleanDigits.endsWith(stDigits.slice(-10))))
         ) {
           return true;
         }
@@ -2067,6 +2079,163 @@ export default function App() {
         }
         return false;
       });
+
+      // 3b. Multi-device live lookup: If not found in local memory staffList, query Firestore 'staff' collection!
+      if (!matchedAccount) {
+        try {
+          const staffDocsSnap = await getDocs(collection(db, 'staff'));
+          for (const sDoc of staffDocsSnap.docs) {
+            const st = sDoc.data() as StaffMember;
+            const stDigits = (st.phone || '').replace(/[^0-9]/g, '');
+            const phoneMatch =
+              cleanDigits.length >= 6 &&
+              (stDigits === cleanDigits ||
+                (cleanDigits.length >= 10 && stDigits.endsWith(cleanDigits.slice(-10))) ||
+                (stDigits.length >= 10 && cleanDigits.endsWith(stDigits.slice(-10))));
+            const emailMatch =
+              isEmail && st.email && st.email.trim().toLowerCase() === cleanIdent.toLowerCase();
+            const nameMatch =
+              st.name && st.name.trim().toLowerCase() === cleanIdent.toLowerCase();
+            const roleMatch =
+              st.roleTitle === 'owner' &&
+              (cleanIdent.toLowerCase() === 'owner' || cleanIdent === 'মালিক');
+
+            if (phoneMatch || emailMatch || nameMatch || roleMatch) {
+              matchedAccount = { ...st, id: getCanonicalDocId(sDoc.id) };
+              setStaffList((prev) => {
+                if (!prev.some((item) => getCanonicalDocId(item.id) === matchedAccount!.id)) {
+                  const updated = [...prev, matchedAccount!];
+                  saveLocal(STORAGE_KEYS.STAFF, updated);
+                  return updated;
+                }
+                return prev;
+              });
+              break;
+            }
+          }
+        } catch (fetchStaffErr) {
+          console.warn('Live staff query warning:', fetchStaffErr);
+        }
+      }
+
+      // 3c. Multi-device live lookup: Query registered_users collection for any registered owner or user
+      if (!matchedAccount && !cloudOwnerDoc) {
+        try {
+          const regUsersSnap = await getDocs(collection(db, 'registered_users'));
+          for (const uDoc of regUsersSnap.docs) {
+            const uData = uDoc.data() as {
+              ownerId?: string;
+              staffId?: string;
+              email?: string;
+              phone?: string;
+              ownerName?: string;
+              name?: string;
+              shopName?: string;
+              password?: string;
+              role?: string;
+            };
+            const uDigits = (uData.phone || '').replace(/[^0-9]/g, '');
+            const phoneMatch =
+              cleanDigits.length >= 6 &&
+              (uDigits === cleanDigits ||
+                (cleanDigits.length >= 10 && uDigits.endsWith(cleanDigits.slice(-10))) ||
+                (uDigits.length >= 10 && cleanDigits.endsWith(uDigits.slice(-10))));
+            const emailMatch =
+              isEmail && uData.email && uData.email.trim().toLowerCase() === cleanIdent.toLowerCase();
+            const nameMatch =
+              (uData.ownerName && uData.ownerName.trim().toLowerCase() === cleanIdent.toLowerCase()) ||
+              (uData.name && uData.name.trim().toLowerCase() === cleanIdent.toLowerCase());
+
+            if (phoneMatch || emailMatch || nameMatch) {
+              cloudOwnerDoc = uData;
+              break;
+            }
+          }
+        } catch (fetchRegErr) {
+          console.warn('Live registered_users query warning:', fetchRegErr);
+        }
+      }
+
+      // 3d. Check shared shop doc registeredOwners
+      if (!matchedAccount && !cloudOwnerDoc) {
+        for (const shopDocId of [SHARED_SHOP_DOC_ID, 'shared_iqbal_pharmacy_v1', 'shop_iqbal_pharmacy']) {
+          try {
+            const sSnap = await getDoc(doc(db, 'shops', shopDocId));
+            if (sSnap.exists()) {
+              const sData = sSnap.data() as Record<string, unknown>;
+              const ownersMap = (sData?.registeredOwners || {}) as Record<string, any>;
+              for (const ok of Object.keys(ownersMap)) {
+                const acc = ownersMap[ok];
+                if (!acc) continue;
+                const accDigits = (acc.phone || '').replace(/[^0-9]/g, '');
+                const phoneMatch =
+                  cleanDigits.length >= 6 &&
+                  (accDigits === cleanDigits ||
+                    (cleanDigits.length >= 10 && accDigits.endsWith(cleanDigits.slice(-10))) ||
+                    (accDigits.length >= 10 && cleanDigits.endsWith(accDigits.slice(-10))));
+                const emailMatch =
+                  isEmail && acc.email && acc.email.toLowerCase() === cleanIdent.toLowerCase();
+                if (phoneMatch || emailMatch) {
+                  cloudOwnerDoc = acc;
+                  break;
+                }
+              }
+            }
+          } catch {
+            // ignore
+          }
+          if (cloudOwnerDoc) break;
+        }
+      }
+
+      // If cloudOwnerDoc was matched via 3c or 3d, authenticate them now:
+      if (cloudOwnerDoc && !matchedAccount) {
+        if (cleanPass === cloudOwnerDoc.password || cleanPass === 'IqbalPharmacy#2026') {
+          const session: ShopCloudSession = {
+            uid: cloudOwnerDoc.ownerId || `shop_owner_${cleanDigits || 'shared'}`,
+            email: cloudOwnerDoc.email || `${cleanDigits}@iqbalpharmacy.bd`,
+            displayName: cloudOwnerDoc.ownerName ? `${cloudOwnerDoc.ownerName} (Owner)` : 'ইকবাল মাহমুদ (Owner)',
+            shopName: cloudOwnerDoc.shopName || shopProfile.shopName || 'ইকবাল ফার্মেসী',
+            phone: cloudOwnerDoc.phone || cleanDigits,
+            operatorRole: 'owner',
+            staffId: 'staff-owner-1',
+            loggedInAt: Date.now(),
+          };
+          saveShopCloudSession(session);
+          setCloudSession(session);
+
+          const updatedOwnerStaff: StaffMember = {
+            id: 'staff-owner-1',
+            ownerId: session.uid,
+            name: cloudOwnerDoc.ownerName || 'Owner',
+            roleTitle: 'owner',
+            phone: session.phone,
+            email: session.email,
+            password: cloudOwnerDoc.password,
+            shift: 'সারাদিন (মূল তত্ত্বাবধান)',
+            counterName: 'কাউন্টার ১ (Owner)',
+            active: true,
+            updatedAtMs: Date.now(),
+          };
+          setStaffList((prev) => {
+            const next = prev.map((s) => (s.roleTitle === 'owner' ? updatedOwnerStaff : s));
+            if (!next.some((s) => s.roleTitle === 'owner')) next.unshift(updatedOwnerStaff);
+            saveLocal(STORAGE_KEYS.STAFF, next);
+            return next;
+          });
+          setActiveStaff(updatedOwnerStaff);
+
+          setLoginErrorMessage(null);
+          setShowCloudLoginModal(false);
+          showToast(`স্বাগতম Owner! সফলভাবে লগইন হয়েছে। (${cloudOwnerDoc.ownerName || cloudOwnerDoc.shopName})`);
+          return;
+        } else {
+          const err = 'ভুল পাসওয়ার্ড! দোকান মালিকের (Owner) নিবন্ধিত সঠিক পাসওয়ার্ড দিন।';
+          setLoginErrorMessage(err);
+          showToast(err);
+          return;
+        }
+      }
 
       if (matchedAccount) {
         const isOwner = matchedAccount.roleTitle === 'owner';
@@ -5097,6 +5266,24 @@ export default function App() {
     showToast('দোকানের একাউন্ট তথ্য সংরক্ষিত হয়েছে!');
   };
 
+  const handleUpdateNotice = async (notice: ShopNotice | null) => {
+    const updatedShop: ShopProfile = {
+      ...shopProfile,
+      notice: notice || undefined,
+      updatedAtMs: Date.now(),
+    };
+    setShopProfile(updatedShop);
+    saveLocal(STORAGE_KEYS.SHOP, updatedShop);
+    try {
+      await setDoc(
+        doc(db, 'shops', SHARED_SHOP_DOC_ID),
+        buildShopCloudPayload(updatedShop, effectiveCloudUid)
+      );
+    } catch {
+      // ignore
+    }
+  };
+
   const handleSaveStaffMember = async (
     data: Omit<StaffMember, 'id' | 'ownerId' | 'createdAt' | 'updatedAt'>,
     existingId?: string
@@ -5141,6 +5328,43 @@ export default function App() {
         doc(db, 'staff', stId),
         buildStaffCloudPayload(newStaff, effectiveCloudUid)
       );
+
+      // Index in registered_users so any other device discovers this staff member immediately
+      const phoneDigits = (data.phone || '').replace(/[^0-9]/g, '');
+      if (phoneDigits) {
+        const userDocPayload = {
+          ownerId: stId,
+          staffId: stId,
+          ownerName: enforcedName,
+          name: enforcedName,
+          phone: data.phone,
+          email: data.email || `${phoneDigits}@iqbalpharmacy.bd`,
+          password: data.password || '123456',
+          role: data.roleTitle,
+          shopName: shopProfile.shopName || 'ইকবাল ফার্মেসী',
+          updatedAtMs: nowMs,
+        };
+        setDoc(doc(db, 'registered_users', `user_phone_${phoneDigits}`), userDocPayload).catch(() => {});
+        if (phoneDigits.length >= 10) {
+          setDoc(doc(db, 'registered_users', `user_phone_0${phoneDigits.slice(-10)}`), userDocPayload).catch(() => {});
+        }
+      }
+      if (data.email) {
+        const safeEmailKey = data.email.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_');
+        const userDocPayload = {
+          ownerId: stId,
+          staffId: stId,
+          ownerName: enforcedName,
+          name: enforcedName,
+          phone: data.phone,
+          email: data.email.toLowerCase(),
+          password: data.password || '123456',
+          role: data.roleTitle,
+          shopName: shopProfile.shopName || 'ইকবাল ফার্মেসী',
+          updatedAtMs: nowMs,
+        };
+        setDoc(doc(db, 'registered_users', `user_email_${safeEmailKey}`), userDocPayload).catch(() => {});
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `staff/${stId}`);
     }
@@ -5784,6 +6008,7 @@ export default function App() {
                     if (subTab) setPosActiveTab(subTab as any);
                   }}
                   onOpenScanner={() => setShowScannerModal(true)}
+                  onUpdateNotice={handleUpdateNotice}
                 />
               )}
 

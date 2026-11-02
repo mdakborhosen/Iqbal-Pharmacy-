@@ -122,11 +122,12 @@ export async function pushServerPharmacyState(
   unmarkedIds: string[] = []
 ): Promise<PharmacyPersistentState | null> {
   try {
+    const payloadState = { ...state, cloudSession: null };
     const res = await fetch('/api/pharmacy-state', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        state,
+        state: payloadState,
         mode,
         unmarkedIds,
       }),

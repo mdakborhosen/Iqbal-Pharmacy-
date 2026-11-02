@@ -15,7 +15,15 @@ import {
   Package,
   ShoppingCart,
   ArrowRight,
+  Megaphone,
+  Trash2,
+  Check,
+  Send,
+  Eye,
+  Sparkles,
 } from 'lucide-react';
+import { doc, onSnapshot, setDoc, deleteDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 import {
   Customer,
   InventoryItem,
@@ -23,6 +31,7 @@ import {
   CartItem,
   PurchaseCartItem,
   ShopProfile,
+  ShopNotice,
   Transaction,
 } from '../types';
 
@@ -36,6 +45,7 @@ interface DashboardViewProps {
   shopProfile?: ShopProfile;
   onNavigate: (section: any, subTab?: string) => void;
   onOpenScanner?: () => void;
+  onUpdateNotice?: (notice: ShopNotice | null) => Promise<void> | void;
 }
 
 export const toBengaliDigits = (num: number | string): string => {
@@ -65,9 +75,115 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   transactions,
   inventory,
   customers,
+  shopProfile,
   onNavigate,
   onOpenScanner,
+  onUpdateNotice,
 }) => {
+  // Live Scrolling Notice State for https://iqbal-pharmacy.pages.dev/
+  const [noticeText, setNoticeText] = useState(shopProfile?.notice?.text || '');
+  const [noticeActive, setNoticeActive] = useState<boolean>(shopProfile?.notice?.isActive !== false);
+  const [savingNotice, setSavingNotice] = useState(false);
+  const [noticeFeedback, setNoticeFeedback] = useState<string | null>(null);
+  const [showNoticeManager, setShowNoticeManager] = useState(true);
+
+  // Sync notice with Firestore live announcement document
+  useEffect(() => {
+    try {
+      const unsub = onSnapshot(
+        doc(db, 'shop_notices', 'live_announcement'),
+        (snap) => {
+          if (snap.exists()) {
+            const data = snap.data() as ShopNotice;
+            setNoticeText(data.text || '');
+            setNoticeActive(data.isActive !== false);
+          } else if (shopProfile?.notice) {
+            setNoticeText(shopProfile.notice.text || '');
+            setNoticeActive(shopProfile.notice.isActive !== false);
+          }
+        },
+        () => {
+          if (shopProfile?.notice) {
+            setNoticeText(shopProfile.notice.text || '');
+            setNoticeActive(shopProfile.notice.isActive !== false);
+          }
+        }
+      );
+      return () => unsub();
+    } catch {
+      // ignore
+    }
+  }, [shopProfile?.notice]);
+
+  const handleSaveNotice = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!noticeText.trim()) {
+      setNoticeFeedback('দয়া করে নোটিশের লেখা লিখুন!');
+      setTimeout(() => setNoticeFeedback(null), 3000);
+      return;
+    }
+    setSavingNotice(true);
+    const updatedNotice: ShopNotice = {
+      text: noticeText.trim(),
+      isActive: noticeActive,
+      updatedAtMs: Date.now(),
+      updatedBy: 'Admin',
+    };
+    try {
+      await setDoc(doc(db, 'shop_notices', 'live_announcement'), updatedNotice);
+      if (onUpdateNotice) {
+        await onUpdateNotice(updatedNotice);
+      }
+      setNoticeFeedback(
+        noticeActive
+          ? 'নোটিশটি সফলভাবে সংরক্ষিত ও ওয়েবসাইটে লাইভ প্রকাশ করা হয়েছে!'
+          : 'নোটিশ সংরক্ষিত হয়েছে (বর্তমানে প্রদর্শনী বন্ধ রাখা হয়েছে)'
+      );
+    } catch {
+      if (onUpdateNotice) {
+        await onUpdateNotice(updatedNotice);
+      }
+      setNoticeFeedback('নোটিশ সংরক্ষিত হয়েছে!');
+    } finally {
+      setSavingNotice(false);
+      setTimeout(() => setNoticeFeedback(null), 4000);
+    }
+  };
+
+  const handleDeleteNotice = async () => {
+    setSavingNotice(true);
+    const emptyNotice: ShopNotice = {
+      text: '',
+      isActive: false,
+      updatedAtMs: Date.now(),
+      updatedBy: 'Admin',
+    };
+    try {
+      await setDoc(doc(db, 'shop_notices', 'live_announcement'), emptyNotice);
+      try {
+        await deleteDoc(doc(db, 'shop_notices', 'live_announcement'));
+      } catch {
+        // ignore
+      }
+      if (onUpdateNotice) {
+        await onUpdateNotice(null);
+      }
+      setNoticeText('');
+      setNoticeActive(false);
+      setNoticeFeedback('নোটিশটি বাদ দেওয়া হয়েছে! ওয়েবসাইটে এখন আর নোটিশ দেখাবে না।');
+    } catch {
+      if (onUpdateNotice) {
+        await onUpdateNotice(null);
+      }
+      setNoticeText('');
+      setNoticeActive(false);
+      setNoticeFeedback('নোটিশ বাদ দেওয়া হয়েছে');
+    } finally {
+      setSavingNotice(false);
+      setTimeout(() => setNoticeFeedback(null), 4000);
+    }
+  };
+
   // Timeframe filter for sales graph
   const [timeFilter, setTimeFilter] = useState<'7d' | '30d' | 'month'>('7d');
 
@@ -419,6 +535,169 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* SECTION: লাইভ স্ক্রলিং নোটিশ বোর্ড (Live Scrolling Notice Manager for Website) */}
+      <div className="bg-white border border-amber-300/80 rounded-2xl p-4 sm:p-5 shadow-xs transition-all">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center shadow-2xs shrink-0">
+              <Megaphone className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm sm:text-base font-extrabold text-slate-900 tracking-tight">
+                  লাইভ স্ক্রলিং নোটিশ বোর্ড (Public Portal Notice)
+                </h2>
+                {noticeActive && noticeText.trim() ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                    ওয়েবসাইটে লাইভ সচল
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-slate-100 text-slate-600 border border-slate-300">
+                    বন্ধ / নোটিশ নেই
+                  </span>
+                )}
+              </div>
+              <p className="text-[11.5px] text-slate-500 mt-0.5">
+                এখানে নোটিশ তৈরি করলে তা <strong>https://iqbal-pharmacy.pages.dev/</strong> এর হেডিংয়ের নিচে ১ লাইনে ডান থেকে বামে স্ক্রল করবে।
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowNoticeManager(!showNoticeManager)}
+              className="px-2.5 py-1 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg cursor-pointer border border-slate-200 transition-colors"
+            >
+              {showNoticeManager ? 'লুকান ▲' : 'নোটিশ পরিচালনা খুলুন ▼'}
+            </button>
+          </div>
+        </div>
+
+        {noticeFeedback && (
+          <div className="mt-3 p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold rounded-xl flex items-center gap-2 animate-fadeIn">
+            <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{noticeFeedback}</span>
+          </div>
+        )}
+
+        {showNoticeManager && (
+          <form onSubmit={handleSaveNotice} className="mt-3.5 space-y-3.5">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                নোটিশের মূল বার্তা / ঘোষণা (Notice Content):
+              </label>
+              <textarea
+                rows={2}
+                value={noticeText}
+                onChange={(e) => setNoticeText(e.target.value)}
+                placeholder="যেমন: ঈদের ছুটিতে ইকবাল ফার্মেসী ও ডেন্টাল কেয়ার সার্বক্ষণিক খোলা থাকবে। জরুরি প্রয়োজনে কল করুন: ০১৮১২-৩৫৮৮৩৯।"
+                className="w-full px-3 py-2 text-xs sm:text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 bg-slate-50/50 leading-relaxed font-sans"
+              />
+            </div>
+
+            {/* Quick Suggestion Presets */}
+            <div>
+              <span className="text-[11px] font-bold text-slate-500 block mb-1.5 flex items-center gap-1">
+                <Sparkles className="w-3 h-3 text-amber-500" />
+                <span>তাত্ক্ষণিক নোটিশ সাজেশন (ক্লিক করে বসান):</span>
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  '২৪ ঘণ্টা আসল জীবনরক্ষাকারী ওষুধ ও জরুরি সেবা চালু রয়েছে।',
+                  'প্রতি শুক্রবার সকাল ৯টা থেকে রাত ১০টা পর্যন্ত অভিজ্ঞ ডেন্টিস্ট উপস্থিত থাকেন।',
+                  'রমজান উপলক্ষে আমাদের এখানে বিনামূল্যে ডায়াবেটিস ও রক্তচাপ পরীক্ষা চলছে।',
+                  'ডিজিটাল ইনভয়েস যাচাই ও আসল ওষুধের গ্যারান্টি দিচ্ছে ইকবাল হেলথকেয়ার।',
+                ].map((preset, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      setNoticeText(preset);
+                      setNoticeActive(true);
+                    }}
+                    className="text-[11px] font-medium px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-900 border border-slate-200 transition-colors cursor-pointer text-left"
+                  >
+                    + {preset}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Toggle switch for active status */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-100">
+              <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={noticeActive}
+                  onChange={(e) => setNoticeActive(e.target.checked)}
+                  className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-slate-300 cursor-pointer"
+                />
+                <span className="text-xs font-bold text-slate-800">
+                  ওয়েবসাইটে ১ লাইনে স্ক্রলিং প্রদর্শন সক্রিয় রাখুন (Active)
+                </span>
+              </label>
+
+              <div className="flex items-center gap-2">
+                {noticeText.trim() && (
+                  <button
+                    type="button"
+                    onClick={handleDeleteNotice}
+                    disabled={savingNotice}
+                    className="px-3 py-1.5 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-300 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                    title="নোটিশটি বাদ দিন যাতে ওয়েবসাইটে আর না দেখায়"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>নোটিশ বাদ দিন / মুছুন</span>
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  disabled={savingNotice}
+                  className="px-4 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 active:scale-95 rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>{savingNotice ? 'সংরক্ষণ হচ্ছে...' : 'নোটিশ সংরক্ষণ ও প্রকাশ করুন'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Real-time Marquee Preview */}
+            {noticeText.trim() && (
+              <div className="pt-2">
+                <div className="flex items-center justify-between text-[11px] font-bold text-slate-600 mb-1">
+                  <span className="flex items-center gap-1">
+                    <Eye className="w-3.5 h-3.5 text-teal-600" />
+                    <span>ওয়েবসাইটে কেমন দেখাবে (লাইভ প্রিভিউ):</span>
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-normal">
+                    {noticeActive ? 'ডান দিক থেকে বাম দিকে স্ক্রল হচ্ছে' : '⚠️ প্রদর্শন বন্ধ রাখা হয়েছে'}
+                  </span>
+                </div>
+                <div className="bg-amber-400 text-slate-950 border border-amber-500 rounded-xl py-2 px-3 shadow-2xs overflow-hidden select-none">
+                  <div className="flex items-center gap-3">
+                    <div className="shrink-0 flex items-center gap-1 bg-slate-950 text-amber-300 px-2 py-0.5 rounded-full text-[10.5px] font-black shadow-xs">
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span>
+                      <Bell className="w-3 h-3 text-amber-300" />
+                      <span>জরুরী নোটিশ</span>
+                    </div>
+                    <div className="overflow-hidden flex-1 relative whitespace-nowrap">
+                      <div
+                        className="animate-marquee-rtl font-bold text-xs sm:text-sm text-slate-950 inline-block"
+                        title="কার্সার রাখলে স্ক্রল সাময়িক থামবে"
+                      >
+                        {noticeText}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </form>
+        )}
+      </div>
 
       {/* SECTION 1: আজকের সংক্ষিপ্ত বিবরণ (Today's Quick Summary - 4 Smart Metric Cards) */}
       <section className="space-y-2.5">

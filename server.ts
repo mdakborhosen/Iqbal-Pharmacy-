@@ -113,10 +113,12 @@ async function startServer() {
       res.json({ hasData: false, updatedAtMs: 0, state: null });
       return;
     }
+    // Never leak client-side authentication sessions via shared server state
+    const cleanState = { ...record.state, cloudSession: null };
     res.json({
       hasData: true,
       updatedAtMs: record.updatedAtMs || Date.now(),
-      state: record.state,
+      state: cleanState,
     });
   });
 
@@ -153,10 +155,7 @@ async function startServer() {
           deletedIds: cleanDeleted,
           posCart: Array.isArray(incomingState.posCart) ? incomingState.posCart : [],
           purchaseCart: Array.isArray(incomingState.purchaseCart) ? incomingState.purchaseCart : [],
-          cloudSession:
-            incomingState.cloudSession !== undefined
-              ? incomingState.cloudSession
-              : existingRecord?.state?.cloudSession || null,
+          cloudSession: null,
           updatedAtMs: nowMs,
         };
 
@@ -238,10 +237,7 @@ async function startServer() {
           : Array.isArray(serverState.purchaseCart)
           ? serverState.purchaseCart
           : [],
-        cloudSession:
-          incomingState.cloudSession !== undefined
-            ? incomingState.cloudSession
-            : serverState.cloudSession || null,
+        cloudSession: null,
         updatedAtMs: nowMs,
       };
 

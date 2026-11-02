@@ -21,9 +21,13 @@ import {
   Search,
   ExternalLink,
   Check,
-  QrCode
+  QrCode,
+  Bell,
+  Megaphone
 } from 'lucide-react';
-import { Transaction, ShopProfile } from '../types';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../firebase';
+import { Transaction, ShopProfile, ShopNotice } from '../types';
 import { InvoiceVerificationModal } from './InvoiceVerificationModal';
 
 export interface DentalService {
@@ -384,6 +388,31 @@ export const PublicHealthcarePortal: React.FC<PublicHealthcarePortalProps> = ({
   const [patientMessage, setPatientMessage] = useState('');
   const [inquirySent, setInquirySent] = useState(false);
 
+  // Live Scrolling Notice State (Realtime Firestore listener with fallback to shopProfile.notice)
+  const [liveNotice, setLiveNotice] = useState<ShopNotice | null>(() => shopProfile?.notice || null);
+
+  useEffect(() => {
+    try {
+      const unsub = onSnapshot(
+        doc(db, 'shop_notices', 'live_announcement'),
+        (snap) => {
+          if (snap.exists()) {
+            const data = snap.data() as ShopNotice;
+            setLiveNotice(data);
+          } else {
+            setLiveNotice(shopProfile?.notice || null);
+          }
+        },
+        () => {
+          setLiveNotice(shopProfile?.notice || null);
+        }
+      );
+      return () => unsub();
+    } catch {
+      setLiveNotice(shopProfile?.notice || null);
+    }
+  }, [shopProfile?.notice]);
+
   const handleInquirySubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!patientName.trim() || !patientPhone.trim()) return;
@@ -551,6 +580,31 @@ export const PublicHealthcarePortal: React.FC<PublicHealthcarePortalProps> = ({
           </div>
         </div>
       </header>
+
+      {/* 1-Line Right-to-Left Scrolling Marquee Notice (হেডিংয়ের নিচে ১ লাইনে ডান দিক থেকে বাম দিকে স্ক্রল করবে) */}
+      {liveNotice && liveNotice.isActive && liveNotice.text && liveNotice.text.trim() && (
+        <div
+          role="marquee"
+          aria-live="polite"
+          className="bg-amber-400 text-slate-950 border-b border-amber-500 py-2 sm:py-2.5 px-3 sm:px-4 shadow-xs overflow-hidden select-none"
+        >
+          <div className="max-w-6xl mx-auto flex items-center gap-3">
+            <div className="shrink-0 flex items-center gap-1.5 bg-slate-950 text-amber-300 px-2.5 py-0.5 rounded-full text-[11px] sm:text-xs font-black shadow-xs tracking-wide">
+              <span className="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
+              <Bell className="w-3.5 h-3.5 text-amber-300" />
+              <span>জরুরী নোটিশ</span>
+            </div>
+            <div className="overflow-hidden flex-1 relative whitespace-nowrap">
+              <div
+                className="animate-marquee-rtl font-bold text-xs sm:text-sm tracking-wide text-slate-950 inline-block"
+                title="কার্সার রাখলে স্ক্রল সাময়িক থামবে"
+              >
+                {liveNotice.text}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Hero Section */}
       <section className="bg-gradient-to-b from-teal-50/70 via-white to-slate-50 py-10 sm:py-14 border-b border-slate-200">

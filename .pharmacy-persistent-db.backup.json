@@ -1185,15 +1185,7 @@
         "packCount": 1
       }
     ],
-    "cloudSession": {
-      "uid": "shop_iqbal_01711458920_iqbalpharmacy_bd",
-      "email": "01711458920@iqbalpharmacy.bd",
-      "displayName": "ইকবাল মাহমুদ (Owner)",
-      "shopName": "ইকবাল ফার্মেসী",
-      "phone": "01711-458920",
-      "operatorRole": "owner",
-      "loggedInAt": 1792652268372
-    },
+    "cloudSession": null,
     "updatedAtMs": 1792652269351
   }
 }

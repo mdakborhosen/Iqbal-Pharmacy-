@@ -277,27 +277,30 @@ export async function signInShopCloudAccount(params?: {
       }
     }
 
-    // Check in shared shop profile for registered owner accounts
+    // Check in shared shop profile for registered owner accounts (both doc IDs)
     if (!matchedCloudUser) {
-      try {
-        const shopSnap = await getDoc(doc(db, 'shops', 'shared_iqbal_pharmacy_v1'));
-        if (shopSnap.exists()) {
-          const sData = shopSnap.data() as Record<string, unknown>;
-          const ownersMap = (sData?.registeredOwners || {}) as Record<string, typeof matchedCloudUser>;
-          for (const key of Object.keys(ownersMap)) {
-            const acc = ownersMap[key];
-            if (!acc) continue;
-            const accPhoneDigits = (acc.phone || '').replace(/[^0-9]/g, '');
-            const matchPhone = targetPhoneDigits && (accPhoneDigits.endsWith(targetPhoneDigits.slice(-10)) || targetPhoneDigits.endsWith(accPhoneDigits.slice(-10)));
-            const matchEmail = acc.email && acc.email.toLowerCase() === cleanEmail.toLowerCase();
-            if (matchPhone || matchEmail) {
-              matchedCloudUser = acc;
-              break;
+      for (const shopDocId of ['shared_iqbal_pharmacy_v1', 'shop_iqbal_pharmacy']) {
+        try {
+          const shopSnap = await getDoc(doc(db, 'shops', shopDocId));
+          if (shopSnap.exists()) {
+            const sData = shopSnap.data() as Record<string, unknown>;
+            const ownersMap = (sData?.registeredOwners || {}) as Record<string, typeof matchedCloudUser>;
+            for (const key of Object.keys(ownersMap)) {
+              const acc = ownersMap[key];
+              if (!acc) continue;
+              const accPhoneDigits = (acc.phone || '').replace(/[^0-9]/g, '');
+              const matchPhone = targetPhoneDigits && (accPhoneDigits.endsWith(targetPhoneDigits.slice(-10)) || targetPhoneDigits.endsWith(accPhoneDigits.slice(-10)));
+              const matchEmail = acc.email && acc.email.toLowerCase() === cleanEmail.toLowerCase();
+              if (matchPhone || matchEmail) {
+                matchedCloudUser = acc;
+                break;
+              }
             }
           }
+        } catch {
+          // ignore
         }
-      } catch {
-        // ignore
+        if (matchedCloudUser) break;
       }
     }
 
@@ -497,26 +500,24 @@ export async function registerNewShopOwnerAccount(params: {
       await setDoc(doc(db, 'registered_users', cleanEmail), userDocData).catch(() => {});
     }
 
-    // Also persist into shared shop document so all browsers & devices discover this owner immediately
+    // Also persist into shared shop documents so all browsers & devices discover this owner immediately
     try {
       const ownerKey = cleanPhoneDigits ? `p_${cleanPhoneDigits}` : `e_${safeEmailKey}`;
-      await setDoc(
-        doc(db, 'shops', 'shared_iqbal_pharmacy_v1'),
-        {
-          registeredOwners: {
-            [ownerKey]: {
-              ownerId: firebaseUid || 'shared_iqbal_pharmacy',
-              email: cleanEmail,
-              phone,
-              ownerName: displayName,
-              shopName,
-              password: cleanPassword,
-            },
+      const ownerPayload = {
+        registeredOwners: {
+          [ownerKey]: {
+            ownerId: firebaseUid || 'shared_iqbal_pharmacy',
+            email: cleanEmail,
+            phone,
+            ownerName: displayName,
+            shopName,
+            password: cleanPassword,
           },
-          updatedAt: serverTimestamp(),
         },
-        { merge: true }
-      );
+        updatedAt: serverTimestamp(),
+      };
+      await setDoc(doc(db, 'shops', 'shared_iqbal_pharmacy_v1'), ownerPayload, { merge: true });
+      await setDoc(doc(db, 'shops', 'shop_iqbal_pharmacy'), ownerPayload, { merge: true });
     } catch {
       // ignore merge error
     }

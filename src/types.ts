@@ -34,6 +34,13 @@ export interface MedicineCatalogItem {
   hasPriceOverride?: boolean;
 }
 
+export interface ShopNotice {
+  text: string;
+  isActive: boolean;
+  updatedAtMs?: number;
+  updatedBy?: string;
+}
+
 export interface ShopProfile {
   id: string;
   ownerId: string;
@@ -41,6 +48,7 @@ export interface ShopProfile {
   licenseNo: string;
   phone: string;
   address: string;
+  notice?: ShopNotice;
   createdAt?: unknown;
   updatedAt?: unknown;
   updatedAtMs?: number;

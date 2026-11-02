@@ -120,3 +120,24 @@
     break-after: avoid !important;
   }
 }
+
+@keyframes marquee-ltr-to-rtl {
+  0% {
+    transform: translateX(100%);
+  }
+  100% {
+    transform: translateX(-100%);
+  }
+}
+
+.animate-marquee-rtl {
+  display: inline-block;
+  white-space: nowrap;
+  animation: marquee-ltr-to-rtl 32s linear infinite;
+  will-change: transform;
+}
+
+.animate-marquee-rtl:hover {
+  animation-play-state: paused;
+}
+
