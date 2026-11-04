@@ -537,6 +537,11 @@ export const InvoiceVerificationModal: React.FC<InvoiceVerificationModalProps> =
                           </td>
                           <td className="py-1.5 px-2 text-center font-mono font-bold">
                             {item.qty}
+                            {item.bonusQty && item.bonusQty > 0 ? (
+                              <div className="text-[10px] text-amber-800 bg-amber-100/70 border border-amber-300 px-1 py-0.2 rounded font-bold whitespace-nowrap mt-0.5">
+                                +{item.bonusQty} বোনাস
+                              </div>
+                            ) : null}
                           </td>
                           <td className="py-1.5 px-2 text-right font-mono font-bold text-slate-900">
                             ৳{formatCleanMoney(item.lineTotal)}
@@ -580,6 +585,12 @@ export const InvoiceVerificationModal: React.FC<InvoiceVerificationModalProps> =
                       <span>সাবটোটাল:</span>
                       <span className="font-mono font-semibold">৳{formatCleanMoney(activeInvoice.subTotal)}</span>
                     </div>
+                    {activeInvoice.vat !== undefined && activeInvoice.vat > 0 && (
+                      <div className="flex justify-between text-amber-800 font-medium">
+                        <span>ভ্যাট / ট্যাক্স (VAT):</span>
+                        <span className="font-mono">+৳{formatCleanMoney(activeInvoice.vat)}</span>
+                      </div>
+                    )}
                     {activeInvoice.discount > 0 && (
                       <div className="flex justify-between text-rose-700 font-medium">
                         <span>বিশেষ ছাড়:</span>

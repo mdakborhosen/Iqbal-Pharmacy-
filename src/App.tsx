@@ -25,6 +25,7 @@ import {
 } from 'firebase/firestore';
 import {
   ArrowRightLeft,
+  Bell,
   BellRing,
   BarChart3,
   BookOpen,
@@ -3753,6 +3754,8 @@ export default function App() {
     supplierPhone: string;
     invoiceNo: string;
     discount: number;
+    vat?: number;
+    vatPercent?: number;
     paidAmount: number;
     paymentMethod: Transaction['paymentMethod'];
     defaultExpiryDate?: string;
@@ -3783,8 +3786,9 @@ export default function App() {
         return acc + lineCost;
       }, 0)
     );
-    const discount = sanitizeNumber(params.discount, 0, subTotal);
-    const grandTotal = sanitizeNumber(subTotal - discount);
+    const vatAmount = sanitizeNumber(params.vat || 0, 0);
+    const discount = sanitizeNumber(params.discount, 0, subTotal + vatAmount);
+    const grandTotal = sanitizeNumber(subTotal + vatAmount - discount);
     const paidAmount = sanitizeNumber(params.paidAmount, 0, grandTotal);
     const dueAmount = sanitizeNumber(grandTotal - paidAmount);
     const totalCount = purchaseCart.reduce((acc, i) => acc + i.qty, 0);
@@ -3831,6 +3835,8 @@ export default function App() {
       itemsSummary: summaryText,
       totalCount,
       subTotal,
+      vat: vatAmount,
+      vatPercent: params.vatPercent,
       discount,
       grandTotal,
       paidAmount,
@@ -3865,12 +3871,13 @@ export default function App() {
           strength: pItem.matchedMedicine?.strength || '',
           dosageForm: pItem.matchedMedicine?.dosageForm || pItem.formPrefix,
         });
-        if (matchedOld && pItem.qty > 0) {
+        const oldUnits = pItem.qty + (pItem.bonusQty || 0);
+        if (matchedOld && oldUnits > 0) {
           matchedOld.id = getCanonicalDocId(matchedOld.id);
           if (existingEditedTx.txType === 'purchase') {
-            matchedOld.stockQty = Math.max(0, matchedOld.stockQty - pItem.qty);
+            matchedOld.stockQty = Math.max(0, matchedOld.stockQty - oldUnits);
           } else {
-            matchedOld.stockQty = matchedOld.stockQty + pItem.qty;
+            matchedOld.stockQty = matchedOld.stockQty + oldUnits;
           }
           matchedOld.updatedAtMs = nowMs;
           changedInvMap.set(matchedOld.id, matchedOld);
@@ -3949,9 +3956,11 @@ export default function App() {
         dosageForm: purItem.dosageForm,
       });
 
+      const totalUnitsToAdd = purItem.qty + (purItem.bonusQty || 0);
+
       if (existingInv) {
         existingInv.id = getCanonicalDocId(existingInv.id);
-        existingInv.stockQty = existingInv.stockQty + purItem.qty;
+        existingInv.stockQty = existingInv.stockQty + totalUnitsToAdd;
         existingInv.purchasePrice = purItem.purchasePrice;
         existingInv.unitPrice = purItem.unitPrice;
         existingInv.stripPrice = Number((purItem.unitPrice * 10).toFixed(2));
@@ -3976,7 +3985,7 @@ export default function App() {
           purchasePrice: purItem.purchasePrice,
           unitPrice: purItem.unitPrice,
           stripPrice: Number((purItem.unitPrice * 10).toFixed(2)),
-          stockQty: purItem.qty,
+          stockQty: totalUnitsToAdd,
           minStockLevel: 30,
           batchNo: purItem.batchNo || `B-${nowMs.toString().slice(-4)}`,
           expiryDate: purItem.expiryDate || params.defaultExpiryDate || '2028-06-30',
@@ -4023,13 +4032,16 @@ export default function App() {
     setEditingInvoiceTx(null);
     const addedStockCount = purchaseCart
       .filter((i) => i.updateStock !== false)
-      .reduce((acc, i) => acc + i.qty, 0);
+      .reduce((acc, i) => acc + i.qty + (i.bonusQty || 0), 0);
+    const totalBonusCount = purchaseCart
+      .filter((i) => i.updateStock !== false)
+      .reduce((acc, i) => acc + (i.bonusQty || 0), 0);
     const nonStockPurCount = purchaseCart.filter((i) => i.updateStock === false).length;
     showToast(
       existingEditedTx
-        ? `ক্রয় ইনভয়েস (${invoiceNo}) সফলভাবে এডিট হয়েছে!`
+        ? `ক্রয় ইনভয়েস (${invoiceNo}) সফলভাবে এডিট হয়েছে${totalBonusCount > 0 ? ` (বোনাস +${totalBonusCount} পিস সহ)` : ''}!`
         : addedStockCount > 0
-        ? `ক্রয় ইনভয়েস (${invoiceNo}) তৈরি হয়েছে ও স্টকে +${addedStockCount} পিস যুক্ত হয়েছে${nonStockPurCount > 0 ? ` (${nonStockPurCount}টি নন-স্টক আইটেম)` : ''}!`
+        ? `ক্রয় ইনভয়েস (${invoiceNo}) তৈরি হয়েছে ও স্টকে +${addedStockCount} পিস যুক্ত হয়েছে${totalBonusCount > 0 ? ` (বোনাস +${totalBonusCount} পিস ফ্রি)` : ''}${nonStockPurCount > 0 ? ` (${nonStockPurCount}টি নন-স্টক আইটেম)` : ''}!`
         : `ক্রয় ইনভয়েস (${invoiceNo}) তৈরি হয়েছে (শুধু ইনভয়েস, স্টক অপরিবর্তিত)!`
     );
     return newTx;
@@ -5759,6 +5771,31 @@ export default function App() {
           )}
         </div>
       </header>
+
+      {/* 1-Line Right-to-Left Scrolling Marquee Notice (হেডিংয়ের নিচে ১ লাইনে ডান দিক থেকে বাম দিকে স্ক্রল করবে, ২ সেকেন্ড ব্যবধানে পুনরাবৃত্তি) */}
+      {shopProfile?.notice && shopProfile.notice.isActive && shopProfile.notice.text && shopProfile.notice.text.trim() && (
+        <div
+          role="marquee"
+          aria-live="polite"
+          className="bg-amber-400 text-slate-950 border-b border-amber-500 py-1.5 sm:py-2 px-3 sm:px-4 shadow-xs overflow-hidden select-none no-print"
+        >
+          <div className="max-w-7xl mx-auto flex items-center gap-2.5">
+            <div className="shrink-0 flex items-center gap-1.5 bg-slate-950 text-amber-300 px-2.5 py-0.5 rounded-full text-[11px] font-black shadow-xs tracking-wide">
+              <span className="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
+              <Bell className="w-3.5 h-3.5 text-amber-300" />
+              <span>জরুরী নোটিশ</span>
+            </div>
+            <div className="overflow-hidden flex-1 relative whitespace-nowrap">
+              <div
+                className="animate-marquee-rtl font-bold text-xs sm:text-sm tracking-wide text-slate-950 inline-block"
+                title="কার্সার রাখলে স্ক্রল সাময়িক থামবে"
+              >
+                {shopProfile.notice.text}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Mobile Drawer Navigation */}
       {mobileMenuOpen && (

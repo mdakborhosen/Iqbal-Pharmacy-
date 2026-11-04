@@ -138,6 +138,8 @@ export interface Transaction {
   totalCount: number;
   subTotal: number;
   discount: number;
+  vat?: number; // Optional VAT / Tax (ভ্যাট টাকা ৳)
+  vatPercent?: number; // Optional VAT % (ভ্যাট হার)
   grandTotal: number;
   amount?: number;
   category?: string;
@@ -271,5 +273,9 @@ export interface PurchaseCartItem {
   packDetailFormula?: string; // e.g. '১*১০', '১*১০*৫১', '১*৪৮'
   stripsPerBox?: number; // e.g. 51 পাতা per বক্স
   pcsPerStrip?: number; // e.g. 10 পিস per পাতা
+  bonusQty?: number; // বোনাস সংখ্যা (Bonus quantity in pieces)
+  vatPercent?: number; // ভ্যাট হার % (VAT %)
+  vatAmount?: number; // ভ্যাট টাকা ৳ (VAT Amount)
+  customLineTotal?: number; // কাস্টম লাইন মোট মূল্য ৳ (Custom Price / Line Total)
 }
 

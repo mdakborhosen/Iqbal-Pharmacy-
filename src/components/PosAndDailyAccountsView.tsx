@@ -154,6 +154,8 @@ interface PosAndDailyAccountsViewProps {
     supplierPhone: string;
     invoiceNo: string;
     discount: number;
+    vat?: number;
+    vatPercent?: number;
     paidAmount: number;
     paymentMethod: Transaction['paymentMethod'];
     dateStr?: string;
@@ -382,6 +384,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
   const [purInvoiceNo, setPurInvoiceNo] = useState(() => makeFreshPurchaseInvoiceNo());
   const [purDateStr, setPurDateStr] = useState<string>(() => getTodayDateStr());
   const [purDiscountStr, setPurDiscountStr] = useState('0');
+  const [purVatStr, setPurVatStr] = useState('');
   const [purPaidStr, setPurPaidStr] = useState('');
   const [purPaymentMethod, setPurPaymentMethod] = useState<Transaction['paymentMethod']>('cash');
   const [syncPurPricesToCatalog, setSyncPurPricesToCatalog] = useState<boolean>(false);
@@ -543,6 +546,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
       setSupplierCompany(cleanComp);
       setSupplierPhone(editingInvoiceTx.partyPhone);
       setPurDiscountStr(String(editingInvoiceTx.discount));
+      setPurVatStr(editingInvoiceTx.vat !== undefined && editingInvoiceTx.vat > 0 ? String(editingInvoiceTx.vat) : '');
       setPurPaidStr(String(editingInvoiceTx.paidAmount));
       setPurPaymentMethod(editingInvoiceTx.paymentMethod);
     }
@@ -678,8 +682,37 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     return purchaseCart.reduce((acc, item) => acc + item.qty, 0);
   }, [purchaseCart]);
 
+  const totalBonusUnits = useMemo(() => {
+    return purchaseCart.reduce((acc, item) => acc + (item.bonusQty || 0), 0);
+  }, [purchaseCart]);
+
+  const purchaseItemsVatTotal = useMemo(() => {
+    return purchaseCart.reduce((acc, item) => {
+      const effPackRate =
+        item.packRate && item.packRate > 0
+          ? item.packRate
+          : item.purchasePrice > 0
+          ? Number((item.purchasePrice * (item.unitsPerPack || 1)).toFixed(2))
+          : 0;
+      const count = Math.max(1, item.packCount || 1);
+      const isPack = Boolean(item.packUnit && item.packUnit !== 'piece' && effPackRate > 0);
+      const lineCost = isPack
+        ? Number((effPackRate * count).toFixed(2))
+        : Number((item.purchasePrice * item.qty).toFixed(2));
+      const itemVat =
+        item.vatAmount && item.vatAmount > 0
+          ? item.vatAmount
+          : item.vatPercent && item.vatPercent > 0
+          ? Number(((lineCost * item.vatPercent) / 100).toFixed(2))
+          : 0;
+      return acc + itemVat;
+    }, 0);
+  }, [purchaseCart]);
+
   const purDiscountVal = Math.max(0, parseFloat(purDiscountStr) || 0);
-  const purGrandTotal = Math.max(0, purchaseSubTotal - purDiscountVal);
+  const purVatVal =
+    purVatStr.trim() !== '' ? Math.max(0, parseFloat(purVatStr) || 0) : purchaseItemsVatTotal;
+  const purGrandTotal = Math.max(0, purchaseSubTotal + purVatVal - purDiscountVal);
 
   const effectivePurPaidAmount =
     purPaidStr.trim() === ''
@@ -777,6 +810,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     setPurInvoiceNo(makeFreshPurchaseInvoiceNo());
     setPurDateStr(getTodayDateStr());
     setPurDiscountStr('0');
+    setPurVatStr('');
     setPurPaidStr('');
     setPurPaymentMethod('cash');
   };
@@ -861,6 +895,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
         supplierPhone: supplierPhone.trim() || 'কোম্পানি ডিপো',
         invoiceNo: targetPurInvNo,
         discount: purDiscountVal,
+        vat: purVatVal,
         paidAmount: effectivePurPaidAmount,
         paymentMethod:
           purDueAmount > 0 && effectivePurPaidAmount === 0 ? 'due' : purPaymentMethod,
@@ -1712,8 +1747,12 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                       <th className="py-2.5 px-3 min-w-[360px] border-r border-indigo-800/60 leading-tight">
                         Pcs 0,1,2... / Strip 1*10, 1*28, 1*20, 1*15 (Manual/Product Database) / Box 1*10*10, 1*28*20,.. (Manual/Product Database)
                       </th>
+                      <th className="py-2.5 px-3 min-w-[125px] text-center border-r border-indigo-800/60 leading-tight">
+                        🎁 বোনাস (Bonus Free)<br />
+                        <span className="text-[9px] font-normal text-indigo-300">(স্টক বাড়বে, দাম ৳০)</span>
+                      </th>
                       <th className="py-2.5 px-3 min-w-[170px] text-center border-r border-indigo-800/60">
-                        Price (Manual / Database) (৳)
+                        Price & VAT (দর ও ভ্যাট ৳/%)
                       </th>
                       <th className="py-2.5 px-3 w-32 text-right border-r border-indigo-800/60">
                         লাইন মোট (৳)
@@ -1733,13 +1772,21 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                           : 0;
                       const effectivePackCount = Math.max(1, item.packCount || 1);
                       const isPackRow = Boolean(item.packUnit && item.packUnit !== 'piece' && effectivePackRate > 0);
-                      const lineTotal = isPackRow
+                      const itemLineCost = isPackRow
                         ? Number((effectivePackRate * effectivePackCount).toFixed(2))
                         : Number((item.purchasePrice * item.qty).toFixed(2));
+                      const itemVat =
+                        item.vatAmount && item.vatAmount > 0
+                          ? item.vatAmount
+                          : item.vatPercent && item.vatPercent > 0
+                          ? Number(((itemLineCost * item.vatPercent) / 100).toFixed(2))
+                          : 0;
+                      const lineTotal = Number((itemLineCost + itemVat).toFixed(2));
                       const rawCurrentStock = getStockForMed(item);
                       const oldPurQty = isEditingPurchase ? getOldEditedQtyForMed(item) : 0;
                       const currentStock = Math.max(0, rawCurrentStock - oldPurQty);
-                      const afterStock = currentStock + item.qty;
+                      const bonusPieces = item.bonusQty || 0;
+                      const afterStock = currentStock + item.qty + bonusPieces;
 
                       const isSolid = ['tablet', 'capsule', 'suppository', 'sachet'].includes(
                         (item.dosageForm || 'Tablet').toLowerCase()
@@ -2340,7 +2387,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                   />
                                   <span>
                                     {item.updateStock !== false
-                                      ? `✅ স্টকে যুক্ত হবে (স্টক বাড়বে: ${currentStock} → ${afterStock})`
+                                      ? `✅ স্টকে যুক্ত হবে (স্টক বাড়বে: ${currentStock} → ${afterStock} পিস${bonusPieces > 0 ? ` [বোনাস +${bonusPieces}]` : ''})`
                                       : '❌ স্টকে যুক্ত হবে না (শুধু ইনভয়েস বিল)'}
                                   </span>
                                 </label>
@@ -2348,7 +2395,31 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                             </div>
                           </td>
 
-                          {/* 4. Price Column (Manual / Database) - NO SELLING PRICE! */}
+                          {/* 4. Bonus Column (🎁 বোনাস / ফ্রি পিস — স্টক বাড়বে, দাম শূন্য) */}
+                          <td className="py-3 px-2 align-top border-r border-slate-200 text-center">
+                            <label className="block text-[10px] text-slate-500 font-semibold mb-0.5">
+                              বোনাস (ফ্রি পিস):
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={item.bonusQty !== undefined && item.bonusQty > 0 ? item.bonusQty : ''}
+                              onChange={(e) => {
+                                const nextBonus = Math.max(0, parseInt(e.target.value) || 0);
+                                onUpdatePurchaseCartItemDetails(item.medicineId, {
+                                  bonusQty: nextBonus,
+                                });
+                              }}
+                              placeholder="0"
+                              className="w-20 text-center py-1 px-1.5 text-xs font-mono font-bold tabular-nums border border-amber-300 rounded bg-amber-50/70 text-slate-900 focus:bg-white focus:border-amber-500 mx-auto"
+                            />
+                            <div className="text-[10px] font-mono text-emerald-700 font-semibold mt-1">
+                              {bonusPieces > 0 ? `+${bonusPieces} পিস ফ্রি` : '—'}
+                            </div>
+                          </td>
+
+                          {/* 5. Price Column (Manual / Database) - NO SELLING PRICE! */}
                           <td className="py-3 px-3 align-top border-r border-slate-200">
                             <div className="space-y-1.5 text-center">
                               {currentPackUnit !== 'piece' ? (
@@ -2416,6 +2487,25 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                   className="w-18 text-center py-0.5 px-1 text-[10px] font-mono border border-slate-200 rounded bg-white text-slate-700"
                                 />
                               </div>
+
+                              {/* Optional Line VAT % */}
+                              <div className="pt-1 flex items-center justify-center gap-1 border-t border-slate-100 mt-1">
+                                <span className="text-[10px] text-slate-500">ভ্যাট (%):</span>
+                                <input
+                                  type="number"
+                                  step="0.5"
+                                  min="0"
+                                  value={item.vatPercent !== undefined && item.vatPercent > 0 ? item.vatPercent : ''}
+                                  onChange={(e) => {
+                                    const nextVatPct = Math.max(0, parseFloat(e.target.value) || 0);
+                                    onUpdatePurchaseCartItemDetails(item.medicineId, {
+                                      vatPercent: nextVatPct,
+                                    });
+                                  }}
+                                  placeholder="0%"
+                                  className="w-16 text-center py-0.5 px-1 text-[10px] font-mono border border-slate-200 rounded bg-white text-slate-700"
+                                />
+                              </div>
                             </div>
                           </td>
 
@@ -2468,6 +2558,11 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                               ) : (
                                 <span>{item.qty} পিস × ৳{formatCleanMoney(item.purchasePrice)}</span>
                               )}
+                              {itemVat > 0 && (
+                                <div className="text-[10px] font-mono text-amber-700 font-semibold">
+                                  +৳{itemVat.toFixed(2)} ভ্যাট
+                                </div>
+                              )}
                             </div>
                           </td>
 
@@ -2500,8 +2595,16 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                   <span>+ পরবর্তী বক্স / নতুন লাইন খুলুন (Auto / Add Box)</span>
                 </button>
 
-                <div className="text-xs font-mono text-slate-600">
-                  মোট <strong>{purchaseCart.filter((i) => i.brandName.trim()).length}</strong>টি ওষুধ · মোট পরিমাণ: <strong>{totalPurchaseUnits} পিস</strong>
+                <div className="text-xs font-mono text-slate-600 flex flex-wrap items-center gap-2">
+                  <span>
+                    মোট <strong>{purchaseCart.filter((i) => i.brandName.trim()).length}</strong>টি ওষুধ · মোট পরিমাণ: <strong>{totalPurchaseUnits} পিস</strong>
+                  </span>
+                  {totalBonusUnits > 0 && (
+                    <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 font-bold border border-amber-300 text-[11px] flex items-center gap-1">
+                      <span>🎁 মোট বোনাস:</span>
+                      <strong>+{totalBonusUnits} পিস (ফ্রি স্টক বৃদ্ধি)</strong>
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -2511,12 +2614,29 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
               onSubmit={handlePurchaseInvoiceSubmit}
               className="bg-white p-4 rounded-lg border border-indigo-200 shadow-xs space-y-3"
             >
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-indigo-50/40 p-3 rounded-md border border-indigo-100">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-indigo-50/40 p-3 rounded-md border border-indigo-100">
                 <div>
                   <label className="block text-xs font-semibold text-slate-600">মোট ক্রয় বিল (SubTotal ৳)</label>
                   <div className="text-lg font-extrabold font-mono tabular-nums text-slate-900 mt-0.5">
                     ৳{purchaseSubTotal.toFixed(2)}
                   </div>
+                </div>
+                <div>
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-semibold text-slate-600">ভ্যাট / ট্যাক্স (VAT ৳)</label>
+                    {purchaseItemsVatTotal > 0 && (
+                      <span className="text-[10px] text-amber-800 font-mono font-medium">(আইটেম ভ্যাট ৳{purchaseItemsVatTotal.toFixed(2)})</span>
+                    )}
+                  </div>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={purVatStr}
+                    onChange={(e) => setPurVatStr(e.target.value)}
+                    placeholder={purchaseItemsVatTotal > 0 ? purchaseItemsVatTotal.toFixed(2) : '0'}
+                    className="w-full mt-1 px-2.5 py-1 text-xs font-mono tabular-nums border border-slate-300 rounded bg-white text-slate-900 focus:border-indigo-500"
+                  />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-600">কমিশন / ডিসকাউন্ট (৳)</label>
@@ -3567,6 +3687,11 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                   )}
                                   <td className={`text-center font-bold text-slate-900 ${isDense ? 'py-0.5 px-1' : 'py-1.5 px-1'}`}>
                                     {pItem.qty} পিস
+                                    {pItem.bonusQty && pItem.bonusQty > 0 ? (
+                                      <div className="text-[9px] font-mono text-amber-800 bg-amber-100 rounded px-1 font-bold whitespace-nowrap mt-0.5">
+                                        +{pItem.bonusQty} বোনাস
+                                      </div>
+                                    ) : null}
                                   </td>
                                   {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
                                     <td className={`text-right font-bold text-slate-900 ${isDense ? 'py-0.5 px-1.5' : 'py-1.5 px-2'}`}>
@@ -3630,6 +3755,13 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                             </span>
                             <span className="font-bold">৳{previewInvoice.subTotal.toFixed(2)}</span>
                           </div>
+
+                          {previewInvoice.vat !== undefined && previewInvoice.vat > 0 && (
+                            <div className="flex justify-between text-amber-800 font-semibold">
+                              <span>ভ্যাট / ট্যাক্স (VAT):</span>
+                              <span className="font-bold">+৳{previewInvoice.vat.toFixed(2)}</span>
+                            </div>
+                          )}
 
                           <div className="flex justify-between text-slate-600">
                             <span>ছাড় / ডিসকাউন্ট (Discount):</span>

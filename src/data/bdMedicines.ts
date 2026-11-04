@@ -5092,6 +5092,9 @@ export function formatPurchaseItemInvoiceLine(
     purchasePrice: number;
     qty: number;
     updateStock?: boolean;
+    bonusQty?: number;
+    vatPercent?: number;
+    vatAmount?: number;
     packUnit?: string;
     packCount?: number;
     packRate?: number;
@@ -5109,9 +5112,15 @@ export function formatPurchaseItemInvoiceLine(
     item.packRate &&
     item.packRate > 0
   );
-  const exactLineTotal = isPack
+  const baseCost = isPack
     ? Number((item.packRate! * item.packCount!).toFixed(2))
     : Number((item.purchasePrice * item.qty).toFixed(2));
+  const vatExtra = item.vatAmount && item.vatAmount > 0
+    ? Number(item.vatAmount.toFixed(2))
+    : item.vatPercent && item.vatPercent > 0
+    ? Number(((baseCost * item.vatPercent) / 100).toFixed(2))
+    : 0;
+  const exactLineTotal = Number((baseCost + vatExtra).toFixed(2));
   const unitStr = formatCleanMoney(item.purchasePrice);
   const totalStr = formatCleanMoney(exactLineTotal);
   const cleanBrand = (item.brandName || 'Custom Product').trim();
@@ -5119,6 +5128,12 @@ export function formatPurchaseItemInvoiceLine(
     item.strength && item.strength.trim() !== 'Standard' ? item.strength.trim() : '';
   const nameAndStrength = cleanStrength ? `${cleanBrand} ${cleanStrength}` : cleanBrand;
   const stockTag = item.updateStock === false ? ' [নন-স্টক/শুধু-বিল]' : '';
+  const bonusTag = item.bonusQty && item.bonusQty > 0 ? ` [বোনাস: +${item.bonusQty} পিস]` : '';
+  const vatTag = item.vatPercent && item.vatPercent > 0
+    ? ` [ভ্যাট: ${item.vatPercent}%]`
+    : item.vatAmount && item.vatAmount > 0
+    ? ` [ভ্যাট: ৳${formatCleanMoney(item.vatAmount)}]`
+    : '';
 
   let packDetail = '';
   if (item.packUnit && item.packUnit !== 'piece' && item.packCount && item.packCount > 0) {
@@ -5136,7 +5151,7 @@ export function formatPurchaseItemInvoiceLine(
     packDetail = ` [${item.qty} পিস]`;
   }
 
-  return `${index + 1}.${prefix}.${nameAndStrength}${packDetail} (৳${unitStr}) × ${item.qty}=${totalStr}${stockTag}`;
+  return `${index + 1}.${prefix}.${nameAndStrength}${packDetail}${bonusTag}${vatTag} (৳${unitStr}) × ${item.qty}=${totalStr}${stockTag}`;
 }
 
 export interface ParsedInvoiceItem {
@@ -5145,6 +5160,9 @@ export interface ParsedInvoiceItem {
   brandAndStrength: string;
   cleanName?: string;
   packDetail?: string;
+  bonusQty?: number;
+  vatPercent?: number;
+  vatAmount?: number;
   dosageInstruction?: string;
   unitPrice: number;
   qty: number;
@@ -5293,11 +5311,29 @@ export function parseTransactionItemsDetailed(
       const brandAndStrength = match[3].trim();
       let cleanBrandAndStrength = brandAndStrength;
       let packDetail = '';
-      const packMatch = brandAndStrength.match(/^(.*?)\s*\[(.*?)\]$/);
-      if (packMatch) {
-        cleanBrandAndStrength = packMatch[1].trim();
-        packDetail = packMatch[2].trim();
+      let bonusQty = 0;
+      let vatPercent = 0;
+      let vatAmount = 0;
+
+      const bracketMatches = brandAndStrength.match(/\[(.*?)\]/g);
+      if (bracketMatches) {
+        for (const bm of bracketMatches) {
+          const inner = bm.slice(1, -1).trim();
+          if (inner.includes('বোনাস:')) {
+            const bNum = inner.match(/বোনাস:\s*\+?(\d+)/);
+            if (bNum) bonusQty = parseInt(bNum[1], 10);
+          } else if (inner.includes('ভ্যাট:')) {
+            const vMatch = inner.match(/ভ্যাট:\s*([\d.]+)%?/);
+            if (vMatch) vatPercent = parseFloat(vMatch[1]);
+            const vTkMatch = inner.match(/ভ্যাট:\s*৳?([\d.]+)/);
+            if (vTkMatch && !vMatch) vatAmount = parseFloat(vTkMatch[1]);
+          } else if (!packDetail) {
+            packDetail = inner;
+          }
+        }
+        cleanBrandAndStrength = brandAndStrength.replace(/\[.*?\]/g, '').trim();
       }
+
       const unitPrice = parseFloat(match[4]) || 0;
       const qty = parseInt(match[5], 10) || 1;
       const lineTotal = parseFloat(match[6]) || Number((unitPrice * qty).toFixed(2));
@@ -5309,6 +5345,9 @@ export function parseTransactionItemsDetailed(
         brandAndStrength,
         cleanName: cleanBrandAndStrength,
         packDetail,
+        bonusQty: bonusQty > 0 ? bonusQty : undefined,
+        vatPercent: vatPercent > 0 ? vatPercent : undefined,
+        vatAmount: vatAmount > 0 ? vatAmount : undefined,
         dosageInstruction,
         unitPrice,
         qty,
@@ -5645,6 +5684,9 @@ export function buildPurchaseCartFromTransaction(
       packDetailFormula,
       stripsPerBox,
       pcsPerStrip,
+      bonusQty: pItem.bonusQty || 0,
+      vatPercent: pItem.vatPercent || 0,
+      vatAmount: pItem.vatAmount || 0,
     };
   });
 

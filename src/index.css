@@ -123,21 +123,37 @@
 
 @keyframes marquee-ltr-to-rtl {
   0% {
-    transform: translateX(100%);
+    transform: translateX(0);
+    opacity: 1;
+  }
+  90.91% {
+    transform: translateX(-100%);
+    opacity: 1;
+  }
+  90.92% {
+    transform: translateX(0);
+    opacity: 0;
+  }
+  99.99% {
+    transform: translateX(0);
+    opacity: 0;
   }
   100% {
-    transform: translateX(-100%);
+    transform: translateX(0);
+    opacity: 1;
   }
 }
 
 .animate-marquee-rtl {
   display: inline-block;
   white-space: nowrap;
-  animation: marquee-ltr-to-rtl 32s linear infinite;
+  padding-left: 100%;
+  animation: marquee-ltr-to-rtl 22s linear infinite;
   will-change: transform;
 }
 
 .animate-marquee-rtl:hover {
   animation-play-state: paused;
 }
+
 
