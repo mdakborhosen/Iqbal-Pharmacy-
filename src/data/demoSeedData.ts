@@ -8,6 +8,66 @@ import {
   Transaction,
 } from '../types';
 
+export interface ChamberNoticePreset {
+  id: string;
+  num: string;
+  title: string;
+  text: string;
+  badge: string;
+  badgeColor: string;
+}
+
+export const DEFAULT_CHAMBER_NOTICES: ChamberNoticePreset[] = [
+  {
+    id: '1',
+    num: '১',
+    title: 'এখন নতুনহাট চেম্বার (আগামীকাল ১০টার পর উদয় সাধুরহাট)',
+    text: 'এখন নতুনহাট চেম্বার করতেছেন।আগামীকাল সকাল ১০ টার পর উদয় সাধুরহাট চেম্বার করবেন।',
+    badge: 'নতুনহাট',
+    badgeColor: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+  },
+  {
+    id: '2',
+    num: '২',
+    title: 'এখন উদয় সাধুরহাট চেম্বার (সন্ধ্যা মাগরিবের পর নতুনহাট)',
+    text: 'এখন উদয় সাধুরহাট চেম্বার করতেছেন।সন্ধ্যা মাগরিবের নামাজের পর থেকে নতুনহাট চেম্বার করবেন।',
+    badge: 'উদয় সাধুরহাট',
+    badgeColor: 'bg-blue-100 text-blue-800 border-blue-300',
+  },
+  {
+    id: '3a',
+    num: '৩ (ক)',
+    title: 'আজকে উভয় চেম্বার বন্ধ (আগামীকাল চালু)',
+    text: 'আজকে উভয় চেম্বার বন্ধ থাকবে।আগামীকাল সকাল ৮-১০ টা এবং সন্ধ্যা মাগরিবের নামাজের পরে নতুনহাট চেম্বার করবেন। এবং সকাল ১০:১০ মিনিট থেকে উদয় সাধুরহাট চেম্বার করবেন।',
+    badge: 'আজকে বন্ধ (আগামীকাল চালু)',
+    badgeColor: 'bg-rose-100 text-rose-800 border-rose-300',
+  },
+  {
+    id: '3b',
+    num: '৩ (খ)',
+    title: 'আগামীকাল উভয় চেম্বার বন্ধ (নির্দিষ্ট তারিখ সহ)',
+    text: 'আগামীকাল উভয় চেম্বার বন্ধ থাকবে। আগামী "তারিখ" সকাল ৮-১০ টা এবং সন্ধ্যা মাগরিবের নামাজের পরে নতুনহাট চেম্বার করবেন। এবং সকাল ১০:১০ মিনিট থেকে উদয় সাধুরহাট চেম্বার করবেন।',
+    badge: 'আগামীকাল বন্ধ (তারিখ সহ)',
+    badgeColor: 'bg-purple-100 text-purple-800 border-purple-300',
+  },
+  {
+    id: '4',
+    num: '৪',
+    title: 'আজকে উদয় সাধুরহাট চেম্বার বন্ধ',
+    text: 'আজকে উদয় সাধুরহাট চেম্বার বন্ধ থাকবে।',
+    badge: 'উদয় সাধুরহাট বন্ধ',
+    badgeColor: 'bg-amber-100 text-amber-800 border-amber-300',
+  },
+  {
+    id: '5',
+    num: '৫',
+    title: 'আজকে নতুনহাট চেম্বার বন্ধ',
+    text: 'আজকে নতুনহাট চেম্বার বন্ধ থাকবে।',
+    badge: 'নতুনহাট বন্ধ',
+    badgeColor: 'bg-orange-100 text-orange-800 border-orange-300',
+  },
+];
+
 export const DEFAULT_SHOP_PROFILE: ShopProfile = {
   id: 'shop-default',
   ownerId: 'demo-owner',
@@ -15,6 +75,10 @@ export const DEFAULT_SHOP_PROFILE: ShopProfile = {
   licenseNo: 'DMTD (Dental), LMAF, RMP, Pharmacist',
   phone: '01812-358839',
   address: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।',
+  notice: {
+    text: 'এখন নতুনহাট চেম্বার করতেছেন।আগামীকাল সকাল ১০ টার পর উদয় সাধুরহাট চেম্বার করবেন।',
+    isActive: true,
+  },
 };
 
 export const INITIAL_DEMO_STAFF: StaffMember[] = [

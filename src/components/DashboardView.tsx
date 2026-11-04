@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { doc, onSnapshot, setDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import { DEFAULT_CHAMBER_NOTICES, ChamberNoticePreset } from '../data/demoSeedData';
 import {
   Customer,
   InventoryItem,
@@ -144,6 +145,33 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         await onUpdateNotice(updatedNotice);
       }
       setNoticeFeedback('নোটিশ সংরক্ষিত হয়েছে!');
+    } finally {
+      setSavingNotice(false);
+      setTimeout(() => setNoticeFeedback(null), 4000);
+    }
+  };
+
+  const handleDirectPublishPreset = async (presetText: string) => {
+    setNoticeText(presetText);
+    setNoticeActive(true);
+    setSavingNotice(true);
+    const updatedNotice: ShopNotice = {
+      text: presetText.trim(),
+      isActive: true,
+      updatedAtMs: Date.now(),
+      updatedBy: 'Admin (Default List)',
+    };
+    try {
+      await setDoc(doc(db, 'shop_notices', 'live_announcement'), updatedNotice);
+      if (onUpdateNotice) {
+        await onUpdateNotice(updatedNotice);
+      }
+      setNoticeFeedback('নির্বাচিত নোটিশটি তাৎক্ষণিকভাবে ওয়েবসাইটে প্রকাশ ও চালু করা হয়েছে!');
+    } catch {
+      if (onUpdateNotice) {
+        await onUpdateNotice(updatedNotice);
+      }
+      setNoticeFeedback('নোটিশটি চালু করা হয়েছে!');
     } finally {
       setSavingNotice(false);
       setTimeout(() => setNoticeFeedback(null), 4000);
@@ -585,44 +613,143 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {showNoticeManager && (
           <form onSubmit={handleSaveNotice} className="mt-3.5 space-y-3.5">
+            {/* 1. Quick Dropdown Selector from Default Chamber Notices */}
+            <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                  <span>ডিফল্ট চেম্বার নোটিশ তালিকা (১ ক্লিকে বাছাই):</span>
+                </label>
+                <span className="text-[10px] text-amber-900 font-semibold bg-amber-200/70 px-2 py-0.5 rounded-full border border-amber-300">
+                  ডিফল্ট তালিকা (১-৫)
+                </span>
+              </div>
+              <select
+                onChange={(e) => {
+                  const selected = DEFAULT_CHAMBER_NOTICES.find((n) => n.id === e.target.value);
+                  if (selected) {
+                    setNoticeText(selected.text);
+                    setNoticeActive(true);
+                  }
+                }}
+                defaultValue=""
+                className="w-full px-3 py-2 text-xs sm:text-sm font-medium bg-white border border-amber-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-2xs cursor-pointer"
+              >
+                <option value="" disabled>-- ড্রপডাউন থেকে চেম্বার নোটিশ বেছে নিন --</option>
+                {DEFAULT_CHAMBER_NOTICES.map((preset) => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.num}/ {preset.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 2. Textarea with Edit & Date Quick Fill */}
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                নোটিশের মূল বার্তা / ঘোষণা (Notice Content):
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-bold text-slate-700">
+                  নোটিশের মূল বার্তা / ঘোষণা (Notice Content):
+                </label>
+                {noticeText.includes('"তারিখ"') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const d = new Date();
+                      d.setDate(d.getDate() + 2);
+                      const dateBn = d.toLocaleDateString('bn-BD', { day: 'numeric', month: 'long' });
+                      setNoticeText((prev) => prev.replace('"তারিখ"', dateBn));
+                    }}
+                    className="text-[11px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-2 py-0.5 rounded cursor-pointer"
+                    title="তারিখ স্বয়ংক্রিয়ভাবে বসান"
+                  >
+                    + নির্দিষ্ট তারিখ বসান
+                  </button>
+                )}
+              </div>
               <textarea
                 rows={2}
                 value={noticeText}
                 onChange={(e) => setNoticeText(e.target.value)}
-                placeholder="যেমন: ঈদের ছুটিতে ইকবাল ফার্মেসী ও ডেন্টাল কেয়ার সার্বক্ষণিক খোলা থাকবে। জরুরি প্রয়োজনে কল করুন: ০১৮১২-৩৫৮৮৩৯।"
-                className="w-full px-3 py-2 text-xs sm:text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 bg-slate-50/50 leading-relaxed font-sans"
+                placeholder="চেম্বার নোটিশ লিখুন বা নিচের তালিকা থেকে সিলেক্ট করুন..."
+                className="w-full px-3 py-2 text-xs sm:text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 bg-slate-50/50 leading-relaxed font-sans text-slate-900 font-medium"
               />
             </div>
 
-            {/* Quick Suggestion Presets */}
-            <div>
-              <span className="text-[11px] font-bold text-slate-500 block mb-1.5 flex items-center gap-1">
-                <Sparkles className="w-3 h-3 text-amber-500" />
-                <span>তাত্ক্ষণিক নোটিশ সাজেশন (ক্লিক করে বসান):</span>
+            {/* 3. Full Default Chamber Notices Interactive Cards (তালিকা ১ থেকে ৫) */}
+            <div className="space-y-2">
+              <span className="text-[11px] font-bold text-slate-700 block flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <Megaphone className="w-3.5 h-3.5 text-amber-600" />
+                  <span>ডিফল্ট চেম্বার নোটিশ তালিকা (১ ক্লিকে সরাসরি চালু করুন):</span>
+                </span>
+                <span className="text-[10px] text-slate-400 font-normal">
+                  ক্লিক করলে ওয়েবসাইটে তাৎক্ষণিক স্ক্রল হবে
+                </span>
               </span>
-              <div className="flex flex-wrap gap-1.5">
-                {[
-                  '২৪ ঘণ্টা আসল জীবনরক্ষাকারী ওষুধ ও জরুরি সেবা চালু রয়েছে।',
-                  'প্রতি শুক্রবার সকাল ৯টা থেকে রাত ১০টা পর্যন্ত অভিজ্ঞ ডেন্টিস্ট উপস্থিত থাকেন।',
-                  'রমজান উপলক্ষে আমাদের এখানে বিনামূল্যে ডায়াবেটিস ও রক্তচাপ পরীক্ষা চলছে।',
-                  'ডিজিটাল ইনভয়েস যাচাই ও আসল ওষুধের গ্যারান্টি দিচ্ছে ইকবাল হেলথকেয়ার।',
-                ].map((preset, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => {
-                      setNoticeText(preset);
-                      setNoticeActive(true);
-                    }}
-                    className="text-[11px] font-medium px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-900 border border-slate-200 transition-colors cursor-pointer text-left"
-                  >
-                    + {preset}
-                  </button>
-                ))}
+
+              <div className="grid grid-cols-1 gap-2">
+                {DEFAULT_CHAMBER_NOTICES.map((preset) => {
+                  const isCurrentActive =
+                    noticeActive && noticeText.trim() === preset.text.trim();
+                  return (
+                    <div
+                      key={preset.id}
+                      className={`p-2.5 rounded-xl border transition-all text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 ${
+                        isCurrentActive
+                          ? 'bg-amber-50/90 border-amber-400 shadow-xs ring-1 ring-amber-300'
+                          : 'bg-white hover:bg-slate-50 border-slate-200 shadow-2xs'
+                      }`}
+                    >
+                      <div className="space-y-1 flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-black text-slate-900 font-mono bg-slate-100 border border-slate-300 px-2 py-0.5 rounded text-[11px]">
+                            {preset.num}/
+                          </span>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${preset.badgeColor}`}>
+                            {preset.badge}
+                          </span>
+                          {isCurrentActive && (
+                            <span className="text-[10.5px] font-bold text-emerald-800 bg-emerald-100 border border-emerald-300 px-2 py-0.2 rounded-full flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                              <span>✓ বর্তমানে লাইভ চালু আছে</span>
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-slate-800 font-medium leading-relaxed font-sans text-xs sm:text-[12.5px] pl-0.5">
+                          {preset.text}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNoticeText(preset.text);
+                            setNoticeActive(true);
+                          }}
+                          className="px-2.5 py-1 text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg transition-colors cursor-pointer"
+                          title="এডিটরে নোটিশের টেক্সট নিয়ে আসুন"
+                        >
+                          এডিটরে বসান
+                        </button>
+                        <button
+                          type="button"
+                          disabled={savingNotice}
+                          onClick={() => handleDirectPublishPreset(preset.text)}
+                          className={`px-3 py-1 text-[11px] font-bold rounded-lg transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50 ${
+                            isCurrentActive
+                              ? 'bg-emerald-700 text-white hover:bg-emerald-800 shadow-2xs'
+                              : 'bg-amber-600 text-white hover:bg-amber-700 shadow-2xs active:scale-95'
+                          }`}
+                          title="এই নোটিশটি সরাসরি ওয়েবসাইটে চালু করুন"
+                        >
+                          <Send className="w-3 h-3" />
+                          <span>{isCurrentActive ? 'পুনরায় প্রকাশ' : '১ ক্লিকে প্রকাশ'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
