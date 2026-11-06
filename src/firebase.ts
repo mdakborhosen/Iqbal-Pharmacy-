@@ -461,12 +461,24 @@ export async function registerNewShopOwnerAccount(params: {
 
   // Prevent duplicate users: Check if an account already exists for this phone or email
   let existingOwnerId = '';
+  let existingStaffId = '';
+  const safeEmailKey = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const bd11 = cleanPhoneDigits.length >= 10 ? '0' + cleanPhoneDigits.slice(-10) : cleanPhoneDigits;
+  const bd10 = cleanPhoneDigits.length >= 10 ? cleanPhoneDigits.slice(-10) : cleanPhoneDigits;
+  const deterministicStaffId = cleanPhoneDigits.length >= 6
+    ? `staff_owner_${bd11}`
+    : `staff_owner_${safeEmailKey.slice(0, 32)}`;
+  const deterministicOwnerUid = cleanPhoneDigits.length >= 6
+    ? `shop_owner_${bd11}`
+    : `shop_owner_${safeEmailKey.slice(0, 32)}`;
+
   if (cleanPhoneDigits) {
     try {
       const snap = await getDoc(doc(db, 'registered_users', `user_phone_${cleanPhoneDigits}`));
       if (snap.exists()) {
         const ex = snap.data();
-        existingOwnerId = ex?.ownerId || ex?.staffId || '';
+        existingOwnerId = ex?.ownerId || '';
+        existingStaffId = ex?.staffId || '';
       }
     } catch {
       // ignore
@@ -490,12 +502,12 @@ export async function registerNewShopOwnerAccount(params: {
           const cred = await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
           firebaseUid = cred.user.uid;
         } catch {
-          firebaseUid = `shop_owner_${cleanPhoneDigits || cleanEmail.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 32)}`;
+          firebaseUid = deterministicOwnerUid;
         }
       } else if (errorCode === 'auth/weak-password') {
         throw new Error('পাসওয়ার্ড নূন্যতম ৬ অক্ষরের হতে হবে!');
       } else {
-        firebaseUid = `shop_owner_${cleanPhoneDigits || cleanEmail.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 32)}`;
+        firebaseUid = deterministicOwnerUid;
       }
     }
   }
@@ -512,11 +524,14 @@ export async function registerNewShopOwnerAccount(params: {
     }
   }
 
-  // Save owner account directly to Firestore registered_users so any other device and IP can authenticate!
+  const finalOwnerUid = firebaseUid || deterministicOwnerUid;
+  const finalStaffId = existingStaffId || deterministicStaffId;
+
+  // Save owner account directly to Firestore registered_users and staff so ANY other device and IP can authenticate!
   try {
     const userDocData = {
-      ownerId: firebaseUid || 'shared_iqbal_pharmacy',
-      staffId: 'staff-owner-1',
+      ownerId: finalOwnerUid,
+      staffId: finalStaffId,
       email: cleanEmail,
       phone,
       ownerName: displayName,
@@ -524,28 +539,48 @@ export async function registerNewShopOwnerAccount(params: {
       shopName,
       password: cleanPassword,
       role: 'owner',
+      roleTitle: 'owner',
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
       updatedAtMs: Date.now(),
     };
+
     if (cleanPhoneDigits) {
       await setDoc(doc(db, 'registered_users', `user_phone_${cleanPhoneDigits}`), userDocData);
       if (cleanPhoneDigits.length >= 10) {
-        const bd11 = '0' + cleanPhoneDigits.slice(-10);
-        const bd10 = cleanPhoneDigits.slice(-10);
         await setDoc(doc(db, 'registered_users', `user_phone_${bd11}`), userDocData);
         await setDoc(doc(db, 'registered_users', `user_phone_${bd10}`), userDocData);
+        await setDoc(doc(db, 'registered_users', `user_phone_880${bd10}`), userDocData);
       }
+      await setDoc(doc(db, 'registered_users', `user_id_${cleanPhoneDigits}`), userDocData);
+      await setDoc(doc(db, 'registered_users', cleanPhoneDigits), userDocData).catch(() => {});
     }
-    const safeEmailKey = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_');
     await setDoc(doc(db, 'registered_users', `user_email_${safeEmailKey}`), userDocData);
-    if (cleanEmail) {
-      await setDoc(doc(db, 'registered_users', cleanEmail), userDocData).catch(() => {});
+    await setDoc(doc(db, 'registered_users', cleanEmail), userDocData).catch(() => {});
+    if (phone) {
+      await setDoc(doc(db, 'registered_users', phone), userDocData).catch(() => {});
     }
     if (rawEmail && !isValidEmail) {
       const cleanCustomKey = rawEmail.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_');
       await setDoc(doc(db, 'registered_users', `user_id_${cleanCustomKey}`), userDocData).catch(() => {});
+      await setDoc(doc(db, 'registered_users', rawEmail.toLowerCase()), userDocData).catch(() => {});
     }
+
+    // Also persist into staff collection so staff lookups work across devices seamlessly
+    const staffDocData = {
+      id: finalStaffId,
+      ownerId: finalOwnerUid,
+      name: displayName,
+      roleTitle: 'owner',
+      phone,
+      email: cleanEmail,
+      password: cleanPassword,
+      shift: 'সারাদিন (মূল তত্ত্বাবধান)',
+      counterName: 'কাউন্টার ১ (Owner)',
+      active: true,
+      updatedAtMs: Date.now(),
+    };
+    await setDoc(doc(db, 'staff', finalStaffId), staffDocData, { merge: true });
 
     // Also persist into shared shop documents so all browsers & devices discover this owner immediately
     try {
@@ -553,7 +588,17 @@ export async function registerNewShopOwnerAccount(params: {
       const ownerPayload = {
         registeredOwners: {
           [ownerKey]: {
-            ownerId: firebaseUid || 'shared_iqbal_pharmacy',
+            ownerId: finalOwnerUid,
+            staffId: finalStaffId,
+            email: cleanEmail,
+            phone,
+            ownerName: displayName,
+            shopName,
+            password: cleanPassword,
+          },
+          [phone]: {
+            ownerId: finalOwnerUid,
+            staffId: finalStaffId,
             email: cleanEmail,
             phone,
             ownerName: displayName,
@@ -577,6 +622,8 @@ export async function registerNewShopOwnerAccount(params: {
     const raw = localStorage.getItem('pharma_local_registered_owners');
     const existing = raw ? JSON.parse(raw) : {};
     const record = {
+      ownerId: finalOwnerUid,
+      staffId: finalStaffId,
       phone,
       password: cleanPassword,
       ownerName: displayName,
@@ -603,13 +650,13 @@ export async function registerNewShopOwnerAccount(params: {
   }
 
   const session: ShopCloudSession = {
-    uid: firebaseUid || 'shared_iqbal_pharmacy',
+    uid: finalOwnerUid,
     email: cleanEmail,
     displayName: `${displayName} (Owner)`,
     shopName,
     phone,
     operatorRole: 'owner',
-    staffId: 'staff-owner-1',
+    staffId: finalStaffId,
     loggedInAt: Date.now(),
   };
 

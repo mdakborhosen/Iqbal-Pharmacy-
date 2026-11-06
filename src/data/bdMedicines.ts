@@ -5093,7 +5093,7 @@ export function formatPurchaseItemInvoiceLine(
     qty: number;
     updateStock?: boolean;
     bonusQty?: number;
-    bonusVatMode?: '%' | '৳';
+    bonusVatMode?: '%' | '৳' | 'fixed';
     bonusVatRate?: number;
     bonusVatAmount?: number;
     productVatMode?: '%' | '৳';
@@ -5130,17 +5130,17 @@ export function formatPurchaseItemInvoiceLine(
     productVat = pRate > 0 ? Number(((baseCost * pRate) / 100).toFixed(2)) : 0;
   }
 
-  // 2. Bonus Item VAT (multiplied by its quantity: bonusQty × rate)
+  // 2. Bonus Item VAT (multiplied by bonusQty or flat fixed money)
   const bQty = Math.max(0, item.bonusQty || 0);
   const bMode = item.bonusVatMode || '৳';
   const bRate = Math.max(0, item.bonusVatRate || 0);
   let bonusVat = 0;
   if (bQty > 0 && bRate > 0) {
     if (bMode === '৳') {
-      // Direct money per bonus piece multiplied by bonus quantity!
       bonusVat = Number((bQty * bRate).toFixed(2));
+    } else if (bMode === 'fixed') {
+      bonusVat = Number(bRate.toFixed(2));
     } else {
-      // Percentage on purchase price per bonus unit, multiplied by bonus quantity!
       const unitP = item.purchasePrice > 0 ? item.purchasePrice : 0;
       bonusVat = Number((bQty * ((unitP * bRate) / 100)).toFixed(2));
     }
@@ -5160,7 +5160,9 @@ export function formatPurchaseItemInvoiceLine(
   const bonusTag = bQty > 0 ? ` [বোনাস: +${bQty} পিস]` : '';
   
   const bonusVatTag = bonusVat > 0
-    ? (bMode === '৳'
+    ? (bMode === 'fixed'
+        ? ` [বোনাস ভ্যাট: ৳${formatCleanMoney(bonusVat)}]`
+        : bMode === '৳'
         ? ` [বোনাস ভ্যাট: ${bQty} পিস × ৳${formatCleanMoney(bRate)} = ৳${formatCleanMoney(bonusVat)}]`
         : ` [বোনাস ভ্যাট: ${bQty} পিস @${bRate}% = ৳${formatCleanMoney(bonusVat)}]`)
     : '';
@@ -5197,7 +5199,7 @@ export interface ParsedInvoiceItem {
   cleanName?: string;
   packDetail?: string;
   bonusQty?: number;
-  bonusVatMode?: '%' | '৳';
+  bonusVatMode?: '%' | '৳' | 'fixed';
   bonusVatRate?: number;
   bonusVatAmount?: number;
   productVatMode?: '%' | '৳';
@@ -5352,7 +5354,7 @@ export function parseTransactionItemsDetailed(
       let cleanBrandAndStrength = brandAndStrength;
       let packDetail = '';
       let bonusQty = 0;
-      let bonusVatMode: '%' | '৳' = '৳';
+      let bonusVatMode: '%' | '৳' | 'fixed' = '৳';
       let bonusVatRate = 0;
       let bonusVatAmount = 0;
       let productVatMode: '%' | '৳' = '%';
@@ -5371,10 +5373,17 @@ export function parseTransactionItemsDetailed(
               bonusVatMode = '%';
               const rM = inner.match(/@([\d.]+)%/);
               if (rM) bonusVatRate = parseFloat(rM[1]);
-            } else {
+            } else if (inner.includes('×')) {
               bonusVatMode = '৳';
               const rM = inner.match(/×\s*৳([\d.]+)/);
               if (rM) bonusVatRate = parseFloat(rM[1]);
+            } else {
+              bonusVatMode = 'fixed';
+              const rM = inner.match(/বোনাস ভ্যাট:\s*৳([\d.]+)/);
+              if (rM) {
+                bonusVatRate = parseFloat(rM[1]);
+                bonusVatAmount = parseFloat(rM[1]);
+              }
             }
             const totM = inner.match(/=\s*৳([\d.]+)/);
             if (totM) bonusVatAmount = parseFloat(totM[1]);

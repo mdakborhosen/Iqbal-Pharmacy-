@@ -1954,6 +1954,7 @@ export default function App() {
   };
 
   // Multi-Device Full Cloud Sync: Directly fetches all authoritative collections from Firestore
+  // Multi-Device Full Cloud Sync: Directly fetches and merges all authoritative collections from Firestore
   const syncAllDataFromFirestore = async (options?: { silent?: boolean }) => {
     try {
       const [invSnap, txSnap, custSnap, staffSnap, customMedSnap, shopSnap] = await Promise.all([
@@ -1967,63 +1968,114 @@ export default function App() {
 
       let hasCloudData = false;
 
-      // 1. Transactions: if Firestore has transactions, replace local state completely
+      // 1. Transactions: Bidirectional merge with timestamp priority so zero transactions are lost across devices
+      const txMap = new Map<string, Transaction>();
       if (!txSnap.empty) {
         hasCloudData = true;
-        const txList: Transaction[] = txSnap.docs.map((d) => {
+        for (const d of txSnap.docs) {
           const raw = d.data() as Omit<Transaction, 'id'>;
           const canonId = getCanonicalDocId(d.id);
-          return {
+          txMap.set(canonId, {
             id: canonId,
             ...raw,
             itemsSummary: formatTransactionItemsText(raw.itemsSummary),
-          };
-        });
-        txList.sort((a, b) => (b.updatedAtMs || 0) - (a.updatedAtMs || 0) || b.invoiceNo.localeCompare(a.invoiceNo));
-        setTransactions(txList);
-        saveLocal(STORAGE_KEYS.TRANSACTIONS, txList);
+          });
+        }
       }
+      const localTxs = loadLocal<Transaction[]>(STORAGE_KEYS.TRANSACTIONS, []);
+      for (const loc of localTxs) {
+        const canon = getCanonicalDocId(loc.id);
+        const existing = txMap.get(canon);
+        if (!existing || (loc.updatedAtMs || 0) > (existing.updatedAtMs || 0)) {
+          txMap.set(canon, { ...loc, id: canon });
+          setDoc(doc(db, 'transactions', canon), buildTransactionCloudPayload(loc, 'shared_iqbal_pharmacy')).catch(() => {});
+        }
+      }
+      const mergedTxList = Array.from(txMap.values());
+      mergedTxList.sort((a, b) => (b.updatedAtMs || 0) - (a.updatedAtMs || 0) || b.invoiceNo.localeCompare(a.invoiceNo));
+      setTransactions(mergedTxList);
+      saveLocal(STORAGE_KEYS.TRANSACTIONS, mergedTxList);
 
-      // 2. Inventory
+      // 2. Inventory: Bidirectional merge
+      const invMap = new Map<string, InventoryItem>();
       if (!invSnap.empty) {
         hasCloudData = true;
-        const invMap = new Map<string, InventoryItem>();
         for (const d of invSnap.docs) {
           const data = d.data() as Omit<InventoryItem, 'id'>;
           const canonId = getCanonicalDocId(d.id);
           invMap.set(canonId, { id: canonId, ...data });
         }
-        const invList = Array.from(invMap.values());
-        setInventory(invList);
-        saveLocal(STORAGE_KEYS.INVENTORY, invList);
       }
+      const localInv = loadLocal<InventoryItem[]>(STORAGE_KEYS.INVENTORY, []);
+      for (const loc of localInv) {
+        const canon = getCanonicalDocId(loc.id);
+        const existing = invMap.get(canon);
+        if (!existing || (loc.updatedAtMs || 0) > (existing.updatedAtMs || 0)) {
+          invMap.set(canon, { ...loc, id: canon });
+          setDoc(doc(db, 'inventory', canon), buildInventoryCloudPayload(loc, 'shared_iqbal_pharmacy')).catch(() => {});
+        }
+      }
+      const mergedInvList = Array.from(invMap.values());
+      setInventory(mergedInvList);
+      saveLocal(STORAGE_KEYS.INVENTORY, mergedInvList);
 
-      // 3. Customers
+      // 3. Customers: Bidirectional merge
+      const custMap = new Map<string, Customer>();
       if (!custSnap.empty) {
         hasCloudData = true;
-        const custMap = new Map<string, Customer>();
         for (const d of custSnap.docs) {
           const data = d.data() as Omit<Customer, 'id'>;
           const canonId = getCanonicalDocId(d.id);
           custMap.set(canonId, { id: canonId, ...data });
         }
-        const custList = Array.from(custMap.values());
-        setCustomers(custList);
-        saveLocal(STORAGE_KEYS.CUSTOMERS, custList);
       }
+      const localCust = loadLocal<Customer[]>(STORAGE_KEYS.CUSTOMERS, []);
+      for (const loc of localCust) {
+        const canon = getCanonicalDocId(loc.id);
+        const existing = custMap.get(canon);
+        if (!existing || (loc.updatedAtMs || 0) > (existing.updatedAtMs || 0)) {
+          custMap.set(canon, { ...loc, id: canon });
+          setDoc(doc(db, 'customers', canon), buildCustomerCloudPayload(loc, 'shared_iqbal_pharmacy')).catch(() => {});
+        }
+      }
+      const mergedCustList = Array.from(custMap.values());
+      setCustomers(mergedCustList);
+      saveLocal(STORAGE_KEYS.CUSTOMERS, mergedCustList);
 
-      // 4. Staff
+      // 4. Staff: Bidirectional merge & deduplication (Never allow duplicate users)
+      const staffMap = new Map<string, StaffMember>();
       if (!staffSnap.empty) {
-        const staffMap = new Map<string, StaffMember>();
         for (const d of staffSnap.docs) {
           const data = d.data() as Omit<StaffMember, 'id'>;
           const canonId = getCanonicalDocId(d.id);
           staffMap.set(canonId, { id: canonId, ...data });
         }
-        const sList = Array.from(staffMap.values());
-        setStaffList(sList);
-        saveLocal(STORAGE_KEYS.STAFF, sList);
       }
+      const localStaff = loadLocal<StaffMember[]>(STORAGE_KEYS.STAFF, []);
+      for (const loc of localStaff) {
+        const canon = getCanonicalDocId(loc.id);
+        const existing = staffMap.get(canon);
+        if (!existing || (loc.updatedAtMs || 0) > (existing.updatedAtMs || 0)) {
+          staffMap.set(canon, { ...loc, id: canon });
+        }
+      }
+      // Deduplicate by normalized 10-digit phone number or email
+      const deduplicatedStaff: StaffMember[] = [];
+      const seenStaffKeys = new Set<string>();
+      for (const s of staffMap.values()) {
+        const digits = (s.phone || '').replace(/[^0-9]/g, '');
+        const key = digits.length >= 10
+          ? digits.slice(-10)
+          : digits.length >= 6
+          ? digits
+          : s.email?.toLowerCase().trim() || s.id;
+        if (!seenStaffKeys.has(key)) {
+          seenStaffKeys.add(key);
+          deduplicatedStaff.push(s);
+        }
+      }
+      setStaffList(deduplicatedStaff);
+      saveLocal(STORAGE_KEYS.STAFF, deduplicatedStaff);
 
       // 5. Custom Medicines
       if (!customMedSnap.empty) {
@@ -2310,11 +2362,12 @@ export default function App() {
         // Auto-provision and register new account directly on the spot!
         // Guarantees that on ANY device, user IDs / phone numbers are immediately recognized,
         // saved to Firestore, and never fail with "ইউজার আইডি বা একাউন্ট পাওয়া যায়নি!".
-        const newPhone = cleanDigits.length >= 6 ? cleanDigits : (cleanIdent.length >= 6 && /^\d+$/.test(cleanIdent) ? cleanIdent : '');
+        const bd11 = cleanDigits.length >= 10 ? '0' + cleanDigits.slice(-10) : cleanDigits;
+        const newPhone = cleanDigits.length >= 6 ? (cleanDigits.length >= 10 ? bd11 : cleanDigits) : (cleanIdent.length >= 6 && /^\d+$/.test(cleanIdent) ? cleanIdent : '');
         const newEmail = cleanIdent.includes('@') ? cleanIdent.toLowerCase() : `${cleanDigits || cleanIdent.replace(/[^a-zA-Z0-9]/g, '') || 'user'}@iqbalpharmacy.bd`;
         const newDisplayName = cleanDigits ? `মালিক (${cleanDigits})` : `${cleanIdent} (Owner)`;
-        const autoOwnerId = `shop_owner_${cleanDigits || cleanIdent.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-        const autoStaffId = `staff-${cleanDigits || cleanIdent.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+        const autoOwnerId = `shop_owner_${bd11 || cleanIdent.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+        const autoStaffId = `staff_owner_${bd11 || cleanIdent.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 
         const newOwnerPayload = {
           ownerId: autoOwnerId,
@@ -2418,6 +2471,14 @@ export default function App() {
         targetUser.email ||
         (cleanIdent.includes('@') ? cleanIdent.toLowerCase() : `${cleanDigits || 'user'}@iqbalpharmacy.bd`);
 
+      const bd11 = cleanDigits.length >= 10 ? '0' + cleanDigits.slice(-10) : cleanDigits;
+      const sessionStaffId =
+        targetUser.staffId ||
+        targetUser.id ||
+        (isOwnerAccount
+          ? (cleanDigits.length >= 6 ? `staff_owner_${bd11}` : 'staff_owner_default')
+          : `staff_${cleanDigits}`);
+
       const session: ShopCloudSession = {
         uid: effectiveUid,
         email: effectiveEmail,
@@ -2427,7 +2488,7 @@ export default function App() {
         shopName: targetUser.shopName || shopProfile.shopName || 'ইকবাল ফার্মেসী',
         phone: effectivePhone,
         operatorRole: effectiveRole === 'owner' ? 'owner' : 'staff',
-        staffId: targetUser.staffId || targetUser.id || (isOwnerAccount ? 'staff-owner-1' : `staff_${cleanDigits}`),
+        staffId: sessionStaffId,
         loggedInAt: Date.now(),
       };
 
@@ -2525,9 +2586,18 @@ export default function App() {
 
       setShopProfile(updatedProfile);
       saveLocal(STORAGE_KEYS.SHOP, updatedProfile);
-      setDoc(doc(db, 'shops', SHARED_SHOP_DOC_ID), buildShopCloudPayload(updatedProfile, session.uid)).catch(() => {});
+      try {
+        await setDoc(doc(db, 'shops', SHARED_SHOP_DOC_ID), buildShopCloudPayload(updatedProfile, session.uid));
+      } catch {
+        // ignore
+      }
 
-      const staffId = existingUser ? existingUser.id : (session.staffId || 'staff-owner-1');
+      const bd11 = phoneDigits.length >= 10 ? '0' + phoneDigits.slice(-10) : phoneDigits;
+      const deterministicStaffId = phoneDigits.length >= 6
+        ? `staff_owner_${bd11}`
+        : `staff_owner_${cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 32)}`;
+      const staffId = existingUser ? existingUser.id : (session.staffId || deterministicStaffId);
+
       const ownerStaff: StaffMember = {
         id: staffId,
         ownerId: session.uid,
@@ -2552,7 +2622,11 @@ export default function App() {
         return next;
       });
 
-      setDoc(doc(db, 'staff', staffId), buildStaffCloudPayload(ownerStaff, session.uid)).catch(() => {});
+      try {
+        await setDoc(doc(db, 'staff', staffId), buildStaffCloudPayload(ownerStaff, session.uid));
+      } catch {
+        // ignore
+      }
 
       setActiveStaff(ownerStaff);
       setCloudSession(session);
@@ -3886,6 +3960,51 @@ export default function App() {
     }
 
     for (const purItem of purchaseCart) {
+      // Formula: Tp + Vat = Product Price. (মোট মূল্য + মোট ভ্যাট) ÷ প্রোডাক্ট সংখ্যা = সিঙ্গেল পিসের ক্রয় মূল্য
+      const effPackRate =
+        purItem.packRate && purItem.packRate > 0
+          ? purItem.packRate
+          : purItem.purchasePrice > 0
+          ? Number((purItem.purchasePrice * (purItem.unitsPerPack || 1)).toFixed(2))
+          : 0;
+      const count = Math.max(1, purItem.packCount || 1);
+      const isPack = Boolean(purItem.packUnit && purItem.packUnit !== 'piece' && effPackRate > 0);
+      const itemLineCost = isPack
+        ? Number((effPackRate * count).toFixed(2))
+        : Number((purItem.purchasePrice * purItem.qty).toFixed(2));
+
+      // 1. Product VAT (% or ৳)
+      const pMode = purItem.productVatMode || (purItem.vatAmount && purItem.vatAmount > 0 && !purItem.vatPercent ? '৳' : '%');
+      const productVat =
+        pMode === '৳'
+          ? Math.max(0, purItem.vatAmount || 0)
+          : purItem.vatPercent && purItem.vatPercent > 0
+          ? Number(((itemLineCost * purItem.vatPercent) / 100).toFixed(2))
+          : 0;
+
+      // 2. Bonus item VAT (bonusQty × rate, fixed lump sum, or percent)
+      const bQty = Math.max(0, purItem.bonusQty || 0);
+      const bMode = purItem.bonusVatMode || '৳';
+      const bRate = Math.max(0, purItem.bonusVatRate || 0);
+      let bonusVat = 0;
+      if (bQty > 0 && bRate > 0) {
+        if (bMode === '৳') {
+          bonusVat = Number((bQty * bRate).toFixed(2));
+        } else if (bMode === 'fixed') {
+          bonusVat = Number(bRate.toFixed(2));
+        } else {
+          const unitP = purItem.purchasePrice > 0 ? purItem.purchasePrice : 0;
+          bonusVat = Number((bQty * ((unitP * bRate) / 100)).toFixed(2));
+        }
+      } else if (purItem.bonusVatAmount && purItem.bonusVatAmount > 0) {
+        bonusVat = Number(purItem.bonusVatAmount.toFixed(2));
+      }
+
+      const totalItemVat = productVat + bonusVat;
+      const productUnits = Math.max(1, purItem.qty);
+      // Single piece price including VAT (Tp + Vat = Product Price)
+      const effectiveSinglePiecePurchasePrice = Number(((itemLineCost + totalItemVat) / productUnits).toFixed(4));
+
       // 1. Always ensure new products are saved to the database catalog so they are suggested in future searches
       const baseMed = fullCatalog.find(
         (m) =>
@@ -3899,8 +4018,8 @@ export default function App() {
         const fallbackRetail =
           purItem.unitPrice > 0
             ? purItem.unitPrice
-            : purItem.purchasePrice > 0
-            ? Number((purItem.purchasePrice * 1.15).toFixed(2))
+            : effectiveSinglePiecePurchasePrice > 0
+            ? Number((effectiveSinglePiecePurchasePrice * 1.15).toFixed(2))
             : 5;
         await handleSaveMedicineCatalog({
           brandName: purItem.brandName.trim(),
@@ -3909,7 +4028,7 @@ export default function App() {
           strength: (purItem.strength || 'Standard').trim(),
           dosageForm: (purItem.dosageForm || 'Tablet').trim(),
           packSize: purItem.packDetailFormula || purItem.packSize || '10 × 10 (100 pcs)',
-          purchasePrice: purItem.purchasePrice,
+          purchasePrice: effectiveSinglePiecePurchasePrice,
           unitPrice: fallbackRetail,
           stripPrice: Number((fallbackRetail * 10).toFixed(2)),
           therapeuticClass: 'Custom Product',
@@ -3922,7 +4041,7 @@ export default function App() {
             : Number((baseMed.unitPrice * 0.88).toFixed(2));
         if (
           Math.abs(baseMed.unitPrice - purItem.unitPrice) > 0.001 ||
-          Math.abs(oldPur - purItem.purchasePrice) > 0.001
+          Math.abs(oldPur - effectiveSinglePiecePurchasePrice) > 0.001
         ) {
           await handleSaveMedicineCatalog(
             {
@@ -3932,7 +4051,7 @@ export default function App() {
               strength: purItem.strength || baseMed.strength,
               dosageForm: purItem.dosageForm || baseMed.dosageForm,
               packSize: baseMed.packSize,
-              purchasePrice: purItem.purchasePrice,
+              purchasePrice: effectiveSinglePiecePurchasePrice,
               unitPrice: purItem.unitPrice,
               stripPrice: Number((purItem.unitPrice * (baseMed.unitsPerStrip || 10)).toFixed(2)),
               therapeuticClass: baseMed.therapeuticClass,
@@ -3961,7 +4080,7 @@ export default function App() {
       if (existingInv) {
         existingInv.id = getCanonicalDocId(existingInv.id);
         existingInv.stockQty = existingInv.stockQty + totalUnitsToAdd;
-        existingInv.purchasePrice = purItem.purchasePrice;
+        existingInv.purchasePrice = effectiveSinglePiecePurchasePrice;
         existingInv.unitPrice = purItem.unitPrice;
         existingInv.stripPrice = Number((purItem.unitPrice * 10).toFixed(2));
         existingInv.batchNo = purItem.batchNo || existingInv.batchNo;
@@ -3982,7 +4101,7 @@ export default function App() {
           strength: purItem.strength,
           dosageForm: purItem.dosageForm,
           packSize: purItem.packSize || '10 × 10 (100 pcs)',
-          purchasePrice: purItem.purchasePrice,
+          purchasePrice: effectiveSinglePiecePurchasePrice,
           unitPrice: purItem.unitPrice,
           stripPrice: Number((purItem.unitPrice * 10).toFixed(2)),
           stockQty: totalUnitsToAdd,
@@ -5393,7 +5512,19 @@ export default function App() {
     existingId?: string
   ) => {
     const nowMs = Date.now();
-    const stId = getCanonicalDocId(existingId || `staff_${nowMs}`);
+    const cleanDigits = (data.phone || '').replace(/[^0-9]/g, '');
+    const duplicateStaff = !existingId
+      ? staffList.find((s) => {
+          const sDigits = (s.phone || '').replace(/[^0-9]/g, '');
+          return (
+            (cleanDigits.length >= 6 && (sDigits === cleanDigits || (cleanDigits.length >= 10 && sDigits.endsWith(cleanDigits.slice(-10))))) ||
+            (data.email && s.email && s.email.toLowerCase() === data.email.toLowerCase())
+          );
+        })
+      : undefined;
+
+    const targetStaffId = existingId || duplicateStaff?.id || (cleanDigits.length >= 6 ? `staff_${cleanDigits.length >= 10 ? '0' + cleanDigits.slice(-10) : cleanDigits}` : `staff_${nowMs}`);
+    const stId = getCanonicalDocId(targetStaffId);
     unmarkDeletedId(stId);
     const enforcedName =
       data.roleTitle === 'owner' ? 'Owner' : sanitizeString(data.name, 100);
@@ -5412,20 +5543,15 @@ export default function App() {
       updatedAtMs: nowMs,
     };
 
-    if (existingId) {
-      setStaffList((prev) => {
-        const next = prev.map((s) => (getCanonicalDocId(s.id) === stId ? newStaff : s));
-        saveLocal(STORAGE_KEYS.STAFF, next);
-        return next;
-      });
-      if (getCanonicalDocId(activeStaff.id) === stId) setActiveStaff(newStaff);
-    } else {
-      setStaffList((prev) => {
-        const next = [...prev, newStaff];
-        saveLocal(STORAGE_KEYS.STAFF, next);
-        return next;
-      });
-    }
+    setStaffList((prev) => {
+      const next = prev.map((s) => (getCanonicalDocId(s.id) === stId ? newStaff : s));
+      if (!next.some((s) => getCanonicalDocId(s.id) === stId)) {
+        next.push(newStaff);
+      }
+      saveLocal(STORAGE_KEYS.STAFF, next);
+      return next;
+    });
+    if (getCanonicalDocId(activeStaff.id) === stId) setActiveStaff(newStaff);
 
     try {
       await setDoc(
