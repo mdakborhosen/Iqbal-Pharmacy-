@@ -699,13 +699,33 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
       const lineCost = isPack
         ? Number((effPackRate * count).toFixed(2))
         : Number((item.purchasePrice * item.qty).toFixed(2));
-      const itemVat =
-        item.vatAmount && item.vatAmount > 0
-          ? item.vatAmount
+
+      // 1. Product price VAT (% or ৳)
+      const pMode = item.productVatMode || (item.vatAmount && item.vatAmount > 0 && !item.vatPercent ? '৳' : '%');
+      const productVat =
+        pMode === '৳'
+          ? Math.max(0, item.vatAmount || 0)
           : item.vatPercent && item.vatPercent > 0
           ? Number(((lineCost * item.vatPercent) / 100).toFixed(2))
           : 0;
-      return acc + itemVat;
+
+      // 2. Bonus item VAT: multiplied by its quantity (bonusQty × rate)
+      const bQty = Math.max(0, item.bonusQty || 0);
+      const bMode = item.bonusVatMode || '৳';
+      const bRate = Math.max(0, item.bonusVatRate || 0);
+      let bonusVat = 0;
+      if (bQty > 0 && bRate > 0) {
+        if (bMode === '৳') {
+          bonusVat = Number((bQty * bRate).toFixed(2));
+        } else {
+          const unitP = item.purchasePrice > 0 ? item.purchasePrice : 0;
+          bonusVat = Number((bQty * ((unitP * bRate) / 100)).toFixed(2));
+        }
+      } else if (item.bonusVatAmount && item.bonusVatAmount > 0) {
+        bonusVat = Number(item.bonusVatAmount.toFixed(2));
+      }
+
+      return acc + productVat + bonusVat;
     }, 0);
   }, [purchaseCart]);
 
@@ -1747,12 +1767,13 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                       <th className="py-2.5 px-3 min-w-[360px] border-r border-indigo-800/60 leading-tight">
                         Pcs 0,1,2... / Strip 1*10, 1*28, 1*20, 1*15 (Manual/Product Database) / Box 1*10*10, 1*28*20,.. (Manual/Product Database)
                       </th>
-                      <th className="py-2.5 px-3 min-w-[125px] text-center border-r border-indigo-800/60 leading-tight">
-                        🎁 বোনাস (Bonus Free)<br />
-                        <span className="text-[9px] font-normal text-indigo-300">(স্টক বাড়বে, দাম ৳০)</span>
+                      <th className="py-2.5 px-3 min-w-[155px] text-center border-r border-indigo-800/60 leading-tight">
+                        🎁 বোনাস ও বোনাস ভ্যাট<br />
+                        <span className="text-[9px] font-normal text-indigo-300">(স্টক ফ্রি + ভ্যাট × কোয়ান্টিটি)</span>
                       </th>
-                      <th className="py-2.5 px-3 min-w-[170px] text-center border-r border-indigo-800/60">
-                        Price & VAT (দর ও ভ্যাট ৳/%)
+                      <th className="py-2.5 px-3 min-w-[185px] text-center border-r border-indigo-800/60 leading-tight">
+                        দর ও প্রোডাক্ট ভ্যাট<br />
+                        <span className="text-[9px] font-normal text-indigo-300">(ক্রয় দর + % বা ৳ ভ্যাট)</span>
                       </th>
                       <th className="py-2.5 px-3 w-32 text-right border-r border-indigo-800/60">
                         লাইন মোট (৳)
@@ -1775,13 +1796,34 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                       const itemLineCost = isPackRow
                         ? Number((effectivePackRate * effectivePackCount).toFixed(2))
                         : Number((item.purchasePrice * item.qty).toFixed(2));
-                      const itemVat =
-                        item.vatAmount && item.vatAmount > 0
-                          ? item.vatAmount
+
+                      // 1. Product price VAT (% or ৳)
+                      const pMode = item.productVatMode || (item.vatAmount && item.vatAmount > 0 && !item.vatPercent ? '৳' : '%');
+                      const productVat =
+                        pMode === '৳'
+                          ? Math.max(0, item.vatAmount || 0)
                           : item.vatPercent && item.vatPercent > 0
                           ? Number(((itemLineCost * item.vatPercent) / 100).toFixed(2))
                           : 0;
-                      const lineTotal = Number((itemLineCost + itemVat).toFixed(2));
+
+                      // 2. Bonus item VAT (multiplied by bonusQty)
+                      const bQty = Math.max(0, item.bonusQty || 0);
+                      const bMode = item.bonusVatMode || '৳';
+                      const bRate = Math.max(0, item.bonusVatRate || 0);
+                      let bonusVat = 0;
+                      if (bQty > 0 && bRate > 0) {
+                        if (bMode === '৳') {
+                          bonusVat = Number((bQty * bRate).toFixed(2));
+                        } else {
+                          const unitP = item.purchasePrice > 0 ? item.purchasePrice : 0;
+                          bonusVat = Number((bQty * ((unitP * bRate) / 100)).toFixed(2));
+                        }
+                      } else if (item.bonusVatAmount && item.bonusVatAmount > 0) {
+                        bonusVat = Number(item.bonusVatAmount.toFixed(2));
+                      }
+
+                      const totalItemVat = Number((productVat + bonusVat).toFixed(2));
+                      const lineTotal = Number((itemLineCost + totalItemVat).toFixed(2));
                       const rawCurrentStock = getStockForMed(item);
                       const oldPurQty = isEditingPurchase ? getOldEditedQtyForMed(item) : 0;
                       const currentStock = Math.max(0, rawCurrentStock - oldPurQty);
@@ -2395,7 +2437,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                             </div>
                           </td>
 
-                          {/* 4. Bonus Column (🎁 বোনাস / ফ্রি পিস — স্টক বাড়বে, দাম শূন্য) */}
+                          {/* 4. Bonus Column (🎁 বোনাস / ফ্রি পিস — স্টক বাড়বে, আলাদা ভ্যাট যোগ করা যাবে) */}
                           <td className="py-3 px-2 align-top border-r border-slate-200 text-center">
                             <label className="block text-[10px] text-slate-500 font-semibold mb-0.5">
                               বোনাস (ফ্রি পিস):
@@ -2407,19 +2449,115 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                               value={item.bonusQty !== undefined && item.bonusQty > 0 ? item.bonusQty : ''}
                               onChange={(e) => {
                                 const nextBonus = Math.max(0, parseInt(e.target.value) || 0);
+                                let bVatAmt = 0;
+                                if (nextBonus > 0 && bRate > 0) {
+                                  if (bMode === '৳') {
+                                    bVatAmt = Number((nextBonus * bRate).toFixed(2));
+                                  } else {
+                                    const unitP = item.purchasePrice > 0 ? item.purchasePrice : 0;
+                                    bVatAmt = Number((nextBonus * ((unitP * bRate) / 100)).toFixed(2));
+                                  }
+                                }
                                 onUpdatePurchaseCartItemDetails(item.medicineId, {
                                   bonusQty: nextBonus,
+                                  bonusVatAmount: bVatAmt,
                                 });
                               }}
                               placeholder="0"
                               className="w-20 text-center py-1 px-1.5 text-xs font-mono font-bold tabular-nums border border-amber-300 rounded bg-amber-50/70 text-slate-900 focus:bg-white focus:border-amber-500 mx-auto"
                             />
-                            <div className="text-[10px] font-mono text-emerald-700 font-semibold mt-1">
+                            <div className="text-[10px] font-mono text-emerald-700 font-semibold mt-0.5">
                               {bonusPieces > 0 ? `+${bonusPieces} পিস ফ্রি` : '—'}
                             </div>
+
+                            {/* Bonus item separate VAT (বোনাস কোয়ান্টিটি দিয়ে গুণ হয়ে বিলে যুক্ত হবে) */}
+                            {bonusPieces > 0 && (
+                              <div className="mt-1.5 pt-1 border-t border-amber-200 bg-amber-50/60 p-1.5 rounded-sm text-left">
+                                <div className="flex items-center justify-between text-[9.5px] font-semibold text-amber-950 mb-1">
+                                  <span>বোনাস ভ্যাট:</span>
+                                  {/* Toggle % vs ৳ */}
+                                  <div className="inline-flex rounded border border-amber-300 overflow-hidden bg-white text-[9px] font-mono">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const newMode = '৳';
+                                        const newAmt = Number((bonusPieces * bRate).toFixed(2));
+                                        onUpdatePurchaseCartItemDetails(item.medicineId, {
+                                          bonusVatMode: newMode,
+                                          bonusVatAmount: newAmt,
+                                        });
+                                      }}
+                                      className={`px-1.5 py-0.5 font-bold transition-colors ${
+                                        bMode === '৳' ? 'bg-amber-600 text-white' : 'text-slate-600 hover:bg-amber-100'
+                                      }`}
+                                      title="প্রতি বোনাস পিসে নির্দিষ্ট টাকা (৳)"
+                                    >
+                                      ৳/পিস
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const newMode = '%';
+                                        const unitP = item.purchasePrice > 0 ? item.purchasePrice : 0;
+                                        const newAmt = Number((bonusPieces * ((unitP * bRate) / 100)).toFixed(2));
+                                        onUpdatePurchaseCartItemDetails(item.medicineId, {
+                                          bonusVatMode: newMode,
+                                          bonusVatAmount: newAmt,
+                                        });
+                                      }}
+                                      className={`px-1.5 py-0.5 font-bold transition-colors ${
+                                        bMode === '%' ? 'bg-amber-600 text-white' : 'text-slate-600 hover:bg-amber-100'
+                                      }`}
+                                      title="পণ্য দরের শতকরা হার (%)"
+                                    >
+                                      %
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="number"
+                                    step={bMode === '৳' ? '0.01' : '0.5'}
+                                    min="0"
+                                    value={item.bonusVatRate !== undefined && item.bonusVatRate > 0 ? item.bonusVatRate : ''}
+                                    onChange={(e) => {
+                                      const nextRate = Math.max(0, parseFloat(e.target.value) || 0);
+                                      let bVatAmt = 0;
+                                      if (bonusPieces > 0 && nextRate > 0) {
+                                        if (bMode === '৳') {
+                                          bVatAmt = Number((bonusPieces * nextRate).toFixed(2));
+                                        } else {
+                                          const unitP = item.purchasePrice > 0 ? item.purchasePrice : 0;
+                                          bVatAmt = Number((bonusPieces * ((unitP * nextRate) / 100)).toFixed(2));
+                                        }
+                                      }
+                                      onUpdatePurchaseCartItemDetails(item.medicineId, {
+                                        bonusVatRate: nextRate,
+                                        bonusVatMode: bMode,
+                                        bonusVatAmount: bVatAmt,
+                                      });
+                                    }}
+                                    placeholder={bMode === '৳' ? '৳ প্রতি পিস' : 'ভ্যাট %'}
+                                    className="w-full text-center py-0.5 px-1 text-[10.5px] font-mono font-bold border border-amber-300 rounded bg-white text-slate-900 focus:border-amber-500"
+                                  />
+                                </div>
+
+                                {bonusVat > 0 ? (
+                                  <div className="text-[9px] font-mono text-amber-900 font-bold mt-1 text-center bg-amber-100/90 rounded px-1 py-0.5">
+                                    +৳{bonusVat.toFixed(2)} ({bonusPieces} × {bMode === '৳' ? `৳${bRate}` : `${bRate}%`})
+                                    <div className="text-[8px] font-sans text-amber-800 font-medium">মোট বিলে যোগ হবে</div>
+                                  </div>
+                                ) : (
+                                  <div className="text-[8px] text-slate-400 text-center mt-0.5">
+                                    (কোয়ান্টিটি দিয়ে গুন হয়ে বিলে যুক্ত হবে)
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </td>
 
-                          {/* 5. Price Column (Manual / Database) - NO SELLING PRICE! */}
+                          {/* 5. Price & Product VAT Column (Manual / Database) */}
                           <td className="py-3 px-3 align-top border-r border-slate-200">
                             <div className="space-y-1.5 text-center">
                               {currentPackUnit !== 'piece' ? (
@@ -2488,28 +2626,98 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                 />
                               </div>
 
-                              {/* Optional Line VAT % */}
-                              <div className="pt-1 flex items-center justify-center gap-1 border-t border-slate-100 mt-1">
-                                <span className="text-[10px] text-slate-500">ভ্যাট (%):</span>
-                                <input
-                                  type="number"
-                                  step="0.5"
-                                  min="0"
-                                  value={item.vatPercent !== undefined && item.vatPercent > 0 ? item.vatPercent : ''}
-                                  onChange={(e) => {
-                                    const nextVatPct = Math.max(0, parseFloat(e.target.value) || 0);
-                                    onUpdatePurchaseCartItemDetails(item.medicineId, {
-                                      vatPercent: nextVatPct,
-                                    });
-                                  }}
-                                  placeholder="0%"
-                                  className="w-16 text-center py-0.5 px-1 text-[10px] font-mono border border-slate-200 rounded bg-white text-slate-700"
-                                />
+                              {/* Product VAT (% or ৳ toggle) */}
+                              <div className="pt-1.5 border-t border-slate-200 bg-slate-50/70 p-1 rounded-sm text-left mt-1">
+                                <div className="flex items-center justify-between text-[9.5px] font-semibold text-slate-700 mb-1">
+                                  <span>প্রোডাক্ট ভ্যাট:</span>
+                                  <div className="inline-flex rounded border border-slate-300 overflow-hidden bg-white text-[9px] font-mono">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const newMode = '%';
+                                        const calculatedAmt = Number(((itemLineCost * (item.vatPercent || 0)) / 100).toFixed(2));
+                                        onUpdatePurchaseCartItemDetails(item.medicineId, {
+                                          productVatMode: newMode,
+                                          vatAmount: calculatedAmt,
+                                        });
+                                      }}
+                                      className={`px-1.5 py-0.5 font-bold transition-colors ${
+                                        pMode === '%' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+                                      }`}
+                                      title="শতকরা হার (%)"
+                                    >
+                                      %
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const newMode = '৳';
+                                        onUpdatePurchaseCartItemDetails(item.medicineId, {
+                                          productVatMode: newMode,
+                                        });
+                                      }}
+                                      className={`px-1.5 py-0.5 font-bold transition-colors ${
+                                        pMode === '৳' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+                                      }`}
+                                      title="সরাসরি টাকার পরিমাণ (৳)"
+                                    >
+                                      ৳
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {pMode === '%' ? (
+                                  <div className="flex items-center justify-center gap-1">
+                                    <input
+                                      type="number"
+                                      step="0.5"
+                                      min="0"
+                                      value={item.vatPercent !== undefined && item.vatPercent > 0 ? item.vatPercent : ''}
+                                      onChange={(e) => {
+                                        const nextVatPct = Math.max(0, parseFloat(e.target.value) || 0);
+                                        const calculatedAmt = Number(((itemLineCost * nextVatPct) / 100).toFixed(2));
+                                        onUpdatePurchaseCartItemDetails(item.medicineId, {
+                                          vatPercent: nextVatPct,
+                                          vatAmount: calculatedAmt,
+                                          productVatMode: '%',
+                                        });
+                                      }}
+                                      placeholder="0%"
+                                      className="w-18 text-center py-0.5 px-1 text-[10.5px] font-mono font-bold border border-slate-300 rounded bg-white text-slate-800"
+                                    />
+                                    {productVat > 0 && (
+                                      <span className="text-[9.5px] font-mono font-bold text-amber-800 whitespace-nowrap">
+                                        +৳{productVat.toFixed(2)}
+                                      </span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-center gap-1">
+                                    <span className="text-[10px] font-bold text-slate-500">৳</span>
+                                    <input
+                                      type="number"
+                                      step="any"
+                                      min="0"
+                                      value={item.vatAmount !== undefined && item.vatAmount > 0 ? item.vatAmount : ''}
+                                      onChange={(e) => {
+                                        const nextVatAmt = Math.max(0, parseFloat(e.target.value) || 0);
+                                        const calculatedPct = itemLineCost > 0 ? Number(((nextVatAmt / itemLineCost) * 100).toFixed(2)) : 0;
+                                        onUpdatePurchaseCartItemDetails(item.medicineId, {
+                                          vatAmount: nextVatAmt,
+                                          vatPercent: calculatedPct,
+                                          productVatMode: '৳',
+                                        });
+                                      }}
+                                      placeholder="0.00"
+                                      className="w-20 text-center py-0.5 px-1 text-[10.5px] font-mono font-bold border border-slate-300 rounded bg-white text-slate-800"
+                                    />
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </td>
 
-                          {/* 5. Line Total (৳) - Two-way synced with Box & Piece Price */}
+                          {/* 6. Line Total (৳) - Breakdown of Product Cost, Product VAT, Bonus VAT */}
                           <td className="py-3 px-3 align-top border-r border-slate-200 text-right">
                             <label className="block text-[10px] text-slate-500 font-semibold mb-0.5 text-right">
                               লাইন মোট (৳):
@@ -2523,20 +2731,21 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                 value={lineTotal > 0 ? lineTotal : ''}
                                 onChange={(e) => {
                                   const nextLineTotal = Math.max(0, parseFloat(e.target.value) || 0);
+                                  const netCost = Math.max(0, nextLineTotal - totalItemVat);
                                   const count = Math.max(1, item.packCount || 1);
                                   const uPack = Math.max(1, item.unitsPerPack || 1);
                                   if (currentPackUnit !== 'piece') {
-                                    const nextPackRate = Number((nextLineTotal / count).toFixed(2));
-                                    const nextPurPrice = Number((nextLineTotal / (count * uPack)).toFixed(4));
+                                    const nextPackRate = Number((netCost / count).toFixed(2));
+                                    const nextPurPrice = Number((netCost / (count * uPack)).toFixed(4));
                                     onUpdatePurchaseCartItemDetails(item.medicineId, {
                                       packRate: nextPackRate,
                                       purchasePrice: Math.max(0.01, nextPurPrice),
                                     });
                                   } else {
-                                    const nextPurPrice = Number((nextLineTotal / Math.max(1, item.qty)).toFixed(4));
+                                    const nextPurPrice = Number((netCost / Math.max(1, item.qty)).toFixed(4));
                                     onUpdatePurchaseCartItemDetails(item.medicineId, {
                                       purchasePrice: Math.max(0.01, nextPurPrice),
-                                      packRate: nextLineTotal,
+                                      packRate: netCost,
                                     });
                                   }
                                 }}
@@ -2544,23 +2753,36 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                 className="w-24 text-right py-1 px-1.5 text-xs font-mono font-bold tabular-nums border border-slate-300 rounded bg-white text-indigo-950 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-500"
                               />
                             </div>
-                            <div className="text-[10px] font-mono text-slate-500 mt-1">
-                              {isPackRow ? (
-                                <span>
-                                  {item.packCount}{' '}
-                                  {item.packUnit === 'strip'
-                                    ? 'পাতা'
-                                    : item.packUnit === 'box'
-                                    ? 'বক্স'
-                                    : 'কার্টুন'}{' '}
-                                  ({item.qty} পিস)
-                                </span>
-                              ) : (
-                                <span>{item.qty} পিস × ৳{formatCleanMoney(item.purchasePrice)}</span>
+                            <div className="text-[10px] font-mono text-slate-500 mt-1 space-y-0.5">
+                              <div>
+                                {isPackRow ? (
+                                  <span>
+                                    {item.packCount}{' '}
+                                    {item.packUnit === 'strip'
+                                      ? 'পাতা'
+                                      : item.packUnit === 'box'
+                                      ? 'বক্স'
+                                      : 'কার্টুন'}{' '}
+                                    ({item.qty} পিস)
+                                  </span>
+                                ) : (
+                                  <span>{item.qty} পিস × ৳{formatCleanMoney(item.purchasePrice)}</span>
+                                )}
+                              </div>
+                              <div className="text-slate-600">
+                                পণ্য দর: ৳{itemLineCost.toFixed(2)}
+                              </div>
+                              {productVat > 0 && (
+                                <div className="text-amber-800 font-semibold">
+                                  +পণ্য ভ্যাট ({pMode === '৳' ? '৳' : `${item.vatPercent}%`}): ৳{productVat.toFixed(2)}
+                                </div>
                               )}
-                              {itemVat > 0 && (
-                                <div className="text-[10px] font-mono text-amber-700 font-semibold">
-                                  +৳{itemVat.toFixed(2)} ভ্যাট
+                              {bonusVat > 0 && (
+                                <div className="text-amber-950 font-bold bg-amber-100/80 px-1 py-0.5 rounded border border-amber-300">
+                                  +বোনাস ভ্যাট: ৳{bonusVat.toFixed(2)}
+                                  <div className="text-[8.5px] font-normal text-amber-800">
+                                    ({bonusPieces} পিস × {bMode === '৳' ? `৳${bRate}` : `${bRate}%`})
+                                  </div>
                                 </div>
                               )}
                             </div>
@@ -3682,14 +3904,24 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                   </td>
                                   {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
                                     <td className={`text-center text-slate-700 ${isDense ? 'py-0.5 px-1' : 'py-1.5 px-1'}`}>
-                                      ৳{formatCleanMoney(pItem.unitPrice)}
+                                      <div>৳{formatCleanMoney(pItem.unitPrice)}</div>
+                                      {pItem.vatAmount && pItem.vatAmount > 0 ? (
+                                        <div className="text-[8.5px] font-mono text-amber-800 font-semibold">
+                                          +ভ্যাট ৳{pItem.vatAmount.toFixed(2)}
+                                        </div>
+                                      ) : null}
                                     </td>
                                   )}
                                   <td className={`text-center font-bold text-slate-900 ${isDense ? 'py-0.5 px-1' : 'py-1.5 px-1'}`}>
                                     {pItem.qty} পিস
                                     {pItem.bonusQty && pItem.bonusQty > 0 ? (
-                                      <div className="text-[9px] font-mono text-amber-800 bg-amber-100 rounded px-1 font-bold whitespace-nowrap mt-0.5">
+                                      <div className="text-[9px] font-mono text-amber-900 bg-amber-100 border border-amber-300 rounded px-1 font-bold whitespace-nowrap mt-0.5">
                                         +{pItem.bonusQty} বোনাস
+                                        {pItem.bonusVatAmount && pItem.bonusVatAmount > 0 ? (
+                                          <div className="text-[8px] font-mono text-amber-950 font-bold">
+                                            ভ্যাট: ৳{pItem.bonusVatAmount.toFixed(2)}
+                                          </div>
+                                        ) : null}
                                       </div>
                                     ) : null}
                                   </td>

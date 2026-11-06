@@ -274,6 +274,10 @@ export interface PurchaseCartItem {
   stripsPerBox?: number; // e.g. 51 পাতা per বক্স
   pcsPerStrip?: number; // e.g. 10 পিস per পাতা
   bonusQty?: number; // বোনাস সংখ্যা (Bonus quantity in pieces)
+  bonusVatMode?: '%' | '৳'; // বোনাস ভ্যাট ধরণ (% বা ৳ প্রতি পিস)
+  bonusVatRate?: number; // বোনাস ভ্যাট হার (% অথবা ৳/পিস)
+  bonusVatAmount?: number; // মোট বোনাস ভ্যাট (bonusQty × rate)
+  productVatMode?: '%' | '৳'; // পণ্যের মূল্যের ভ্যাট ধরণ (% বা ৳)
   vatPercent?: number; // ভ্যাট হার % (VAT %)
   vatAmount?: number; // ভ্যাট টাকা ৳ (VAT Amount)
   customLineTotal?: number; // কাস্টম লাইন মোট মূল্য ৳ (Custom Price / Line Total)

@@ -5093,6 +5093,10 @@ export function formatPurchaseItemInvoiceLine(
     qty: number;
     updateStock?: boolean;
     bonusQty?: number;
+    bonusVatMode?: '%' | '৳';
+    bonusVatRate?: number;
+    bonusVatAmount?: number;
+    productVatMode?: '%' | '৳';
     vatPercent?: number;
     vatAmount?: number;
     packUnit?: string;
@@ -5115,12 +5119,37 @@ export function formatPurchaseItemInvoiceLine(
   const baseCost = isPack
     ? Number((item.packRate! * item.packCount!).toFixed(2))
     : Number((item.purchasePrice * item.qty).toFixed(2));
-  const vatExtra = item.vatAmount && item.vatAmount > 0
-    ? Number(item.vatAmount.toFixed(2))
-    : item.vatPercent && item.vatPercent > 0
-    ? Number(((baseCost * item.vatPercent) / 100).toFixed(2))
-    : 0;
-  const exactLineTotal = Number((baseCost + vatExtra).toFixed(2));
+
+  // 1. Product Price VAT (either % or direct ৳)
+  const pMode = item.productVatMode || (item.vatAmount && item.vatAmount > 0 && !item.vatPercent ? '৳' : '%');
+  let productVat = 0;
+  if (pMode === '৳') {
+    productVat = Math.max(0, item.vatAmount || 0);
+  } else {
+    const pRate = Math.max(0, item.vatPercent || 0);
+    productVat = pRate > 0 ? Number(((baseCost * pRate) / 100).toFixed(2)) : 0;
+  }
+
+  // 2. Bonus Item VAT (multiplied by its quantity: bonusQty × rate)
+  const bQty = Math.max(0, item.bonusQty || 0);
+  const bMode = item.bonusVatMode || '৳';
+  const bRate = Math.max(0, item.bonusVatRate || 0);
+  let bonusVat = 0;
+  if (bQty > 0 && bRate > 0) {
+    if (bMode === '৳') {
+      // Direct money per bonus piece multiplied by bonus quantity!
+      bonusVat = Number((bQty * bRate).toFixed(2));
+    } else {
+      // Percentage on purchase price per bonus unit, multiplied by bonus quantity!
+      const unitP = item.purchasePrice > 0 ? item.purchasePrice : 0;
+      bonusVat = Number((bQty * ((unitP * bRate) / 100)).toFixed(2));
+    }
+  } else if (item.bonusVatAmount && item.bonusVatAmount > 0) {
+    bonusVat = Number(item.bonusVatAmount.toFixed(2));
+  }
+
+  const totalItemVat = Number((productVat + bonusVat).toFixed(2));
+  const exactLineTotal = Number((baseCost + totalItemVat).toFixed(2));
   const unitStr = formatCleanMoney(item.purchasePrice);
   const totalStr = formatCleanMoney(exactLineTotal);
   const cleanBrand = (item.brandName || 'Custom Product').trim();
@@ -5128,11 +5157,18 @@ export function formatPurchaseItemInvoiceLine(
     item.strength && item.strength.trim() !== 'Standard' ? item.strength.trim() : '';
   const nameAndStrength = cleanStrength ? `${cleanBrand} ${cleanStrength}` : cleanBrand;
   const stockTag = item.updateStock === false ? ' [নন-স্টক/শুধু-বিল]' : '';
-  const bonusTag = item.bonusQty && item.bonusQty > 0 ? ` [বোনাস: +${item.bonusQty} পিস]` : '';
-  const vatTag = item.vatPercent && item.vatPercent > 0
-    ? ` [ভ্যাট: ${item.vatPercent}%]`
-    : item.vatAmount && item.vatAmount > 0
-    ? ` [ভ্যাট: ৳${formatCleanMoney(item.vatAmount)}]`
+  const bonusTag = bQty > 0 ? ` [বোনাস: +${bQty} পিস]` : '';
+  
+  const bonusVatTag = bonusVat > 0
+    ? (bMode === '৳'
+        ? ` [বোনাস ভ্যাট: ${bQty} পিস × ৳${formatCleanMoney(bRate)} = ৳${formatCleanMoney(bonusVat)}]`
+        : ` [বোনাস ভ্যাট: ${bQty} পিস @${bRate}% = ৳${formatCleanMoney(bonusVat)}]`)
+    : '';
+
+  const productVatTag = productVat > 0
+    ? (pMode === '৳'
+        ? ` [পণ্য ভ্যাট: ৳${formatCleanMoney(productVat)}]`
+        : ` [পণ্য ভ্যাট: ${item.vatPercent}% (৳${formatCleanMoney(productVat)})]`)
     : '';
 
   let packDetail = '';
@@ -5151,7 +5187,7 @@ export function formatPurchaseItemInvoiceLine(
     packDetail = ` [${item.qty} পিস]`;
   }
 
-  return `${index + 1}.${prefix}.${nameAndStrength}${packDetail}${bonusTag}${vatTag} (৳${unitStr}) × ${item.qty}=${totalStr}${stockTag}`;
+  return `${index + 1}.${prefix}.${nameAndStrength}${packDetail}${bonusTag}${bonusVatTag}${productVatTag} (৳${unitStr}) × ${item.qty}=${totalStr}${stockTag}`;
 }
 
 export interface ParsedInvoiceItem {
@@ -5161,6 +5197,10 @@ export interface ParsedInvoiceItem {
   cleanName?: string;
   packDetail?: string;
   bonusQty?: number;
+  bonusVatMode?: '%' | '৳';
+  bonusVatRate?: number;
+  bonusVatAmount?: number;
+  productVatMode?: '%' | '৳';
   vatPercent?: number;
   vatAmount?: number;
   dosageInstruction?: string;
@@ -5312,6 +5352,10 @@ export function parseTransactionItemsDetailed(
       let cleanBrandAndStrength = brandAndStrength;
       let packDetail = '';
       let bonusQty = 0;
+      let bonusVatMode: '%' | '৳' = '৳';
+      let bonusVatRate = 0;
+      let bonusVatAmount = 0;
+      let productVatMode: '%' | '৳' = '%';
       let vatPercent = 0;
       let vatAmount = 0;
 
@@ -5322,11 +5366,28 @@ export function parseTransactionItemsDetailed(
           if (inner.includes('বোনাস:')) {
             const bNum = inner.match(/বোনাস:\s*\+?(\d+)/);
             if (bNum) bonusQty = parseInt(bNum[1], 10);
-          } else if (inner.includes('ভ্যাট:')) {
-            const vMatch = inner.match(/ভ্যাট:\s*([\d.]+)%?/);
-            if (vMatch) vatPercent = parseFloat(vMatch[1]);
-            const vTkMatch = inner.match(/ভ্যাট:\s*৳?([\d.]+)/);
-            if (vTkMatch && !vMatch) vatAmount = parseFloat(vTkMatch[1]);
+          } else if (inner.includes('বোনাস ভ্যাট:')) {
+            if (inner.includes('%')) {
+              bonusVatMode = '%';
+              const rM = inner.match(/@([\d.]+)%/);
+              if (rM) bonusVatRate = parseFloat(rM[1]);
+            } else {
+              bonusVatMode = '৳';
+              const rM = inner.match(/×\s*৳([\d.]+)/);
+              if (rM) bonusVatRate = parseFloat(rM[1]);
+            }
+            const totM = inner.match(/=\s*৳([\d.]+)/);
+            if (totM) bonusVatAmount = parseFloat(totM[1]);
+          } else if (inner.includes('পণ্য ভ্যাট:') || inner.includes('ভ্যাট:')) {
+            if (inner.includes('%')) {
+              productVatMode = '%';
+              const vMatch = inner.match(/(?:পণ্য\s*)?ভ্যাট:\s*([\d.]+)%/);
+              if (vMatch) vatPercent = parseFloat(vMatch[1]);
+            } else {
+              productVatMode = '৳';
+              const vTkMatch = inner.match(/(?:পণ্য\s*)?ভ্যাট:\s*৳([\d.]+)/);
+              if (vTkMatch) vatAmount = parseFloat(vTkMatch[1]);
+            }
           } else if (!packDetail) {
             packDetail = inner;
           }
@@ -5346,6 +5407,10 @@ export function parseTransactionItemsDetailed(
         cleanName: cleanBrandAndStrength,
         packDetail,
         bonusQty: bonusQty > 0 ? bonusQty : undefined,
+        bonusVatMode: bonusVatRate > 0 || bonusVatAmount > 0 ? bonusVatMode : undefined,
+        bonusVatRate: bonusVatRate > 0 ? bonusVatRate : undefined,
+        bonusVatAmount: bonusVatAmount > 0 ? bonusVatAmount : undefined,
+        productVatMode: (vatPercent > 0 || vatAmount > 0) ? productVatMode : undefined,
         vatPercent: vatPercent > 0 ? vatPercent : undefined,
         vatAmount: vatAmount > 0 ? vatAmount : undefined,
         dosageInstruction,
@@ -5685,6 +5750,10 @@ export function buildPurchaseCartFromTransaction(
       stripsPerBox,
       pcsPerStrip,
       bonusQty: pItem.bonusQty || 0,
+      bonusVatMode: pItem.bonusVatMode || '৳',
+      bonusVatRate: pItem.bonusVatRate || 0,
+      bonusVatAmount: pItem.bonusVatAmount || 0,
+      productVatMode: pItem.productVatMode || (pItem.vatAmount && pItem.vatAmount > 0 && !pItem.vatPercent ? '৳' : '%'),
       vatPercent: pItem.vatPercent || 0,
       vatAmount: pItem.vatAmount || 0,
     };
