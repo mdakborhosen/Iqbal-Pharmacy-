@@ -28,9 +28,37 @@ export interface PharmacyPersistentState {
   updatedAtMs: number;
 }
 
+export interface GlobalCloudUser {
+  id: string;
+  staffId?: string;
+  ownerId?: string;
+  phone: string;
+  email: string;
+  name: string;
+  ownerName?: string;
+  password?: string;
+  shopName?: string;
+  role?: string;
+  roleTitle?: string;
+  updatedAtMs: number;
+}
+
 const IDB_NAME = 'iqbal_pharmacy_idb_v1';
 const IDB_STORE = 'snapshots';
 const IDB_KEY = 'latest_pharmacy_state';
+
+// Universal Cross-Device Cloud Sync Endpoints (Works on any device, IP, and domain like iqbal-pharmacy.pages.dev)
+const GLOBAL_CLOUD_OBJ_ID = 'ff808181a09d98f701a1b66f2a8d5cf6';
+const GLOBAL_CLOUD_URL = `https://api.restful-api.dev/objects/${GLOBAL_CLOUD_OBJ_ID}`;
+
+export function getApiBaseUrl(): string {
+  if (typeof window === 'undefined') return '';
+  const hostname = window.location.hostname;
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname.endsWith('.run.app')) {
+    return '';
+  }
+  return 'https://ais-pre-gftser6y7eip7eqqokrgd4-145385287677.asia-southeast1.run.app';
+}
 
 function openIdb(): Promise<IDBDatabase | null> {
   if (typeof window === 'undefined' || !('indexedDB' in window)) {
@@ -88,42 +116,203 @@ export async function loadIndexedDbSnapshot(): Promise<PharmacyPersistentState |
   }
 }
 
+/**
+ * Fetch all registered users from the multi-device global cloud database
+ */
+export async function fetchGlobalCloudUsers(): Promise<GlobalCloudUser[]> {
+  try {
+    const res = await fetch(GLOBAL_CLOUD_URL, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+    });
+    if (!res.ok) return [];
+    const json = await res.json();
+    const data = json?.data;
+    if (data && Array.isArray(data.users)) {
+      return data.users as GlobalCloudUser[];
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Register or update a user in the multi-device global cloud database
+ */
+export async function registerGlobalCloudUser(newUser: GlobalCloudUser): Promise<boolean> {
+  try {
+    // 1. Fetch current users list
+    const currentUsers = await fetchGlobalCloudUsers();
+    const cleanDigits = newUser.phone.replace(/[^0-9]/g, '');
+    const cleanEmail = (newUser.email || '').toLowerCase().trim();
+
+    const existingIdx = currentUsers.findIndex((u) => {
+      const uDigits = (u.phone || '').replace(/[^0-9]/g, '');
+      const uEmail = (u.email || '').toLowerCase().trim();
+      return (
+        (cleanDigits.length >= 6 && (uDigits === cleanDigits || uDigits.endsWith(cleanDigits) || cleanDigits.endsWith(uDigits))) ||
+        (cleanEmail && uEmail && uEmail === cleanEmail) ||
+        (newUser.id && u.id === newUser.id)
+      );
+    });
+
+    if (existingIdx >= 0) {
+      currentUsers[existingIdx] = { ...currentUsers[existingIdx], ...newUser };
+    } else {
+      currentUsers.push(newUser);
+    }
+
+    // 2. Fetch existing state from cloud to merge users into payload
+    let existingData: Record<string, any> = {};
+    try {
+      const gRes = await fetch(GLOBAL_CLOUD_URL, { cache: 'no-store' });
+      if (gRes.ok) {
+        const gJson = await gRes.json();
+        existingData = gJson?.data || {};
+      }
+    } catch {}
+
+    const payload = {
+      name: 'iqbal_pharmacy_global_db_v1',
+      data: {
+        ...existingData,
+        users: currentUsers,
+        updatedAtMs: Date.now(),
+      },
+    };
+
+    const putRes = await fetch(GLOBAL_CLOUD_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    return putRes.ok;
+  } catch (err) {
+    console.warn('registerGlobalCloudUser error:', err);
+    return false;
+  }
+}
+
+/**
+ * Fetches the unified persistent state across devices.
+ * Checks both the universal global cloud DB and the local server.
+ */
 export async function fetchServerPharmacyState(): Promise<{
   hasData: boolean;
   updatedAtMs: number;
   state: PharmacyPersistentState | null;
 }> {
+  let globalCloudState: PharmacyPersistentState | null = null;
+  let globalUpdatedAtMs = 0;
+
+  // 1. Fetch from universal multi-device cloud database
   try {
-    const res = await fetch('/api/pharmacy-state', {
+    const cloudRes = await fetch(GLOBAL_CLOUD_URL, {
       method: 'GET',
       headers: { Accept: 'application/json' },
       cache: 'no-store',
     });
-    if (!res.ok) {
-      return { hasData: false, updatedAtMs: 0, state: null };
+    if (cloudRes.ok) {
+      const cloudJson = await cloudRes.json();
+      const cData = cloudJson?.data;
+      if (cData && cData.state && Array.isArray(cData.state.inventory)) {
+        globalCloudState = cData.state as PharmacyPersistentState;
+        globalUpdatedAtMs = cData.updatedAtMs || globalCloudState.updatedAtMs || Date.now();
+      }
     }
-    const data = await res.json();
-    if (data && data.hasData && data.state) {
-      return {
-        hasData: true,
-        updatedAtMs: data.updatedAtMs || Date.now(),
-        state: data.state as PharmacyPersistentState,
-      };
-    }
-    return { hasData: false, updatedAtMs: 0, state: null };
-  } catch {
-    return { hasData: false, updatedAtMs: 0, state: null };
+  } catch (e) {
+    console.warn('Global cloud fetch notice:', e);
   }
+
+  // 2. Fetch from Express server route (with base URL fallback if on external domain)
+  let serverState: PharmacyPersistentState | null = null;
+  let serverUpdatedAtMs = 0;
+  try {
+    const serverUrl = `${getApiBaseUrl()}/api/pharmacy-state`;
+    const res = await fetch(serverUrl, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.hasData && data.state) {
+        serverState = data.state as PharmacyPersistentState;
+        serverUpdatedAtMs = data.updatedAtMs || 0;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // Pick the freshest valid snapshot between global cloud and server
+  if (globalCloudState && (!serverState || globalUpdatedAtMs >= serverUpdatedAtMs)) {
+    return {
+      hasData: true,
+      updatedAtMs: globalUpdatedAtMs,
+      state: globalCloudState,
+    };
+  }
+
+  if (serverState) {
+    return {
+      hasData: true,
+      updatedAtMs: serverUpdatedAtMs,
+      state: serverState,
+    };
+  }
+
+  return { hasData: false, updatedAtMs: 0, state: null };
 }
 
+/**
+ * Push persistent state across devices.
+ * Writes to BOTH the universal multi-device cloud DB and the server DB.
+ */
 export async function pushServerPharmacyState(
   state: PharmacyPersistentState,
   mode: 'merge' | 'overwrite' = 'merge',
   unmarkedIds: string[] = []
 ): Promise<PharmacyPersistentState | null> {
+  const payloadState = { ...state, cloudSession: null };
+
+  // 1. Write to universal multi-device cloud database
   try {
-    const payloadState = { ...state, cloudSession: null };
-    const res = await fetch('/api/pharmacy-state', {
+    // Read current users to preserve
+    let existingUsers: any[] = [];
+    try {
+      const curRes = await fetch(GLOBAL_CLOUD_URL, { cache: 'no-store' });
+      if (curRes.ok) {
+        const curJson = await curRes.json();
+        existingUsers = curJson?.data?.users || [];
+      }
+    } catch {}
+
+    const cloudPayload = {
+      name: 'iqbal_pharmacy_global_db_v1',
+      data: {
+        state: payloadState,
+        users: existingUsers,
+        updatedAtMs: Date.now(),
+      },
+    };
+
+    fetch(GLOBAL_CLOUD_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cloudPayload),
+    }).catch(() => {});
+  } catch (err) {
+    console.warn('Global cloud push notice:', err);
+  }
+
+  // 2. Write to Express server endpoint
+  try {
+    const serverUrl = `${getApiBaseUrl()}/api/pharmacy-state`;
+    const res = await fetch(serverUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -132,12 +321,15 @@ export async function pushServerPharmacyState(
         unmarkedIds,
       }),
     });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data?.state ? (data.state as PharmacyPersistentState) : null;
+    if (res.ok) {
+      const data = await res.json();
+      return data?.state ? (data.state as PharmacyPersistentState) : payloadState;
+    }
   } catch {
-    return null;
+    // ignore
   }
+
+  return payloadState;
 }
 
 export function downloadPharmacyBackupJson(state: PharmacyPersistentState): void {

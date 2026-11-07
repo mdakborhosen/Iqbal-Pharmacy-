@@ -5,4 +5,9 @@ service cloud.firestore {
       allow read, write: if true;
     }
   }
+  match /databases/ai-studio-8635afcb-8614-4e7b-a6c2-cf26c5fffefb/documents {
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
 }

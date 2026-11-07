@@ -1187,5 +1187,21 @@
     ],
     "cloudSession": null,
     "updatedAtMs": 1792652269351
-  }
+  },
+  "registeredUsers": [
+    {
+      "id": "staff_owner_01712345678",
+      "staffId": "staff_owner_01712345678",
+      "ownerId": "shop_owner_01712345678",
+      "phone": "01712345678",
+      "phoneDigits": "01712345678",
+      "email": "01712345678@iqbalpharmacy.bd",
+      "password": "123456",
+      "name": "মালিক (01712345678)",
+      "ownerName": "মালিক (01712345678)",
+      "shopName": "ইকবাল ফার্মেসী",
+      "role": "owner",
+      "updatedAtMs": 1794062559375
+    }
+  ]
 }
