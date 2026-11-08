@@ -277,9 +277,10 @@ export interface PurchaseCartItem {
   bonusVatMode?: '%' | '৳' | 'fixed'; // বোনাস ভ্যাট ধরণ (% অথবা ৳ প্রতি পিস অথবা সরাসরি মোট টাকা)
   bonusVatRate?: number; // বোনাস ভ্যাট হার (% অথবা ৳/পিস অথবা মোট ৳)
   bonusVatAmount?: number; // মোট বোনাস ভ্যাট
-  productVatMode?: '%' | '৳'; // পণ্যের মূল্যের ভ্যাট ধরণ (% বা ৳)
+  productVatMode?: '%' | '৳' | 'fixed' | 'piece_vat'; // পণ্যের মূল্যের ভ্যাট ধরণ (% বা ৳ প্রতি পিস বা ৳ মোট)
+  pieceVatAmount?: number; // সিঙ্গেল পিস ভ্যাট (টাকা প্রতি পিস ৳/পিস)
   vatPercent?: number; // ভ্যাট হার % (VAT %)
-  vatAmount?: number; // ভ্যাট টাকা ৳ (VAT Amount)
+  vatAmount?: number; // ভ্যাট টাকা ৳ (VAT Amount - মোট পণ্য ভ্যাট)
   customLineTotal?: number; // কাস্টম লাইন মোট মূল্য ৳ (Custom Price / Line Total)
 }
 

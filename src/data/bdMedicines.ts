@@ -5096,7 +5096,8 @@ export function formatPurchaseItemInvoiceLine(
     bonusVatMode?: '%' | '৳' | 'fixed';
     bonusVatRate?: number;
     bonusVatAmount?: number;
-    productVatMode?: '%' | '৳';
+    productVatMode?: '%' | '৳' | 'fixed' | 'piece_vat';
+    pieceVatAmount?: number;
     vatPercent?: number;
     vatAmount?: number;
     packUnit?: string;
@@ -5120,14 +5121,16 @@ export function formatPurchaseItemInvoiceLine(
     ? Number((item.packRate! * item.packCount!).toFixed(2))
     : Number((item.purchasePrice * item.qty).toFixed(2));
 
-  // 1. Product Price VAT (either % or direct ৳)
-  const pMode = item.productVatMode || (item.vatAmount && item.vatAmount > 0 && !item.vatPercent ? '৳' : '%');
+  // 1. Product Price VAT (piece_vat: single piece ৳, ৳/fixed: direct line total, %: percentage)
+  const pMode = item.productVatMode || (item.pieceVatAmount !== undefined && item.pieceVatAmount > 0 ? 'piece_vat' : item.vatAmount && item.vatAmount > 0 ? '৳' : '%');
   let productVat = 0;
-  if (pMode === '৳') {
+  if (pMode === 'piece_vat' && item.pieceVatAmount !== undefined && item.pieceVatAmount > 0) {
+    productVat = Number((item.pieceVatAmount * item.qty).toFixed(2));
+  } else if (pMode === '৳' || pMode === 'fixed') {
     productVat = Math.max(0, item.vatAmount || 0);
   } else {
     const pRate = Math.max(0, item.vatPercent || 0);
-    productVat = pRate > 0 ? Number(((baseCost * pRate) / 100).toFixed(2)) : 0;
+    productVat = pRate > 0 ? Number(((baseCost * pRate) / 100).toFixed(2)) : Math.max(0, item.vatAmount || 0);
   }
 
   // 2. Bonus Item VAT (multiplied by bonusQty or flat fixed money)
@@ -5168,7 +5171,9 @@ export function formatPurchaseItemInvoiceLine(
     : '';
 
   const productVatTag = productVat > 0
-    ? (pMode === '৳'
+    ? (pMode === 'piece_vat' && item.pieceVatAmount
+        ? ` [পণ্য ভ্যাট: ${item.qty} পিস × ৳${formatCleanMoney(item.pieceVatAmount)} = ৳${formatCleanMoney(productVat)}]`
+        : pMode === '৳' || pMode === 'fixed'
         ? ` [পণ্য ভ্যাট: ৳${formatCleanMoney(productVat)}]`
         : ` [পণ্য ভ্যাট: ${item.vatPercent}% (৳${formatCleanMoney(productVat)})]`)
     : '';
@@ -5202,7 +5207,8 @@ export interface ParsedInvoiceItem {
   bonusVatMode?: '%' | '৳' | 'fixed';
   bonusVatRate?: number;
   bonusVatAmount?: number;
-  productVatMode?: '%' | '৳';
+  productVatMode?: '%' | '৳' | 'fixed' | 'piece_vat';
+  pieceVatAmount?: number;
   vatPercent?: number;
   vatAmount?: number;
   dosageInstruction?: string;
@@ -5357,7 +5363,8 @@ export function parseTransactionItemsDetailed(
       let bonusVatMode: '%' | '৳' | 'fixed' = '৳';
       let bonusVatRate = 0;
       let bonusVatAmount = 0;
-      let productVatMode: '%' | '৳' = '%';
+      let productVatMode: '%' | '৳' | 'fixed' | 'piece_vat' = '%';
+      let pieceVatAmount = 0;
       let vatPercent = 0;
       let vatAmount = 0;
 
@@ -5392,6 +5399,12 @@ export function parseTransactionItemsDetailed(
               productVatMode = '%';
               const vMatch = inner.match(/(?:পণ্য\s*)?ভ্যাট:\s*([\d.]+)%/);
               if (vMatch) vatPercent = parseFloat(vMatch[1]);
+            } else if (inner.includes('×') && inner.includes('=')) {
+              productVatMode = 'piece_vat';
+              const pieceM = inner.match(/×\s*৳([\d.]+)/);
+              if (pieceM) pieceVatAmount = parseFloat(pieceM[1]);
+              const totM = inner.match(/=\s*৳([\d.]+)/);
+              if (totM) vatAmount = parseFloat(totM[1]);
             } else {
               productVatMode = '৳';
               const vTkMatch = inner.match(/(?:পণ্য\s*)?ভ্যাট:\s*৳([\d.]+)/);
@@ -5419,7 +5432,8 @@ export function parseTransactionItemsDetailed(
         bonusVatMode: bonusVatRate > 0 || bonusVatAmount > 0 ? bonusVatMode : undefined,
         bonusVatRate: bonusVatRate > 0 ? bonusVatRate : undefined,
         bonusVatAmount: bonusVatAmount > 0 ? bonusVatAmount : undefined,
-        productVatMode: (vatPercent > 0 || vatAmount > 0) ? productVatMode : undefined,
+        productVatMode: (vatPercent > 0 || vatAmount > 0 || pieceVatAmount > 0) ? productVatMode : undefined,
+        pieceVatAmount: pieceVatAmount > 0 ? pieceVatAmount : undefined,
         vatPercent: vatPercent > 0 ? vatPercent : undefined,
         vatAmount: vatAmount > 0 ? vatAmount : undefined,
         dosageInstruction,

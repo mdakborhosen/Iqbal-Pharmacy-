@@ -730,14 +730,18 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
         ? Number((effPackRate * count).toFixed(2))
         : Number((item.purchasePrice * item.qty).toFixed(2));
 
-      // 1. Product price VAT (% or ৳)
-      const pMode = item.productVatMode || (item.vatAmount && item.vatAmount > 0 && !item.vatPercent ? '৳' : '%');
-      const productVat =
-        pMode === '৳'
-          ? Math.max(0, item.vatAmount || 0)
-          : item.vatPercent && item.vatPercent > 0
-          ? Number(((lineCost * item.vatPercent) / 100).toFixed(2))
-          : 0;
+      // 1. Product price VAT (piece_vat: single piece ৳, ৳/fixed: direct line total, %: percentage)
+      const pMode = item.productVatMode || (item.pieceVatAmount !== undefined && item.pieceVatAmount > 0 ? 'piece_vat' : item.vatAmount && item.vatAmount > 0 ? '৳' : '%');
+      let productVat = 0;
+      if (pMode === 'piece_vat' && item.pieceVatAmount !== undefined && item.pieceVatAmount > 0) {
+        productVat = Number((item.pieceVatAmount * item.qty).toFixed(2));
+      } else if (pMode === '৳' || pMode === 'fixed') {
+        productVat = Math.max(0, item.vatAmount || 0);
+      } else if (item.vatPercent && item.vatPercent > 0) {
+        productVat = Number(((lineCost * item.vatPercent) / 100).toFixed(2));
+      } else if (item.vatAmount && item.vatAmount > 0) {
+        productVat = item.vatAmount;
+      }
 
       // 2. Bonus item VAT: multiplied by its quantity (bonusQty × rate) or fixed money
       const bQty = Math.max(0, item.bonusQty || 0);
@@ -1851,14 +1855,20 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                         ? Number((effectivePackRate * effectivePackCount).toFixed(2))
                         : Number((item.purchasePrice * item.qty).toFixed(2));
 
-                      // 1. Product price VAT (% or ৳)
-                      const pMode = item.productVatMode || (item.vatAmount && item.vatAmount > 0 && !item.vatPercent ? '৳' : '%');
-                      const productVat =
-                        pMode === '৳'
-                          ? Math.max(0, item.vatAmount || 0)
-                          : item.vatPercent && item.vatPercent > 0
-                          ? Number(((itemLineCost * item.vatPercent) / 100).toFixed(2))
-                          : 0;
+                      // 1. Product price VAT (piece_vat: single piece ৳, ৳/fixed: direct line total, %: percentage)
+                      const pMode = item.productVatMode || (item.pieceVatAmount !== undefined && item.pieceVatAmount > 0 ? 'piece_vat' : item.vatAmount && item.vatAmount > 0 ? '৳' : '%');
+                      let productVat = 0;
+                      if (pMode === 'piece_vat' && item.pieceVatAmount !== undefined && item.pieceVatAmount > 0) {
+                        productVat = Number((item.pieceVatAmount * item.qty).toFixed(2));
+                      } else if (pMode === '৳' || pMode === 'fixed') {
+                        productVat = Math.max(0, item.vatAmount || 0);
+                      } else if (item.vatPercent && item.vatPercent > 0) {
+                        productVat = Number(((itemLineCost * item.vatPercent) / 100).toFixed(2));
+                      } else if (item.vatAmount && item.vatAmount > 0) {
+                        productVat = item.vatAmount;
+                      }
+                      const productUnits = Math.max(1, item.qty);
+                      const singlePieceVat = productUnits > 0 ? Number((productVat / productUnits).toFixed(4)) : 0;
 
                       // 2. Bonus item VAT (multiplied by bonusQty or flat money)
                       const bQty = Math.max(0, item.bonusQty || 0);
@@ -1881,7 +1891,6 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                       const totalItemVat = Number((productVat + bonusVat).toFixed(2));
                       // Tp + Vat = Product Price
                       const lineTotal = Number((itemLineCost + totalItemVat).toFixed(2));
-                      const productUnits = Math.max(1, item.qty);
                       // সিঙ্গেল পিসের ক্রয় মূল্য = (মোট মূল্য + মোট ভ্যাট) / প্রোডাক্ট সংখ্যা
                       const singlePieceEffectivePrice = Number(((itemLineCost + totalItemVat) / productUnits).toFixed(4));
                       const totalReceivedUnits = item.qty + (item.bonusQty || 0);
@@ -2728,11 +2737,34 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                 />
                               </div>
 
-                              {/* Product VAT (% or ৳ toggle) */}
-                              <div className="pt-1.5 border-t border-slate-200 bg-slate-50/70 p-1 rounded-sm text-left mt-1">
+                              {/* Product VAT: Single Piece VAT (৳/পিস), Percentage (%), or Direct Total (৳ মোট) */}
+                              <div className="pt-1.5 border-t border-slate-200 bg-slate-50/70 p-1.5 rounded text-left mt-1">
                                 <div className="flex items-center justify-between text-[9.5px] font-semibold text-slate-700 mb-1">
-                                  <span>প্রোডাক্ট ভ্যাট:</span>
+                                  <span className="font-bold text-slate-800">
+                                    {pMode === 'piece_vat'
+                                      ? 'সিঙ্গেল পিস ভ্যাট:'
+                                      : pMode === '৳'
+                                      ? 'মোট পণ্য ভ্যাট:'
+                                      : 'ভ্যাট শতকরা (%):'}
+                                  </span>
                                   <div className="inline-flex rounded border border-slate-300 overflow-hidden bg-white text-[9px] font-mono">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const newMode = 'piece_vat';
+                                        const calculatedPieceVat = productVat > 0 ? Number((productVat / productUnits).toFixed(4)) : (item.pieceVatAmount || 0);
+                                        onUpdatePurchaseCartItemDetails(item.medicineId, {
+                                          productVatMode: newMode,
+                                          pieceVatAmount: calculatedPieceVat,
+                                        });
+                                      }}
+                                      className={`px-1.5 py-0.5 font-bold transition-colors ${
+                                        pMode === 'piece_vat' ? 'bg-indigo-700 text-white' : 'text-slate-600 hover:bg-slate-100'
+                                      }`}
+                                      title="সিঙ্গেল পিস ভ্যাট (৳/পিস) — প্রতিটি পিসে ভ্যাট"
+                                    >
+                                      ৳/পিস
+                                    </button>
                                     <button
                                       type="button"
                                       onClick={() => {
@@ -2744,7 +2776,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                         });
                                       }}
                                       className={`px-1.5 py-0.5 font-bold transition-colors ${
-                                        pMode === '%' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+                                        pMode === '%' ? 'bg-indigo-700 text-white' : 'text-slate-600 hover:bg-slate-100'
                                       }`}
                                       title="শতকরা হার (%)"
                                     >
@@ -2756,63 +2788,113 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                         const newMode = '৳';
                                         onUpdatePurchaseCartItemDetails(item.medicineId, {
                                           productVatMode: newMode,
+                                          vatAmount: productVat,
                                         });
                                       }}
                                       className={`px-1.5 py-0.5 font-bold transition-colors ${
-                                        pMode === '৳' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+                                        pMode === '৳' ? 'bg-indigo-700 text-white' : 'text-slate-600 hover:bg-slate-100'
                                       }`}
-                                      title="সরাসরি টাকার পরিমাণ (৳)"
+                                      title="সরাসরি মোট টাকা (৳ মোট)"
                                     >
-                                      ৳
+                                      ৳ মোট
                                     </button>
                                   </div>
                                 </div>
 
-                                {pMode === '%' ? (
-                                  <div className="flex items-center justify-center gap-1">
-                                    <input
-                                      type="number"
-                                      step="0.5"
-                                      min="0"
-                                      value={item.vatPercent !== undefined && item.vatPercent > 0 ? item.vatPercent : ''}
-                                      onChange={(e) => {
-                                        const nextVatPct = Math.max(0, parseFloat(e.target.value) || 0);
-                                        const calculatedAmt = Number(((itemLineCost * nextVatPct) / 100).toFixed(2));
-                                        onUpdatePurchaseCartItemDetails(item.medicineId, {
-                                          vatPercent: nextVatPct,
-                                          vatAmount: calculatedAmt,
-                                          productVatMode: '%',
-                                        });
-                                      }}
-                                      placeholder="0%"
-                                      className="w-18 text-center py-0.5 px-1 text-[10.5px] font-mono font-bold border border-slate-300 rounded bg-white text-slate-800"
-                                    />
+                                {pMode === 'piece_vat' ? (
+                                  <div className="space-y-1">
+                                    <div className="flex items-center justify-center gap-1">
+                                      <span className="text-[10px] font-bold text-slate-500">৳</span>
+                                      <input
+                                        type="number"
+                                        step="any"
+                                        min="0"
+                                        value={item.pieceVatAmount !== undefined && item.pieceVatAmount > 0 ? item.pieceVatAmount : (singlePieceVat > 0 ? singlePieceVat : '')}
+                                        onChange={(e) => {
+                                          const nextPieceVat = Math.max(0, parseFloat(e.target.value) || 0);
+                                          const calculatedLineVat = Number((nextPieceVat * item.qty).toFixed(2));
+                                          const calculatedPct = itemLineCost > 0 ? Number(((calculatedLineVat / itemLineCost) * 100).toFixed(2)) : 0;
+                                          onUpdatePurchaseCartItemDetails(item.medicineId, {
+                                            pieceVatAmount: nextPieceVat,
+                                            vatAmount: calculatedLineVat,
+                                            vatPercent: calculatedPct,
+                                            productVatMode: 'piece_vat',
+                                          });
+                                        }}
+                                        placeholder="পিস ভ্যাট ৳"
+                                        className="w-24 text-center py-0.5 px-1 text-[11px] font-mono font-bold border border-indigo-300 rounded bg-white text-slate-900 focus:border-indigo-600"
+                                      />
+                                      <span className="text-[10px] text-slate-500 font-mono">/পিস</span>
+                                    </div>
                                     {productVat > 0 && (
-                                      <span className="text-[9.5px] font-mono font-bold text-amber-800 whitespace-nowrap">
-                                        +৳{productVat.toFixed(2)}
-                                      </span>
+                                      <div className="text-[9px] font-mono text-amber-800 font-bold text-center">
+                                        মোট ভ্যাট: +৳{productVat.toFixed(2)} ({item.qty} পিস × ৳{formatCleanMoney(singlePieceVat)})
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : pMode === '%' ? (
+                                  <div className="space-y-1">
+                                    <div className="flex items-center justify-center gap-1">
+                                      <input
+                                        type="number"
+                                        step="0.5"
+                                        min="0"
+                                        value={item.vatPercent !== undefined && item.vatPercent > 0 ? item.vatPercent : ''}
+                                        onChange={(e) => {
+                                          const nextVatPct = Math.max(0, parseFloat(e.target.value) || 0);
+                                          const calculatedAmt = Number(((itemLineCost * nextVatPct) / 100).toFixed(2));
+                                          const nextPieceVat = Number((calculatedAmt / Math.max(1, item.qty)).toFixed(4));
+                                          onUpdatePurchaseCartItemDetails(item.medicineId, {
+                                            vatPercent: nextVatPct,
+                                            vatAmount: calculatedAmt,
+                                            pieceVatAmount: nextPieceVat,
+                                            productVatMode: '%',
+                                          });
+                                        }}
+                                        placeholder="0%"
+                                        className="w-18 text-center py-0.5 px-1 text-[10.5px] font-mono font-bold border border-slate-300 rounded bg-white text-slate-800"
+                                      />
+                                      {productVat > 0 && (
+                                        <span className="text-[9.5px] font-mono font-bold text-amber-800 whitespace-nowrap">
+                                          +৳{productVat.toFixed(2)}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {productVat > 0 && (
+                                      <div className="text-[9px] font-mono text-slate-600 text-center">
+                                        (পিস ভ্যাট ৳{formatCleanMoney(singlePieceVat)} /পিস)
+                                      </div>
                                     )}
                                   </div>
                                 ) : (
-                                  <div className="flex items-center justify-center gap-1">
-                                    <span className="text-[10px] font-bold text-slate-500">৳</span>
-                                    <input
-                                      type="number"
-                                      step="any"
-                                      min="0"
-                                      value={item.vatAmount !== undefined && item.vatAmount > 0 ? item.vatAmount : ''}
-                                      onChange={(e) => {
-                                        const nextVatAmt = Math.max(0, parseFloat(e.target.value) || 0);
-                                        const calculatedPct = itemLineCost > 0 ? Number(((nextVatAmt / itemLineCost) * 100).toFixed(2)) : 0;
-                                        onUpdatePurchaseCartItemDetails(item.medicineId, {
-                                          vatAmount: nextVatAmt,
-                                          vatPercent: calculatedPct,
-                                          productVatMode: '৳',
-                                        });
-                                      }}
-                                      placeholder="0.00"
-                                      className="w-20 text-center py-0.5 px-1 text-[10.5px] font-mono font-bold border border-slate-300 rounded bg-white text-slate-800"
-                                    />
+                                  <div className="space-y-1">
+                                    <div className="flex items-center justify-center gap-1">
+                                      <span className="text-[10px] font-bold text-slate-500">৳</span>
+                                      <input
+                                        type="number"
+                                        step="any"
+                                        min="0"
+                                        value={item.vatAmount !== undefined && item.vatAmount > 0 ? item.vatAmount : ''}
+                                        onChange={(e) => {
+                                          const nextVatAmt = Math.max(0, parseFloat(e.target.value) || 0);
+                                          const nextPieceVat = Number((nextVatAmt / Math.max(1, item.qty)).toFixed(4));
+                                          const calculatedPct = itemLineCost > 0 ? Number(((nextVatAmt / itemLineCost) * 100).toFixed(2)) : 0;
+                                          onUpdatePurchaseCartItemDetails(item.medicineId, {
+                                            vatAmount: nextVatAmt,
+                                            pieceVatAmount: nextPieceVat,
+                                            vatPercent: calculatedPct,
+                                            productVatMode: '৳',
+                                          });
+                                        }}
+                                        placeholder="মোট ৳ ভ্যাট"
+                                        className="w-20 text-center py-0.5 px-1 text-[10.5px] font-mono font-bold border border-slate-300 rounded bg-white text-slate-800"
+                                      />
+                                    </div>
+                                    {productVat > 0 && (
+                                      <div className="text-[9px] font-mono text-slate-600 text-center">
+                                        (= ৳{formatCleanMoney(singlePieceVat)} /পিস)
+                                      </div>
+                                    )}
                                   </div>
                                 )}
                               </div>
@@ -2869,6 +2951,42 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                 placeholder="লাইন মোট"
                                 className="w-24 text-right py-1 px-1.5 text-xs font-mono font-bold tabular-nums border border-slate-300 rounded bg-white text-indigo-950 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-500"
                               />
+                            </div>
+
+                            {/* User requested: এবং মোট লাইনে মোট ভ্যাট যুক্ত করা যাবে */}
+                            <div className="pt-1.5 border-t border-slate-200 text-right mt-1.5 bg-amber-50/60 p-1.5 rounded-sm">
+                              <div className="flex items-center justify-between text-[10px] font-bold text-amber-950 mb-0.5">
+                                <span>মোট লাইনে ভ্যাট (৳):</span>
+                                <span className="text-[9px] text-amber-800 font-mono font-semibold">
+                                  {singlePieceVat > 0 ? `(৳${formatCleanMoney(singlePieceVat)} /পিস)` : ''}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-end gap-1">
+                                <span className="text-xs font-bold text-amber-800">৳</span>
+                                <input
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  value={productVat > 0 ? productVat : ''}
+                                  onChange={(e) => {
+                                    const nextVatAmt = Math.max(0, parseFloat(e.target.value) || 0);
+                                    const pcs = Math.max(1, item.qty);
+                                    const nextPieceVat = Number((nextVatAmt / pcs).toFixed(4));
+                                    const calculatedPct = itemLineCost > 0 ? Number(((nextVatAmt / itemLineCost) * 100).toFixed(2)) : 0;
+                                    onUpdatePurchaseCartItemDetails(item.medicineId, {
+                                      vatAmount: nextVatAmt,
+                                      pieceVatAmount: nextPieceVat,
+                                      vatPercent: calculatedPct,
+                                      productVatMode: '৳',
+                                    });
+                                  }}
+                                  placeholder="মোট ভ্যাট ৳"
+                                  className="w-24 text-right py-0.5 px-1.5 text-xs font-mono font-bold tabular-nums border border-amber-300 rounded bg-white text-amber-950 focus:border-amber-600 focus:ring-1 focus:ring-amber-500"
+                                />
+                              </div>
+                              <div className="text-[8.5px] font-mono text-slate-500 mt-0.5">
+                                (মোট ভ্যাট সরাসরি যোগ হবে এবং {item.qty} পিসে ভাগ হয়ে কার্যকর দর বের হবে)
+                              </div>
                             </div>
                             <div className="text-[10px] font-mono text-slate-500 mt-1 space-y-0.5">
                               <div>
@@ -4176,6 +4294,11 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                       {pItem.vatAmount && pItem.vatAmount > 0 ? (
                                         <div className="text-[8.5px] font-mono text-amber-800 font-semibold">
                                           +ভ্যাট ৳{pItem.vatAmount.toFixed(2)}
+                                          {pItem.pieceVatAmount && pItem.qty > 1 ? (
+                                            <span className="block text-[7.5px] text-slate-500 font-normal">
+                                              (৳{formatCleanMoney(pItem.pieceVatAmount)} /পিস)
+                                            </span>
+                                          ) : null}
                                         </div>
                                       ) : null}
                                     </td>
