@@ -1,5 +1,5 @@
 {
-  "updatedAtMs": 1792652269351,
+  "updatedAtMs": 1794129120044,
   "state": {
     "shopProfile": {
       "id": "shop-default",
@@ -1202,6 +1202,20 @@
       "shopName": "ইকবাল ফার্মেসী",
       "role": "owner",
       "updatedAtMs": 1794062559375
+    },
+    {
+      "id": "staff_owner_01700112233",
+      "staffId": "staff_owner_01700112233",
+      "ownerId": "shop_owner_01700112233",
+      "phone": "01700112233",
+      "phoneDigits": "01700112233",
+      "email": "",
+      "password": "testpassword123",
+      "name": "টেস্ট ফার্মাসিস্ট",
+      "ownerName": "টেস্ট ফার্মাসিস্ট",
+      "shopName": "ইকবাল ফার্মেসী",
+      "role": "owner",
+      "updatedAtMs": 1794129120044
     }
   ]
 }

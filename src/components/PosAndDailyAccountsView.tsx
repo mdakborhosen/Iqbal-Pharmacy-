@@ -2698,21 +2698,26 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                               ) : (
                                 <div>
                                   <label className="block text-[10px] text-slate-500 font-semibold mb-0.5">
-                                    প্রতি পিস বেস TP দর (৳):
+                                    প্রতি পিস বেস দর (৳):
                                   </label>
                                   <input
                                     type="number"
                                     step="any"
                                     min="0.01"
-                                    value={item.purchasePrice || ''}
+                                    value={
+                                      singlePieceVat > 0
+                                        ? Number((item.purchasePrice + singlePieceVat).toFixed(4))
+                                        : item.purchasePrice || ''
+                                    }
                                     onChange={(e) => {
-                                      const nextPrice = parseFloat(e.target.value) || 0;
+                                      const nextBaseWithVat = parseFloat(e.target.value) || 0;
+                                      const nextNetTP = Math.max(0.01, Number((nextBaseWithVat - singlePieceVat).toFixed(4)));
                                       const updates = updatePurchaseRowUnitAndFormula(item, 'piece', {
-                                        purchasePrice: nextPrice,
+                                        purchasePrice: nextNetTP,
                                       });
                                       onUpdatePurchaseCartItemDetails(item.medicineId, updates);
                                     }}
-                                    placeholder="পিস দর"
+                                    placeholder="বেস দর"
                                     className="w-24 text-center py-1 px-1.5 text-xs font-mono font-bold tabular-nums border border-slate-300 rounded bg-white text-slate-900 mx-auto"
                                   />
                                 </div>
@@ -2741,11 +2746,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                               <div className="pt-1.5 border-t border-slate-200 bg-slate-50/70 p-1.5 rounded text-left mt-1">
                                 <div className="flex items-center justify-between text-[9.5px] font-semibold text-slate-700 mb-1">
                                   <span className="font-bold text-slate-800">
-                                    {pMode === 'piece_vat'
-                                      ? 'সিঙ্গেল পিস ভ্যাট:'
-                                      : pMode === '৳'
-                                      ? 'মোট পণ্য ভ্যাট:'
-                                      : 'ভ্যাট শতকরা (%):'}
+                                    পণ্য ভ্যাট:
                                   </span>
                                   <div className="inline-flex rounded border border-slate-300 overflow-hidden bg-white text-[9px] font-mono">
                                     <button
@@ -2905,7 +2906,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                   সিঙ্গেল পিস ক্রয় দর: ৳{formatCleanMoney(singlePieceEffectivePrice)}
                                 </div>
                                 <div className="text-[8.5px] font-mono text-emerald-850">
-                                  (TP ৳{itemLineCost.toFixed(2)} + ভ্যাট ৳{totalItemVat.toFixed(2)}) ÷ {productUnits} পিস
+                                  (লাইন মোট ৳{lineTotal.toFixed(2)} ÷ {productUnits} পিস = ৳{formatCleanMoney(singlePieceEffectivePrice)} /পিস)
                                 </div>
                                 {bonusPieces > 0 && (
                                   <div className="text-[8px] font-mono text-teal-800 font-bold border-t border-emerald-200 mt-1 pt-0.5">
@@ -2954,15 +2955,15 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                             </div>
 
                             {/* User requested: এবং মোট লাইনে মোট ভ্যাট যুক্ত করা যাবে */}
-                            <div className="pt-1.5 border-t border-slate-200 text-right mt-1.5 bg-amber-50/60 p-1.5 rounded-sm">
-                              <div className="flex items-center justify-between text-[10px] font-bold text-amber-950 mb-0.5">
-                                <span>মোট লাইনে ভ্যাট (৳):</span>
+                            <div className="pt-1.5 border-t border-slate-200 text-right mt-1.5 bg-amber-50/70 border border-amber-300/80 p-1.5 rounded">
+                              <div className="flex items-center justify-between text-[11px] font-bold text-amber-950 mb-1">
+                                <span>ভ্যাট (৳):</span>
                                 <span className="text-[9px] text-amber-800 font-mono font-semibold">
                                   {singlePieceVat > 0 ? `(৳${formatCleanMoney(singlePieceVat)} /পিস)` : ''}
                                 </span>
                               </div>
                               <div className="flex items-center justify-end gap-1">
-                                <span className="text-xs font-bold text-amber-800">৳</span>
+                                <span className="text-xs font-bold text-amber-900">৳</span>
                                 <input
                                   type="number"
                                   step="any"
@@ -2980,16 +2981,13 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                       productVatMode: '৳',
                                     });
                                   }}
-                                  placeholder="মোট ভ্যাট ৳"
-                                  className="w-24 text-right py-0.5 px-1.5 text-xs font-mono font-bold tabular-nums border border-amber-300 rounded bg-white text-amber-950 focus:border-amber-600 focus:ring-1 focus:ring-amber-500"
+                                  placeholder="0.00"
+                                  className="w-24 text-right py-0.5 px-1.5 text-xs font-mono font-bold tabular-nums border border-amber-400 rounded bg-white text-amber-950 focus:border-amber-600 focus:ring-1 focus:ring-amber-500 shadow-2xs"
                                 />
                               </div>
-                              <div className="text-[8.5px] font-mono text-slate-500 mt-0.5">
-                                (মোট ভ্যাট সরাসরি যোগ হবে এবং {item.qty} পিসে ভাগ হয়ে কার্যকর দর বের হবে)
-                              </div>
                             </div>
-                            <div className="text-[10px] font-mono text-slate-500 mt-1 space-y-0.5">
-                              <div>
+                            <div className="text-[10px] font-mono text-slate-600 mt-2 space-y-1 text-right">
+                              <div className="text-slate-500">
                                 {isPackRow ? (
                                   <span>
                                     {item.packCount}{' '}
@@ -3004,17 +3002,17 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                   <span>{item.qty} পিস × ৳{formatCleanMoney(item.purchasePrice)}</span>
                                 )}
                               </div>
-                              <div className="text-slate-700 font-semibold">
+                              <div className="text-slate-800 font-bold">
                                 মোট পণ্য TP: ৳{itemLineCost.toFixed(2)}
                               </div>
                               {productVat > 0 && (
-                                <div className="text-amber-800 font-semibold">
-                                  +পণ্য ভ্যাট ({pMode === '৳' ? '৳' : `${item.vatPercent}%`}): ৳{productVat.toFixed(2)}
+                                <div className="text-amber-800 font-bold">
+                                  +পণ্য ভ্যাট (৳): ৳{productVat.toFixed(2)}
                                 </div>
                               )}
                               {bonusVat > 0 && (
-                                <div className="text-amber-950 font-bold bg-amber-100/90 px-1 py-0.5 rounded border border-amber-300">
-                                  +বোনাস ভ্যাট: ৳{bonusVat.toFixed(2)}
+                                <div className="bg-amber-100/90 text-amber-950 border border-amber-300 rounded px-1.5 py-0.5 inline-block text-right">
+                                  <div className="font-bold">+বোনাস ভ্যাট: ৳{bonusVat.toFixed(2)}</div>
                                   <div className="text-[8.5px] font-normal text-amber-800">
                                     {bMode === 'fixed'
                                       ? '(সরাসরি মোট টাকা)'
@@ -3022,7 +3020,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                   </div>
                                 </div>
                               )}
-                              <div className="text-teal-950 font-extrabold text-[10.5px] pt-1 border-t border-slate-300 font-mono">
+                              <div className="text-teal-950 font-extrabold text-[11px] pt-1 border-t border-slate-300 font-mono">
                                 মোট ক্রয় (Tp+Vat): ৳{lineTotal.toFixed(2)}
                               </div>
                             </div>

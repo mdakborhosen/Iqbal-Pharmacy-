@@ -120,6 +120,22 @@ export async function loadIndexedDbSnapshot(): Promise<PharmacyPersistentState |
  * Fetch all registered users from the multi-device global cloud database
  */
 export async function fetchGlobalCloudUsers(): Promise<GlobalCloudUser[]> {
+  // 1. Prioritize persistent backend server
+  try {
+    const srvRes = await fetch(`${getApiBaseUrl()}/api/auth/users`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+    });
+    if (srvRes.ok) {
+      const srvJson = await srvRes.json();
+      if (srvJson?.ok && Array.isArray(srvJson.users) && srvJson.users.length > 0) {
+        return srvJson.users as GlobalCloudUser[];
+      }
+    }
+  } catch {}
+
+  // 2. Fallback to external global cloud mirror
   try {
     const res = await fetch(GLOBAL_CLOUD_URL, {
       method: 'GET',
@@ -142,8 +158,25 @@ export async function fetchGlobalCloudUsers(): Promise<GlobalCloudUser[]> {
  * Register or update a user in the multi-device global cloud database
  */
 export async function registerGlobalCloudUser(newUser: GlobalCloudUser): Promise<boolean> {
+  // 1. Always persist to our primary backend server first
   try {
-    // 1. Fetch current users list
+    const srvUrl = `${getApiBaseUrl()}/api/auth/register`;
+    await fetch(srvUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        phone: newUser.phone,
+        email: newUser.email,
+        password: newUser.password,
+        name: newUser.name || newUser.ownerName,
+        shopName: newUser.shopName,
+        role: newUser.role || 'owner',
+      }),
+    }).catch(() => {});
+  } catch {}
+
+  // 2. Also persist to global cloud mirror as backup
+  try {
     const currentUsers = await fetchGlobalCloudUsers();
     const cleanDigits = newUser.phone.replace(/[^0-9]/g, '');
     const cleanEmail = (newUser.email || '').toLowerCase().trim();
@@ -164,7 +197,6 @@ export async function registerGlobalCloudUser(newUser: GlobalCloudUser): Promise
       currentUsers.push(newUser);
     }
 
-    // 2. Fetch existing state from cloud to merge users into payload
     let existingData: Record<string, any> = {};
     try {
       const gRes = await fetch(GLOBAL_CLOUD_URL, { cache: 'no-store' });
@@ -193,6 +225,34 @@ export async function registerGlobalCloudUser(newUser: GlobalCloudUser): Promise
   } catch (err) {
     console.warn('registerGlobalCloudUser error:', err);
     return false;
+  }
+}
+
+/**
+ * Direct backend authentication across devices & IPs
+ */
+export async function loginViaServerApi(ident: string, password: string): Promise<GlobalCloudUser | null> {
+  try {
+    const url = `${getApiBaseUrl()}/api/auth/login`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ident, password }),
+    });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => null);
+      if (res.status === 401) {
+        throw new Error(errData?.error || 'ভুল পাসওয়ার্ড! অনুগ্রহ করে সঠিক পাসওয়ার্ড দিন।');
+      }
+      return null;
+    }
+    const json = await res.json();
+    return (json?.user as GlobalCloudUser) || null;
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('ভুল পাসওয়ার্ড')) {
+      throw err;
+    }
+    return null;
   }
 }
 

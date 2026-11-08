@@ -136,6 +136,7 @@ import {
   fetchGlobalCloudUsers,
   fetchServerPharmacyState,
   loadIndexedDbSnapshot,
+  loginViaServerApi,
   parsePharmacyBackupJson,
   PharmacyPersistentState,
   pushServerPharmacyState,
@@ -2333,10 +2334,24 @@ export default function App() {
         return;
       }
 
-      // 2. Multi-device live lookup in Global Cloud Database & Firestore 'registered_users'
+      // 2. High-speed multi-device direct server auth verification
       let matchedCloudUser: Record<string, any> | null = null;
       try {
-        const cloudUsers = await fetchGlobalCloudUsers();
+        const srvUser = await loginViaServerApi(cleanIdent, cleanPass);
+        if (srvUser) {
+          matchedCloudUser = srvUser;
+        }
+      } catch (srvErr) {
+        if (srvErr instanceof Error && srvErr.message.includes('ভুল পাসওয়ার্ড')) {
+          setLoginErrorMessage(srvErr.message);
+          return;
+        }
+      }
+
+      // 3. Multi-device live lookup in Global Cloud Database & Firestore 'registered_users'
+      if (!matchedCloudUser) {
+        try {
+          const cloudUsers = await fetchGlobalCloudUsers();
         for (const u of cloudUsers) {
           const uDigits = (u.phone || '').replace(/[^0-9]/g, '');
           const phoneMatches =
@@ -2356,25 +2371,28 @@ export default function App() {
           }
         }
       } catch {}
-      const searchDocKeys = [
-        cleanDigits ? `user_phone_${cleanDigits}` : null,
-        cleanDigits && cleanDigits.length >= 10 ? `user_phone_0${cleanDigits.slice(-10)}` : null,
-        cleanDigits && cleanDigits.length >= 10 ? `user_phone_${cleanDigits.slice(-10)}` : null,
-        cleanDigits && cleanDigits.length >= 10 ? `user_phone_880${cleanDigits.slice(-10)}` : null,
-        `user_email_${cleanIdent.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_')}`,
-        `user_id_${cleanIdent.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_')}`,
-        cleanIdent.toLowerCase(),
-      ].filter(Boolean) as string[];
+    }
+      if (!matchedCloudUser) {
+        const searchDocKeys = [
+          cleanDigits ? `user_phone_${cleanDigits}` : null,
+          cleanDigits && cleanDigits.length >= 10 ? `user_phone_0${cleanDigits.slice(-10)}` : null,
+          cleanDigits && cleanDigits.length >= 10 ? `user_phone_${cleanDigits.slice(-10)}` : null,
+          cleanDigits && cleanDigits.length >= 10 ? `user_phone_880${cleanDigits.slice(-10)}` : null,
+          `user_email_${cleanIdent.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+          `user_id_${cleanIdent.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+          cleanIdent.toLowerCase(),
+        ].filter(Boolean) as string[];
 
-      for (const key of searchDocKeys) {
-        try {
-          const snap = await getDoc(doc(db, 'registered_users', key));
-          if (snap.exists()) {
-            matchedCloudUser = snap.data();
-            break;
+        for (const key of searchDocKeys) {
+          try {
+            const snap = await getDoc(doc(db, 'registered_users', key));
+            if (snap.exists()) {
+              matchedCloudUser = snap.data();
+              break;
+            }
+          } catch {
+            // ignore
           }
-        } catch {
-          // ignore
         }
       }
 

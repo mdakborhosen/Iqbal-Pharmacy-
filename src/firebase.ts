@@ -239,6 +239,26 @@ export async function signInShopCloudAccount(params?: {
       role?: string;
     } | null = null;
 
+    // Check direct server multi-device database
+    try {
+      const srvRes = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ident: rawInput, password: cleanPassword }),
+      });
+      if (srvRes.ok) {
+        const srvData = await srvRes.json();
+        if (srvData?.user) {
+          matchedCloudUser = srvData.user;
+        }
+      } else if (srvRes.status === 401) {
+        const errJson = await srvRes.json().catch(() => null);
+        throw new Error(errJson?.error || 'ভুল পাসওয়ার্ড! দোকান মালিকের (Owner) সঠিক পাসওয়ার্ড দিন।');
+      }
+    } catch (e) {
+      if (e instanceof Error && e.message.includes('ভুল পাসওয়ার্ড')) throw e;
+    }
+
     // Check by Phone (supporting 11-digit 01..., 13-digit 8801..., or 10-digit 1...)
     if (targetPhoneDigits) {
       const candidates = [
@@ -581,6 +601,22 @@ export async function registerNewShopOwnerAccount(params: {
       updatedAtMs: Date.now(),
     };
     await setDoc(doc(db, 'staff', finalStaffId), staffDocData, { merge: true });
+
+    // Also persist directly to server multi-device database so any other device logs in instantly
+    try {
+      fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone,
+          email: cleanEmail,
+          password: cleanPassword,
+          name: displayName,
+          shopName,
+          role: 'owner',
+        }),
+      }).catch(() => {});
+    } catch {}
 
     // Also persist into shared shop documents so all browsers & devices discover this owner immediately
     try {
