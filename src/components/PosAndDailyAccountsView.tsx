@@ -4288,27 +4288,46 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                   )}
                                   {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
                                     <td className={`text-center text-slate-700 ${isDense ? 'py-0.5 px-1' : 'py-1.5 px-1'}`}>
-                                      <div>৳{formatCleanMoney(pItem.unitPrice)}</div>
-                                      {pItem.vatAmount && pItem.vatAmount > 0 ? (
-                                        <div className="text-[8.5px] font-mono text-amber-800 font-semibold">
-                                          +ভ্যাট ৳{pItem.vatAmount.toFixed(2)}
-                                          {pItem.pieceVatAmount && pItem.qty > 1 ? (
-                                            <span className="block text-[7.5px] text-slate-500 font-normal">
-                                              (৳{formatCleanMoney(pItem.pieceVatAmount)} /পিস)
-                                            </span>
+                                      {previewInvoice.txType === 'purchase' ? (
+                                        <div>
+                                          {(() => {
+                                            const pieceVat = pItem.pieceVatAmount || (pItem.vatAmount && pItem.qty > 0 ? Number((pItem.vatAmount / pItem.qty).toFixed(4)) : 0);
+                                            const effectivePiecePrice = Number((pItem.unitPrice + pieceVat).toFixed(2));
+                                            return (
+                                              <div>
+                                                <div className="font-black text-emerald-600 text-sm sm:text-base font-mono leading-tight">
+                                                  {formatCleanMoney(effectivePiecePrice > 0 ? effectivePiecePrice : pItem.unitPrice)}
+                                                </div>
+                                                {pieceVat > 0 && (
+                                                  <div className="text-[9.5px] font-mono font-bold text-slate-900 mt-0.5 leading-tight">
+                                                    <div>(TP:- {formatCleanMoney(pItem.unitPrice)}</div>
+                                                    <div>VAT:- {formatCleanMoney(pieceVat)})</div>
+                                                  </div>
+                                                )}
+                                              </div>
+                                            );
+                                          })()}
+                                        </div>
+                                      ) : (
+                                        <div>
+                                          <div>৳{formatCleanMoney(pItem.unitPrice)}</div>
+                                          {pItem.vatAmount && pItem.vatAmount > 0 ? (
+                                            <div className="text-[8.5px] font-mono text-amber-800 font-semibold">
+                                              +ভ্যাট ৳{pItem.vatAmount.toFixed(2)}
+                                            </div>
                                           ) : null}
                                         </div>
-                                      ) : null}
+                                      )}
                                     </td>
                                   )}
                                   <td className={`text-center font-bold text-slate-900 ${isDense ? 'py-0.5 px-1' : 'py-1.5 px-1'}`}>
-                                    {pItem.qty} পিস
+                                    <div>{pItem.qty} পিস</div>
                                     {pItem.bonusQty && pItem.bonusQty > 0 ? (
-                                      <div className="text-[9px] font-mono text-amber-900 bg-amber-100 border border-amber-300 rounded px-1 font-bold whitespace-nowrap mt-0.5">
-                                        +{pItem.bonusQty} বোনাস
+                                      <div className="text-[9.5px] font-mono text-amber-950 bg-amber-50 border border-amber-400 rounded-md px-1.5 py-0.5 font-bold whitespace-nowrap mt-1 inline-block shadow-2xs">
+                                        <div>+{pItem.bonusQty} বোনাস</div>
                                         {pItem.bonusVatAmount && pItem.bonusVatAmount > 0 ? (
-                                          <div className="text-[8px] font-mono text-amber-950 font-bold">
-                                            ভ্যাট: ৳{pItem.bonusVatAmount.toFixed(2)}
+                                          <div className="text-[8.5px] font-mono text-amber-950 font-bold">
+                                            ভ্যাট: ৳{formatCleanMoney(pItem.bonusVatAmount)}
                                           </div>
                                         ) : null}
                                       </div>
