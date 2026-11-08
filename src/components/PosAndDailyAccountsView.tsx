@@ -4358,6 +4358,90 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                 const sealDimensions = isMicro ? 'w-18 h-18' : isUltraCompact ? 'w-20 h-20' : isCompact ? 'w-22 h-22' : 'w-26 h-26';
                 const showInvoicePrice = previewInvoice.txType !== 'sale' || invoicePrintWithPrice;
 
+                if (previewInvoice.txType === 'purchase') {
+                  return (
+                    <div className={`border-t-2 border-slate-900 grid grid-cols-1 sm:grid-cols-4 items-center gap-2 ${isDense ? 'pt-2 pb-1' : 'pt-3 pb-2'}`}>
+                      {/* 1. Supplier / Representative Signature */}
+                      <div className="text-center sm:text-left space-y-0.5">
+                        <div className="w-24 sm:w-28 border-b border-slate-600 mx-auto sm:mx-0 mb-0.5" />
+                        <div className={`font-bold text-slate-900 ${isDense ? 'text-[10px]' : 'text-[11px]'}`}>
+                          সরবরাহকারী / প্রতিনিধির স্বাক্ষর
+                        </div>
+                        <div className="text-[9px] text-slate-500 font-mono">
+                          Supplier / Representative
+                        </div>
+                      </div>
+
+                      {/* 2. QR Code for Verification */}
+                      <div className="flex justify-center py-0.5">
+                        <InvoiceVerificationQrCode
+                          invoice={previewInvoice}
+                          isDense={isDense}
+                          showPrice={true}
+                        />
+                      </div>
+
+                      {/* 3. Received By Signature */}
+                      <div className="text-center space-y-0.5">
+                        <div className="w-24 sm:w-28 border-b border-slate-600 mx-auto mb-0.5" />
+                        <div className={`font-bold text-slate-900 ${isDense ? 'text-[10px]' : 'text-[11px]'}`}>
+                          মালামাল গ্রহণকারীর স্বাক্ষর
+                        </div>
+                        <div className="text-[9px] text-slate-500">
+                          {previewInvoice.staffRole === 'owner' ? 'Owner / Pharmacist' : previewInvoice.staffName || 'Staff'}
+                        </div>
+                      </div>
+
+                      {/* 4. Iqbal Pharmacy Store Rubber Stamp & Verification Seal */}
+                      <div className="flex flex-col items-center sm:items-end">
+                        <div className="flex items-center gap-2.5">
+                          {/* Circular Pharmacy Rubber Stamp */}
+                          <div className={`${sealDimensions} rounded-full border-2 border-dashed border-indigo-900 p-0.5 flex items-center justify-center relative select-none shadow-xs bg-indigo-50/25`}>
+                            <div className="w-full h-full rounded-full border border-solid border-indigo-900 flex flex-col items-center justify-center text-center p-0.5 text-indigo-950">
+                              <div className={`font-black uppercase tracking-tight text-indigo-950 leading-tight ${isDense ? 'text-[7px]' : 'text-[8px]'}`}>
+                                ★ ইকবাল ফার্মেসী ★
+                              </div>
+                              <div className="w-10 h-px bg-indigo-800 my-0.2" />
+                              <div className={`font-bold text-indigo-950 ${isDense ? 'text-[6.5px]' : 'text-[7.5px]'}`}>
+                                নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর
+                              </div>
+                              <div className={`font-semibold text-indigo-900 leading-tight ${isDense ? 'text-[5.5px]' : 'text-[6.5px]'}`}>
+                                ড্রাগ লাইসেন্স: DGDA-12904
+                              </div>
+                              <div className={`font-extrabold text-indigo-900 tracking-wider border-y border-indigo-700 py-0.2 my-0.2 ${isDense ? 'text-[6px]' : 'text-[7px]'}`}>
+                                ★ GOODS RECEIVED & VERIFIED ★
+                              </div>
+                              <div className={`font-mono font-bold text-indigo-950 ${isDense ? 'text-[5.5px]' : 'text-[6.5px]'}`}>
+                                {previewInvoice.dateStr || getTodayDateStr()}
+                              </div>
+                              <div className={`text-indigo-800 font-semibold leading-tight truncate max-w-[80px] ${isDense ? 'text-[5.5px]' : 'text-[6px]'}`}>
+                                সেন্ট্রাল স্টক অনুমোদন
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Pharmacy Owner / Store Manager Signature Text */}
+                          <div className="text-right space-y-0.5">
+                            <div className="w-28 sm:w-32 border-b border-slate-900 ml-auto mb-0.5" />
+                            <div className={`font-bold text-slate-900 ${isDense ? 'text-[11px]' : 'text-xs'}`}>
+                              মালামাল যাচাই ও অনুমোদন
+                            </div>
+                            <div className={`font-semibold text-slate-800 ${isDense ? 'text-[10px]' : 'text-[11px]'}`}>
+                              প্রোপ্রাইটর / ফার্মাসিস্ট
+                            </div>
+                            <div className={`text-slate-600 ${isDense ? 'text-[8.5px]' : 'text-[9.5px]'}`}>
+                              ইকবাল ফার্মেসী, নতুনহাট
+                            </div>
+                            <div className={`text-indigo-800 font-medium ${isDense ? 'text-[7.5px]' : 'text-[8.5px]'}`}>
+                              মোবাইল: 01812-358839
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
                 return (
                   <div className={`border-t-2 border-slate-900 grid grid-cols-1 sm:grid-cols-4 items-center gap-2 ${isDense ? 'pt-2 pb-1' : 'pt-3 pb-2'}`}>
                     {/* Customer Signature */}
