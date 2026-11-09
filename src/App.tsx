@@ -126,6 +126,7 @@ import {
   PriceWatch,
   PurchaseCartItem,
   PurchasePackUnit,
+  isMandatoryOwner,
   ShopNotice,
   ShopProfile,
   StaffMember,
@@ -769,12 +770,19 @@ export default function App() {
 
   const [staffList, setStaffList] = useState<StaffMember[]>(() => {
     const initialDeleted = new Set(loadLocal<string[]>(STORAGE_KEYS.DELETED_IDS, []));
-    const saved = loadLocal(STORAGE_KEYS.STAFF, INITIAL_DEMO_STAFF);
+    const saved = loadLocal<StaffMember[]>(STORAGE_KEYS.STAFF, INITIAL_DEMO_STAFF);
     const byId = new Map<string, StaffMember>();
     for (const s of saved) {
       const canonId = getCanonicalDocId(s.id);
       if (initialDeleted.has(s.id) || initialDeleted.has(canonId)) continue;
-      const norm = { ...s, id: canonId };
+      const isMand = isMandatoryOwner(s);
+      const norm: StaffMember = {
+        ...s,
+        id: canonId,
+        isMandatoryOwner: isMand,
+        roleTitle: isMand ? 'owner' : (s.roleTitle === 'owner' ? 'sub_owner' : s.roleTitle),
+        name: isMand ? 'Owner' : (s.roleTitle === 'owner' && s.name === 'Owner' ? 'সাব-মালিক' : s.name),
+      };
       const prev = byId.get(canonId);
       if (!prev || (norm.updatedAtMs || 0) >= (prev.updatedAtMs || 0)) {
         byId.set(canonId, norm);
@@ -1286,14 +1294,24 @@ export default function App() {
             name: 'ইকবাল মাহমুদ (Owner)',
             staffId: 'staff-owner-1',
             ownerId: 'shop_owner_default',
+            role: 'owner',
+            roleTitle: 'owner' as const,
+            isMandatoryOwner: true,
+            shift: 'সারাদিন (মূল তত্ত্বাবধান)',
+            counterName: 'কাউন্টার ১ (Owner)',
           },
           {
             phone: '01822-487909',
             digits: ['01822487909', '1822487909', '8801822487909'],
             email: '01822487909@iqbalpharmacy.bd',
-            name: 'ইকবাল মাহমুদ (Owner)',
+            name: 'ইকবাল মাহমুদ (সাব-মালিক)',
             staffId: 'staff-owner-2',
             ownerId: 'shop_owner_01822487909',
+            role: 'sub_owner',
+            roleTitle: 'sub_owner' as const,
+            isMandatoryOwner: false,
+            shift: 'সারাদিন (সহকারী তত্ত্বাবধান)',
+            counterName: 'কাউন্টার ১ (সাব-মালিক)',
           },
         ];
 
@@ -1308,8 +1326,9 @@ export default function App() {
             shopName: 'ইকবাল ফার্মেসী',
             password: '000000',
             alternatePassword: 'IqbalPharmacy#2026',
-            role: 'owner',
-            roleTitle: 'owner',
+            role: op.role,
+            roleTitle: op.roleTitle,
+            isMandatoryOwner: op.isMandatoryOwner,
             updatedAtMs: Date.now(),
           };
 
@@ -1322,22 +1341,22 @@ export default function App() {
             id: op.staffId,
             ownerId: op.ownerId,
             name: op.name,
-            roleTitle: 'owner',
+            roleTitle: op.roleTitle,
+            isMandatoryOwner: op.isMandatoryOwner,
             phone: op.phone,
             email: op.email,
             password: '000000',
-            shift: 'সারাদিন (মূল তত্ত্বাবধান)',
-            counterName: 'কাউন্টার ১ (Owner)',
+            shift: op.shift,
+            counterName: op.counterName,
             active: true,
             updatedAtMs: Date.now(),
           }, { merge: true }).catch(() => {});
         }
 
-        await setDoc(doc(db, 'registered_users', 'user_email_mhakbor2001_gmail_com'), {
+        const primaryOwnerPayload = {
           ownerId: 'shop_owner_default',
           staffId: 'staff-owner-1',
           phone: '01812-358839',
-          email: 'mhakbor2001@gmail.com',
           ownerName: 'ইকবাল মাহমুদ (Owner)',
           name: 'ইকবাল মাহমুদ (Owner)',
           shopName: 'ইকবাল ফার্মেসী',
@@ -1345,7 +1364,18 @@ export default function App() {
           alternatePassword: 'IqbalPharmacy#2026',
           role: 'owner',
           roleTitle: 'owner',
+          isMandatoryOwner: true,
           updatedAtMs: Date.now(),
+        };
+
+        await setDoc(doc(db, 'registered_users', 'user_email_mhakbor2001_gmail_com'), {
+          ...primaryOwnerPayload,
+          email: 'mhakbor2001@gmail.com',
+        }, { merge: true }).catch(() => {});
+
+        await setDoc(doc(db, 'registered_users', 'user_email_iqbalmahmud498_gmail_com'), {
+          ...primaryOwnerPayload,
+          email: 'iqbalmahmud498@gmail.com',
         }, { merge: true }).catch(() => {});
       } catch {
         // ignore
@@ -2209,6 +2239,7 @@ export default function App() {
       // 1. Direct Master Owner Credentials Check: 01812358839 & 01822487909 with 000000 or IqbalPharmacy#2026
       const isDefaultOwnerIdent =
         cleanIdent.toLowerCase() === 'mhakbor2001@gmail.com' ||
+        cleanIdent.toLowerCase() === 'iqbalmahmud498@gmail.com' ||
         cleanDigits.endsWith('01812358839') ||
         cleanDigits.endsWith('1812358839') ||
         cleanDigits.endsWith('01822487909') ||
@@ -2223,17 +2254,19 @@ export default function App() {
       if (isDefaultOwnerIdent && (cleanPass === '000000' || cleanPass === 'IqbalPharmacy#2026' || cleanPass.length >= 4)) {
         const is01822 = cleanDigits.endsWith('01822487909') || cleanDigits.endsWith('1822487909') || cleanIdent.includes('01822');
         const sessionPhone = is01822 ? '01822-487909' : '01812-358839';
-        const sessionEmail = is01822 ? '01822487909@iqbalpharmacy.bd' : '01812358839@iqbalpharmacy.bd';
+        const sessionEmail = is01822 ? '01822487909@iqbalpharmacy.bd' : (cleanIdent.includes('@') ? cleanIdent.toLowerCase() : '01812358839@iqbalpharmacy.bd');
         const sessionStaffId = is01822 ? 'staff-owner-2' : 'staff-owner-1';
         const sessionUid = is01822 ? 'shop_owner_01822487909' : 'shop_owner_default';
+        const assignedRole: StaffMember['roleTitle'] = is01822 ? 'sub_owner' : 'owner';
+        const assignedName = is01822 ? 'ইকবাল মাহমুদ (সাব-মালিক)' : 'ইকবাল মাহমুদ (Owner)';
 
         const session: ShopCloudSession = {
           uid: sessionUid,
           email: sessionEmail,
-          displayName: 'ইকবাল মাহমুদ (Owner)',
+          displayName: assignedName,
           shopName: shopProfile.shopName || 'ইকবাল ফার্মেসী',
           phone: sessionPhone,
-          operatorRole: 'owner',
+          operatorRole: assignedRole,
           staffId: sessionStaffId,
           loggedInAt: Date.now(),
         };
@@ -2243,19 +2276,20 @@ export default function App() {
         const ownerStaffMember: StaffMember = {
           id: sessionStaffId,
           ownerId: sessionUid,
-          name: 'ইকবাল মাহমুদ (Owner)',
-          roleTitle: 'owner',
+          name: assignedName,
+          roleTitle: assignedRole,
+          isMandatoryOwner: !is01822,
           phone: sessionPhone,
           email: sessionEmail,
           password: cleanPass,
-          shift: 'সারাদিন (মূল তত্ত্বাবধান)',
-          counterName: 'কাউন্টার ১ (Owner)',
+          shift: is01822 ? 'সারাদিন (সহকারী তত্ত্বাবধান)' : 'সারাদিন (মূল তত্ত্বাবধান)',
+          counterName: is01822 ? 'কাউন্টার ১ (সাব-মালিক)' : 'কাউন্টার ১ (Owner)',
           active: true,
           updatedAtMs: Date.now(),
         };
 
         setStaffList((prev) => {
-          const next = prev.map((s) => (s.id === sessionStaffId || s.roleTitle === 'owner' ? ownerStaffMember : s));
+          const next = prev.map((s) => (s.id === sessionStaffId ? ownerStaffMember : s));
           if (!next.some((s) => s.id === sessionStaffId)) next.unshift(ownerStaffMember);
           saveLocal(STORAGE_KEYS.STAFF, next);
           return next;
@@ -2266,71 +2300,74 @@ export default function App() {
         setDeletedIds([]);
         saveLocal(STORAGE_KEYS.DELETED_IDS, []);
 
-        // Sync all data from Firestore & Global Cloud immediately
-        await syncAllDataFromFirestore({ silent: true });
-        try {
-          const cloudSnap = await fetchServerPharmacyState();
-          if (cloudSnap.hasData && cloudSnap.state) {
-            const rem = cloudSnap.state;
-            if (Array.isArray(rem.inventory) && rem.inventory.length > 0) {
-              setInventory((prev) => {
-                const next = mergeEntityList(rem.inventory, prev, new Set(), true);
-                saveLocal(STORAGE_KEYS.INVENTORY, next);
-                return next;
-              });
-            }
-            if (Array.isArray(rem.transactions) && rem.transactions.length > 0) {
-              setTransactions((prev) => {
-                const next = mergeEntityList(rem.transactions, prev, new Set());
-                saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
-                return next;
-              });
-            }
-            if (Array.isArray(rem.customers) && rem.customers.length > 0) {
-              setCustomers((prev) => {
-                const next = mergeEntityList(rem.customers, prev, new Set());
-                saveLocal(STORAGE_KEYS.CUSTOMERS, next);
-                return next;
-              });
-            }
-            if (Array.isArray(rem.customMedicines) && rem.customMedicines.length > 0) {
-              setCustomMedicines((prev) => {
-                const next = mergeEntityList(rem.customMedicines, prev, new Set());
-                saveLocal(STORAGE_KEYS.CUSTOM_MEDS, next);
-                return next;
-              });
-            }
-          }
-        } catch {}
-
-        // Ensure credentials exist in Firestore and Global Cloud for all devices
-        registerGlobalCloudUser({
-          id: sessionStaffId,
-          staffId: sessionStaffId,
-          ownerId: sessionUid,
-          phone: sessionPhone,
-          email: sessionEmail,
-          password: cleanPass,
-          name: 'ইকবাল মাহমুদ (Owner)',
-          ownerName: 'ইকবাল মাহমুদ (Owner)',
-          shopName: shopProfile.shopName || 'ইকবাল ফার্মেসী',
-          role: 'owner',
-          roleTitle: 'owner',
-          updatedAtMs: Date.now(),
-        }).catch(() => {});
-
-        setDoc(doc(db, 'staff', sessionStaffId), buildStaffCloudPayload(ownerStaffMember, sessionUid)).catch(() => {});
-        setDoc(doc(db, 'registered_users', is01822 ? 'user_phone_01822487909' : 'user_phone_01812358839'), {
-          ...ownerStaffMember,
-          ownerName: 'ইকবাল মাহমুদ (Owner)',
-          shopName: shopProfile.shopName || 'ইকবাল ফার্মেসী',
-          password: cleanPass,
-          updatedAtMs: Date.now(),
-        }).catch(() => {});
-
+        // Immediately close modal and show toast!
         setLoginErrorMessage(null);
         setShowCloudLoginModal(false);
-        showToast('স্বাগতম ইকবাল মাহমুদ (Owner)! সফলভাবে লগইন হয়েছে।');
+        setCloudLoginLoading(false);
+        showToast(`স্বাগতম ${assignedName}! সফলভাবে লগইন হয়েছে।`);
+
+        // Ensure credentials exist in Firestore and Global Cloud and sync all data in background
+        (async () => {
+          try {
+            registerGlobalCloudUser({
+              id: sessionStaffId,
+              staffId: sessionStaffId,
+              ownerId: sessionUid,
+              phone: sessionPhone,
+              email: sessionEmail,
+              password: cleanPass,
+              name: assignedName,
+              ownerName: assignedName,
+              shopName: shopProfile.shopName || 'ইকবাল ফার্মেসী',
+              role: assignedRole,
+              roleTitle: assignedRole,
+              updatedAtMs: Date.now(),
+            }).catch(() => {});
+
+            setDoc(doc(db, 'staff', sessionStaffId), buildStaffCloudPayload(ownerStaffMember, sessionUid)).catch(() => {});
+            setDoc(doc(db, 'registered_users', is01822 ? 'user_phone_01822487909' : 'user_phone_01812358839'), {
+              ...ownerStaffMember,
+              ownerName: assignedName,
+              shopName: shopProfile.shopName || 'ইকবাল ফার্মেসী',
+              password: cleanPass,
+              updatedAtMs: Date.now(),
+            }).catch(() => {});
+
+            await syncAllDataFromFirestore({ silent: true });
+            const cloudSnap = await fetchServerPharmacyState();
+            if (cloudSnap.hasData && cloudSnap.state) {
+              const rem = cloudSnap.state;
+              if (Array.isArray(rem.inventory) && rem.inventory.length > 0) {
+                setInventory((prev) => {
+                  const next = mergeEntityList(rem.inventory, prev, new Set(), true);
+                  saveLocal(STORAGE_KEYS.INVENTORY, next);
+                  return next;
+                });
+              }
+              if (Array.isArray(rem.transactions) && rem.transactions.length > 0) {
+                setTransactions((prev) => {
+                  const next = mergeEntityList(rem.transactions, prev, new Set());
+                  saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
+                  return next;
+                });
+              }
+              if (Array.isArray(rem.customers) && rem.customers.length > 0) {
+                setCustomers((prev) => {
+                  const next = mergeEntityList(rem.customers, prev, new Set());
+                  saveLocal(STORAGE_KEYS.CUSTOMERS, next);
+                  return next;
+                });
+              }
+              if (Array.isArray(rem.customMedicines) && rem.customMedicines.length > 0) {
+                setCustomMedicines((prev) => {
+                  const next = mergeEntityList(rem.customMedicines, prev, new Set());
+                  saveLocal(STORAGE_KEYS.CUSTOM_MEDS, next);
+                  return next;
+                });
+              }
+            }
+          } catch {}
+        })();
         return;
       }
 
@@ -2639,16 +2676,21 @@ export default function App() {
       saveShopCloudSession(session);
       setCloudSession(session);
 
+      const isMand = isMandatoryOwner({ phone: effectivePhone, email: effectiveEmail, id: sessionStaffId });
+      const assignedRole: StaffMember['roleTitle'] = isMand ? 'owner' : (isOwnerAccount ? 'sub_owner' : (effectiveRole as any));
+      const finalDisplayName = isMand ? 'Owner' : effectiveName;
+
       const loggedStaffMember: StaffMember = {
-        id: session.staffId || 'staff-owner-1',
+        id: session.staffId || (isMand ? 'staff-owner-1' : `staff_${Date.now()}`),
         ownerId: session.uid,
-        name: effectiveName,
-        roleTitle: isOwnerAccount ? 'owner' : (effectiveRole as any),
+        name: finalDisplayName,
+        roleTitle: assignedRole,
+        isMandatoryOwner: isMand,
         phone: effectivePhone,
         email: effectiveEmail,
         password: cleanPass,
-        shift: isOwnerAccount ? 'সারাদিন (মূল তত্ত্বাবধান)' : 'নিয়মিত শিফট',
-        counterName: isOwnerAccount ? 'কাউন্টার ১ (Owner)' : 'কাউন্টার ২ (স্টাফ)',
+        shift: isMand ? 'সারাদিন (মূল তত্ত্বাবধান)' : (assignedRole === 'sub_owner' ? 'সারাদিন (সহকারী তত্ত্বাবধান)' : 'নিয়মিত শিফট'),
+        counterName: isMand ? 'কাউন্টার ১ (Owner)' : (assignedRole === 'sub_owner' ? 'কাউন্টার ১ (সাব-মালিক)' : 'কাউন্টার ২ (স্টাফ)'),
         active: true,
         updatedAtMs: Date.now(),
       };
@@ -2667,46 +2709,50 @@ export default function App() {
       setDeletedIds([]);
       saveLocal(STORAGE_KEYS.DELETED_IDS, []);
 
-      // Pull all cloud data from Firestore & Global Cloud (Zero data loss across devices!)
-      await syncAllDataFromFirestore({ silent: true });
-      try {
-        const cloudSnap = await fetchServerPharmacyState();
-        if (cloudSnap.hasData && cloudSnap.state) {
-          const rem = cloudSnap.state;
-          if (Array.isArray(rem.inventory) && rem.inventory.length > 0) {
-            setInventory((prev) => {
-              const next = mergeEntityList(rem.inventory, prev, new Set(), true);
-              saveLocal(STORAGE_KEYS.INVENTORY, next);
-              return next;
-            });
-          }
-          if (Array.isArray(rem.transactions) && rem.transactions.length > 0) {
-            setTransactions((prev) => {
-              const next = mergeEntityList(rem.transactions, prev, new Set());
-              saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
-              return next;
-            });
-          }
-          if (Array.isArray(rem.customers) && rem.customers.length > 0) {
-            setCustomers((prev) => {
-              const next = mergeEntityList(rem.customers, prev, new Set());
-              saveLocal(STORAGE_KEYS.CUSTOMERS, next);
-              return next;
-            });
-          }
-          if (Array.isArray(rem.customMedicines) && rem.customMedicines.length > 0) {
-            setCustomMedicines((prev) => {
-              const next = mergeEntityList(rem.customMedicines, prev, new Set());
-              saveLocal(STORAGE_KEYS.CUSTOM_MEDS, next);
-              return next;
-            });
-          }
-        }
-      } catch {}
-
+      // Close modal and show toast immediately so user never gets stuck spinning
       setLoginErrorMessage(null);
       setShowCloudLoginModal(false);
-      showToast(`স্বাগতম ${effectiveName}! সফলভাবে লগইন হয়েছে।`);
+      setCloudLoginLoading(false);
+      showToast(`স্বাগতম ${finalDisplayName}! সফলভাবে লগইন হয়েছে।`);
+
+      // Pull all cloud data in background
+      (async () => {
+        try {
+          await syncAllDataFromFirestore({ silent: true });
+          const cloudSnap = await fetchServerPharmacyState();
+          if (cloudSnap.hasData && cloudSnap.state) {
+            const rem = cloudSnap.state;
+            if (Array.isArray(rem.inventory) && rem.inventory.length > 0) {
+              setInventory((prev) => {
+                const next = mergeEntityList(rem.inventory, prev, new Set(), true);
+                saveLocal(STORAGE_KEYS.INVENTORY, next);
+                return next;
+              });
+            }
+            if (Array.isArray(rem.transactions) && rem.transactions.length > 0) {
+              setTransactions((prev) => {
+                const next = mergeEntityList(rem.transactions, prev, new Set());
+                saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
+                return next;
+              });
+            }
+            if (Array.isArray(rem.customers) && rem.customers.length > 0) {
+              setCustomers((prev) => {
+                const next = mergeEntityList(rem.customers, prev, new Set());
+                saveLocal(STORAGE_KEYS.CUSTOMERS, next);
+                return next;
+              });
+            }
+            if (Array.isArray(rem.customMedicines) && rem.customMedicines.length > 0) {
+              setCustomMedicines((prev) => {
+                const next = mergeEntityList(rem.customMedicines, prev, new Set());
+                saveLocal(STORAGE_KEYS.CUSTOM_MEDS, next);
+                return next;
+              });
+            }
+          }
+        } catch {}
+      })();
       return;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -2776,16 +2822,21 @@ export default function App() {
         : `staff_owner_${cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 32)}`;
       const staffId = existingUser ? existingUser.id : (session.staffId || deterministicStaffId);
 
+      const isMand = isMandatoryOwner({ phone: session.phone, email: cleanEmail, id: staffId });
+      const assignedRole: StaffMember['roleTitle'] = isMand ? 'owner' : 'sub_owner';
+      const assignedName = isMand ? 'Owner' : (registerOwnerName.trim() || 'সাব-মালিক');
+
       const ownerStaff: StaffMember = {
         id: staffId,
         ownerId: session.uid,
-        name: registerOwnerName.trim() || 'Owner',
-        roleTitle: 'owner',
+        name: assignedName,
+        roleTitle: assignedRole,
+        isMandatoryOwner: isMand,
         phone: session.phone,
         email: session.email,
         password: registerPassword.trim(),
-        shift: 'সারাদিন (মূল তত্ত্বাবধান)',
-        counterName: 'কাউন্টার ১ (Owner)',
+        shift: isMand ? 'সারাদিন (মূল তত্ত্বাবধান)' : 'সারাদিন (সহকারী তত্ত্বাবধান)',
+        counterName: isMand ? 'কাউন্টার ১ (Owner)' : 'কাউন্টার ১ (সাব-মালিক)',
         active: true,
         updatedAtMs: Date.now(),
       };
@@ -2811,14 +2862,14 @@ export default function App() {
         id: staffId,
         staffId,
         ownerId: session.uid,
-        name: registerOwnerName.trim() || 'Owner',
-        ownerName: registerOwnerName.trim() || 'Owner',
+        name: assignedName,
+        ownerName: assignedName,
         phone: session.phone,
         email: session.email,
         password: registerPassword.trim(),
         shopName: session.shopName,
-        role: 'owner',
-        roleTitle: 'owner',
+        role: assignedRole,
+        roleTitle: assignedRole,
         updatedAtMs: Date.now(),
       }).catch(() => {});
 
@@ -2829,31 +2880,33 @@ export default function App() {
       setCloudLoginPassword(registerPassword.trim());
       setLoginErrorMessage(null);
       setShowCloudLoginModal(false);
+      setCloudLoginLoading(false);
+      showToast(`দোকানের আইডি (${session.shopName}) সফলভাবে তৈরি ও লগইন হয়েছে!`);
 
-      // Pull any existing cloud data so data is never lost across devices
-      await syncAllDataFromFirestore({ silent: true });
-      try {
-        const cloudSnap = await fetchServerPharmacyState();
-        if (cloudSnap.hasData && cloudSnap.state) {
-          const rem = cloudSnap.state;
-          if (Array.isArray(rem.inventory) && rem.inventory.length > 0) {
-            setInventory((prev) => {
-              const next = mergeEntityList(rem.inventory, prev, new Set(), true);
-              saveLocal(STORAGE_KEYS.INVENTORY, next);
-              return next;
-            });
+      // Pull any existing cloud data in background
+      (async () => {
+        try {
+          await syncAllDataFromFirestore({ silent: true });
+          const cloudSnap = await fetchServerPharmacyState();
+          if (cloudSnap.hasData && cloudSnap.state) {
+            const rem = cloudSnap.state;
+            if (Array.isArray(rem.inventory) && rem.inventory.length > 0) {
+              setInventory((prev) => {
+                const next = mergeEntityList(rem.inventory, prev, new Set(), true);
+                saveLocal(STORAGE_KEYS.INVENTORY, next);
+                return next;
+              });
+            }
+            if (Array.isArray(rem.transactions) && rem.transactions.length > 0) {
+              setTransactions((prev) => {
+                const next = mergeEntityList(rem.transactions, prev, new Set());
+                saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
+                return next;
+              });
+            }
           }
-          if (Array.isArray(rem.transactions) && rem.transactions.length > 0) {
-            setTransactions((prev) => {
-              const next = mergeEntityList(rem.transactions, prev, new Set());
-              saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
-              return next;
-            });
-          }
-        }
-      } catch {}
-
-      showToast(`দোকানের নতুন Owner আইডি (${session.shopName}) সফলভাবে তৈরি ও লগইন হয়েছে!`);
+        } catch {}
+      })();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       showToast(`রেজিস্ট্রেশন ত্রুটি: ${msg || 'দয়া করে সঠিক তথ্য দিন'}`);
@@ -4051,7 +4104,10 @@ export default function App() {
     editingTxId?: string;
     syncModifiedPricesToCatalog?: boolean;
   }): Promise<Transaction | null> => {
-    if (purchaseCart.length === 0) return null;
+    const validPurchaseCart = purchaseCart.filter(
+      (i) => i.brandName && i.brandName.trim().length > 0
+    );
+    if (validPurchaseCart.length === 0) return null;
 
     const nowMs = Date.now();
     const existingEditedTx = params.editingTxId
@@ -4059,7 +4115,7 @@ export default function App() {
       : undefined;
 
     const subTotal = sanitizeNumber(
-      purchaseCart.reduce((acc, i) => {
+      validPurchaseCart.reduce((acc, i) => {
         const effPackRate =
           i.packRate && i.packRate > 0
             ? i.packRate
@@ -4079,10 +4135,10 @@ export default function App() {
     const grandTotal = sanitizeNumber(subTotal + vatAmount - discount);
     const paidAmount = sanitizeNumber(params.paidAmount, 0, grandTotal);
     const dueAmount = sanitizeNumber(grandTotal - paidAmount);
-    const totalCount = purchaseCart.reduce((acc, i) => acc + i.qty, 0);
+    const totalCount = validPurchaseCart.reduce((acc, i) => acc + i.qty, 0);
 
     const summaryText = sanitizeString(
-      purchaseCart
+      validPurchaseCart
         .map((i, idx) => formatPurchaseItemInvoiceLine(i, idx))
         .join('\n'),
       50000
@@ -4173,7 +4229,7 @@ export default function App() {
       }
     }
 
-    for (const purItem of purchaseCart) {
+    for (const purItem of validPurchaseCart) {
       // Formula: Tp + Vat = Product Price. (মোট মূল্য + মোট ভ্যাট) ÷ প্রোডাক্ট সংখ্যা = সিঙ্গেল পিসের ক্রয় মূল্য
       const effPackRate =
         purItem.packRate && purItem.packRate > 0
@@ -4187,14 +4243,18 @@ export default function App() {
         ? Number((effPackRate * count).toFixed(2))
         : Number((purItem.purchasePrice * purItem.qty).toFixed(2));
 
-      // 1. Product VAT (% or ৳)
-      const pMode = purItem.productVatMode || (purItem.vatAmount && purItem.vatAmount > 0 && !purItem.vatPercent ? '৳' : '%');
-      const productVat =
-        pMode === '৳'
-          ? Math.max(0, purItem.vatAmount || 0)
-          : purItem.vatPercent && purItem.vatPercent > 0
-          ? Number(((itemLineCost * purItem.vatPercent) / 100).toFixed(2))
-          : 0;
+      // 1. Product VAT (% or ৳ or piece_vat)
+      const pMode = purItem.productVatMode || (purItem.pieceVatAmount !== undefined && purItem.pieceVatAmount > 0 ? 'piece_vat' : purItem.vatAmount && purItem.vatAmount > 0 && !purItem.vatPercent ? '৳' : '%');
+      let productVat = 0;
+      if (pMode === 'piece_vat' && purItem.pieceVatAmount !== undefined && purItem.pieceVatAmount > 0) {
+        productVat = Number((purItem.pieceVatAmount * purItem.qty).toFixed(2));
+      } else if (pMode === '৳' || pMode === 'fixed') {
+        productVat = Math.max(0, purItem.vatAmount || 0);
+      } else if (purItem.vatPercent && purItem.vatPercent > 0) {
+        productVat = Number(((itemLineCost * purItem.vatPercent) / 100).toFixed(2));
+      } else if (purItem.vatAmount && purItem.vatAmount > 0) {
+        productVat = purItem.vatAmount;
+      }
 
       // 2. Bonus item VAT (bonusQty × rate, fixed lump sum, or percent)
       const bQty = Math.max(0, purItem.bonusQty || 0);
@@ -5740,14 +5800,22 @@ export default function App() {
     const targetStaffId = existingId || duplicateStaff?.id || (cleanDigits.length >= 6 ? `staff_${cleanDigits.length >= 10 ? '0' + cleanDigits.slice(-10) : cleanDigits}` : `staff_${nowMs}`);
     const stId = getCanonicalDocId(targetStaffId);
     unmarkDeletedId(stId);
-    const enforcedName =
-      data.roleTitle === 'owner' ? 'Owner' : sanitizeString(data.name, 100);
+
+    const isTargetMandatory = isMandatoryOwner({ id: stId, phone: data.phone, email: data.email });
+    let assignedRole: StaffMember['roleTitle'] = data.roleTitle;
+    if (isTargetMandatory) {
+      assignedRole = 'owner';
+    } else if (assignedRole === 'owner') {
+      assignedRole = 'sub_owner';
+    }
+    const enforcedName = assignedRole === 'owner' ? 'Owner' : sanitizeString(data.name, 100);
 
     const newStaff: StaffMember = {
       id: stId,
       ownerId: user?.uid || SHARED_PHARMACY_OWNER_ID,
       name: enforcedName,
-      roleTitle: data.roleTitle,
+      roleTitle: assignedRole,
+      isMandatoryOwner: isTargetMandatory,
       phone: sanitizeString(data.phone, 30),
       email: data.email ? sanitizeString(data.email, 120, '') : undefined,
       password: data.password ? sanitizeString(data.password, 100, '') : undefined,
@@ -5784,7 +5852,9 @@ export default function App() {
           phone: data.phone,
           email: data.email || `${phoneDigits}@iqbalpharmacy.bd`,
           password: data.password || '123456',
-          role: data.roleTitle,
+          role: assignedRole,
+          roleTitle: assignedRole,
+          isMandatoryOwner: isTargetMandatory,
           shopName: shopProfile.shopName || 'ইকবাল ফার্মেসী',
           updatedAtMs: nowMs,
         };
@@ -5803,7 +5873,9 @@ export default function App() {
           phone: data.phone,
           email: data.email.toLowerCase(),
           password: data.password || '123456',
-          role: data.roleTitle,
+          role: assignedRole,
+          roleTitle: assignedRole,
+          isMandatoryOwner: isTargetMandatory,
           shopName: shopProfile.shopName || 'ইকবাল ফার্মেসী',
           updatedAtMs: nowMs,
         };
@@ -5817,6 +5889,11 @@ export default function App() {
 
   const handleDeleteStaffMember = async (id: string) => {
     const canonId = getCanonicalDocId(id);
+    const targetStaff = staffList.find((s) => getCanonicalDocId(s.id) === canonId || s.id === id);
+    if (targetStaff && isMandatoryOwner(targetStaff)) {
+      showToast('প্রধান মালিক (Mandatory Owner) স্থায়ী এবং ডিলিট করা সম্ভব নয়!');
+      return;
+    }
     markDeletedIds(
       user ? [id, canonId, `${canonId}_${user.uid.slice(0, 6)}`] : [id, canonId]
     );

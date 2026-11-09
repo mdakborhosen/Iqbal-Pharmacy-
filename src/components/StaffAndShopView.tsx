@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import { ShopCloudSession } from '../firebase';
 import { AppLanguage } from '../i18n';
-import { ShopProfile, StaffMember, Transaction } from '../types';
+import { isMandatoryOwner, ShopProfile, StaffMember, Transaction } from '../types';
 
 interface StaffAndShopViewProps {
   shopProfile: ShopProfile;
@@ -166,8 +166,9 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
 
   const openEditStaffModal = (st: StaffMember) => {
     setEditingStaff(st);
-    setStaffName(st.roleTitle === 'owner' ? 'Owner' : st.name);
-    setRoleTitle(st.roleTitle);
+    const isMand = isMandatoryOwner(st);
+    setStaffName(isMand ? 'Owner' : st.name);
+    setRoleTitle(isMand ? 'owner' : (st.roleTitle === 'owner' ? 'sub_owner' : st.roleTitle));
     setStaffPhone(st.phone);
     setStaffEmail(st.email || '');
     setStaffPassword(st.password || '123456');
@@ -179,14 +180,17 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
 
   const handleSaveStaffSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const finalName = roleTitle === 'owner' ? 'Owner' : staffName.trim();
+    const isMand = editingStaff ? isMandatoryOwner(editingStaff) : false;
+    // Exactly one mandatory owner. If anyone else is given 'owner' role or promoted, they become 'sub_owner'!
+    const finalRole: StaffMember['roleTitle'] = isMand ? 'owner' : (roleTitle === 'owner' ? 'sub_owner' : roleTitle);
+    const finalName = finalRole === 'owner' ? 'Owner' : staffName.trim();
     if (!finalName) return;
     setSavingStaff(true);
     try {
       await onSaveStaffMember(
         {
           name: finalName,
-          roleTitle,
+          roleTitle: finalRole,
           phone: staffPhone.trim() || '01700-000000',
           email: staffEmail.trim() || undefined,
           password: staffPassword.trim() || '123456',
@@ -330,18 +334,26 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
               <tbody className="divide-y divide-slate-200 text-sm">
                 {staffList.map((st) => {
                   const isCurrent = isCloudLoggedIn && st.id === activeStaff.id;
-                  const displayName = st.roleTitle === 'owner' ? 'Owner' : st.name;
+                  const isMand = isMandatoryOwner(st);
+                  const isSub = st.roleTitle === 'sub_owner';
+                  const displayName = isMand ? 'Owner' : st.name;
                   const isPwVisible = Boolean(visiblePasswords[st.id]);
                   const hasPw = Boolean(st.password);
                   const isCopied = copiedStaffId === st.id;
                   const isCurrentUserOwner =
-                    Boolean(isCloudLoggedIn && (cloudSession?.operatorRole === 'owner' || activeStaff.roleTitle === 'owner'));
+                    Boolean(
+                      isCloudLoggedIn &&
+                        (cloudSession?.operatorRole === 'owner' ||
+                          cloudSession?.operatorRole === 'sub_owner' ||
+                          activeStaff.roleTitle === 'owner' ||
+                          activeStaff.roleTitle === 'sub_owner')
+                    );
                   const canViewThisPassword = Boolean(isCloudLoggedIn && (isCurrentUserOwner || st.id === activeStaff.id));
                   const isCurrentlyLoggedIn =
                     Boolean(
                       isCloudLoggedIn &&
                         (cloudSession?.staffId === st.id ||
-                          (cloudSession?.operatorRole === 'owner' && st.roleTitle === 'owner') ||
+                          (cloudSession?.operatorRole === 'owner' && isMand) ||
                           (st.id === activeStaff.id && activeStaff.id !== 'staff-offline-counter'))
                     );
 
@@ -358,9 +370,13 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-2">
                           <span className="font-bold text-slate-900">{displayName}</span>
-                          {st.roleTitle === 'owner' ? (
-                            <span className="px-1.5 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-800 rounded border border-amber-200">
-                              মালিক (Owner)
+                          {isMand ? (
+                            <span className="px-1.5 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-900 rounded border border-amber-300">
+                              প্রধান মালিক (Mandatory)
+                            </span>
+                          ) : isSub ? (
+                            <span className="px-1.5 py-0.5 text-[10px] font-bold bg-indigo-100 text-indigo-900 rounded border border-indigo-300">
+                              সাব-মালিক (Sub Owner)
                             </span>
                           ) : (
                             <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-teal-100 text-teal-800 rounded border border-teal-200">
@@ -368,6 +384,8 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
                                 ? 'ফার্মাসিস্ট'
                                 : st.roleTitle === 'manager'
                                 ? 'ম্যানেজার'
+                                : st.roleTitle === 'cashier'
+                                ? 'ক্যাশিয়ার'
                                 : 'সেলসম্যান'}
                             </span>
                           )}
@@ -511,16 +529,25 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
                             </button>
                           )}
 
-                          {/* Delete button (only Owner can delete, cannot delete owner) */}
-                          {isCurrentUserOwner && staffList.length > 1 && st.roleTitle !== 'owner' && (
-                            <button
-                              type="button"
-                              onClick={() => onDeleteStaffMember(st.id)}
-                              className="p-1.5 text-slate-400 hover:text-red-600 bg-slate-100 hover:bg-red-50 rounded cursor-pointer"
-                              title="ডিলিট করুন"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                          {/* Delete button (Mandatory owner cannot be deleted; all other staff & sub-owners can be deleted) */}
+                          {isCurrentUserOwner && (
+                            isMand ? (
+                              <span
+                                className="px-2 py-1 text-[11px] font-semibold text-amber-800 bg-amber-50 rounded border border-amber-200 select-none whitespace-nowrap"
+                                title="প্রধান মালিক স্থায়ী এবং ডিলিটযোগ্য নয়"
+                              >
+                                স্থায়ী
+                              </span>
+                            ) : staffList.length > 1 ? (
+                              <button
+                                type="button"
+                                onClick={() => onDeleteStaffMember(st.id)}
+                                className="p-1.5 text-slate-400 hover:text-red-600 bg-slate-100 hover:bg-red-50 rounded cursor-pointer"
+                                title="ডিলিট করুন"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            ) : null
                           )}
                         </div>
                       </td>
@@ -705,36 +732,47 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
                   </label>
                   <select
                     value={roleTitle}
+                    disabled={Boolean(editingStaff && isMandatoryOwner(editingStaff))}
                     onChange={(e) => {
                       const val = e.target.value as StaffMember['roleTitle'];
                       setRoleTitle(val);
                       if (val === 'owner') {
                         setStaffName('Owner');
                         setCounterName('কাউন্টার ১ (Owner)');
+                      } else if (val === 'sub_owner') {
+                        if (staffName === 'Owner') setStaffName('');
+                        setCounterName('কাউন্টার ১ (সাব-মালিক)');
                       }
                     }}
-                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-md"
+                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-md disabled:bg-slate-100 disabled:text-slate-500"
                   >
-                    <option value="salesman">সেলসম্যান (Staff)</option>
-                    <option value="pharmacist">ফার্মাসিস্ট (Staff)</option>
-                    <option value="manager">ম্যানেজার (Staff)</option>
-                    <option value="owner">দোকানের মালিক (Owner)</option>
+                    {editingStaff && isMandatoryOwner(editingStaff) ? (
+                      <option value="owner">প্রধান মালিক (Mandatory Owner - অপরিবর্তনীয়)</option>
+                    ) : (
+                      <>
+                        <option value="sub_owner">সাব-মালিক (Sub Owner - এডমিন সুবিধা)</option>
+                        <option value="manager">ম্যানেজার (Manager - হিসাব ও স্টক)</option>
+                        <option value="pharmacist">ফার্মাসিস্ট (Pharmacist)</option>
+                        <option value="salesman">সেলসম্যান (Salesman)</option>
+                        <option value="cashier">ক্যাশিয়ার (Cashier)</option>
+                      </>
+                    )}
                   </select>
                 </div>
 
                 <div>
                   <label className="block text-xs font-medium text-slate-700 mb-1">
-                    {roleTitle === 'owner'
-                      ? 'প্রদর্শিত নাম (সর্বদা Owner)'
-                      : 'স্টাফের নির্দিষ্ট নাম *'}
+                    {editingStaff && isMandatoryOwner(editingStaff)
+                      ? 'প্রদর্শিত নাম (প্রধান মালিক সর্বদা Owner)'
+                      : 'স্টাফ / সাব-মালিকের নাম *'}
                   </label>
                   <input
                     type="text"
                     required
-                    disabled={roleTitle === 'owner'}
-                    value={roleTitle === 'owner' ? 'Owner' : staffName}
+                    disabled={Boolean(editingStaff && isMandatoryOwner(editingStaff))}
+                    value={editingStaff && isMandatoryOwner(editingStaff) ? 'Owner' : staffName}
                     onChange={(e) => setStaffName(e.target.value)}
-                    placeholder="যেমন: মাহফুজুর রহমান"
+                    placeholder="যেমন: ইকবাল মাহমুদ বা তানভীর আহমেদ"
                     className="w-full px-3 py-2 text-sm border border-slate-200 rounded-md disabled:bg-slate-100 disabled:font-bold"
                   />
                 </div>

@@ -60,6 +60,12 @@ export function getApiBaseUrl(): string {
   return 'https://ais-pre-gftser6y7eip7eqqokrgd4-145385287677.asia-southeast1.run.app';
 }
 
+export function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 2500): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(id));
+}
+
 function openIdb(): Promise<IDBDatabase | null> {
   if (typeof window === 'undefined' || !('indexedDB' in window)) {
     return Promise.resolve(null);
@@ -122,11 +128,11 @@ export async function loadIndexedDbSnapshot(): Promise<PharmacyPersistentState |
 export async function fetchGlobalCloudUsers(): Promise<GlobalCloudUser[]> {
   // 1. Prioritize persistent backend server
   try {
-    const srvRes = await fetch(`${getApiBaseUrl()}/api/auth/users`, {
+    const srvRes = await fetchWithTimeout(`${getApiBaseUrl()}/api/auth/users`, {
       method: 'GET',
       headers: { Accept: 'application/json' },
       cache: 'no-store',
-    });
+    }, 2500);
     if (srvRes.ok) {
       const srvJson = await srvRes.json();
       if (srvJson?.ok && Array.isArray(srvJson.users) && srvJson.users.length > 0) {
@@ -137,11 +143,11 @@ export async function fetchGlobalCloudUsers(): Promise<GlobalCloudUser[]> {
 
   // 2. Fallback to external global cloud mirror
   try {
-    const res = await fetch(GLOBAL_CLOUD_URL, {
+    const res = await fetchWithTimeout(GLOBAL_CLOUD_URL, {
       method: 'GET',
       headers: { Accept: 'application/json' },
       cache: 'no-store',
-    });
+    }, 2500);
     if (!res.ok) return [];
     const json = await res.json();
     const data = json?.data;
@@ -161,7 +167,7 @@ export async function registerGlobalCloudUser(newUser: GlobalCloudUser): Promise
   // 1. Always persist to our primary backend server first
   try {
     const srvUrl = `${getApiBaseUrl()}/api/auth/register`;
-    await fetch(srvUrl, {
+    await fetchWithTimeout(srvUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -172,7 +178,7 @@ export async function registerGlobalCloudUser(newUser: GlobalCloudUser): Promise
         shopName: newUser.shopName,
         role: newUser.role || 'owner',
       }),
-    }).catch(() => {});
+    }, 2500).catch(() => {});
   } catch {}
 
   // 2. Also persist to global cloud mirror as backup
@@ -199,7 +205,7 @@ export async function registerGlobalCloudUser(newUser: GlobalCloudUser): Promise
 
     let existingData: Record<string, any> = {};
     try {
-      const gRes = await fetch(GLOBAL_CLOUD_URL, { cache: 'no-store' });
+      const gRes = await fetchWithTimeout(GLOBAL_CLOUD_URL, { cache: 'no-store' }, 2500);
       if (gRes.ok) {
         const gJson = await gRes.json();
         existingData = gJson?.data || {};
@@ -215,11 +221,11 @@ export async function registerGlobalCloudUser(newUser: GlobalCloudUser): Promise
       },
     };
 
-    const putRes = await fetch(GLOBAL_CLOUD_URL, {
+    const putRes = await fetchWithTimeout(GLOBAL_CLOUD_URL, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-    });
+    }, 2500);
 
     return putRes.ok;
   } catch (err) {
@@ -234,11 +240,11 @@ export async function registerGlobalCloudUser(newUser: GlobalCloudUser): Promise
 export async function loginViaServerApi(ident: string, password: string): Promise<GlobalCloudUser | null> {
   try {
     const url = `${getApiBaseUrl()}/api/auth/login`;
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ident, password }),
-    });
+    }, 2500);
     if (!res.ok) {
       const errData = await res.json().catch(() => null);
       if (res.status === 401) {
@@ -270,11 +276,11 @@ export async function fetchServerPharmacyState(): Promise<{
 
   // 1. Fetch from universal multi-device cloud database
   try {
-    const cloudRes = await fetch(GLOBAL_CLOUD_URL, {
+    const cloudRes = await fetchWithTimeout(GLOBAL_CLOUD_URL, {
       method: 'GET',
       headers: { Accept: 'application/json' },
       cache: 'no-store',
-    });
+    }, 2500);
     if (cloudRes.ok) {
       const cloudJson = await cloudRes.json();
       const cData = cloudJson?.data;
@@ -292,11 +298,11 @@ export async function fetchServerPharmacyState(): Promise<{
   let serverUpdatedAtMs = 0;
   try {
     const serverUrl = `${getApiBaseUrl()}/api/pharmacy-state`;
-    const res = await fetch(serverUrl, {
+    const res = await fetchWithTimeout(serverUrl, {
       method: 'GET',
       headers: { Accept: 'application/json' },
       cache: 'no-store',
-    });
+    }, 2500);
     if (res.ok) {
       const data = await res.json();
       if (data && data.hasData && data.state) {

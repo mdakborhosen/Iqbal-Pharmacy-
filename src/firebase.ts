@@ -505,21 +505,26 @@ export async function registerNewShopOwnerAccount(params: {
     }
   }
 
+  const timeoutPromise = (ms: number) =>
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), ms));
+
   let firebaseUid = existingOwnerId;
   if (!firebaseUid) {
     try {
-      const cred = await createUserWithEmailAndPassword(auth, cleanEmail, cleanPassword);
+      const cred = await Promise.race([
+        createUserWithEmailAndPassword(auth, cleanEmail, cleanPassword),
+        timeoutPromise(3000),
+      ]);
       firebaseUid = cred.user.uid;
-      try {
-        await updateProfile(cred.user, { displayName });
-      } catch {
-        // ignore
-      }
+      updateProfile(cred.user, { displayName }).catch(() => {});
     } catch (err: unknown) {
       const errorCode = (err as { code?: string })?.code;
       if (errorCode === 'auth/email-already-in-use') {
         try {
-          const cred = await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
+          const cred = await Promise.race([
+            signInWithEmailAndPassword(auth, cleanEmail, cleanPassword),
+            timeoutPromise(3000),
+          ]);
           firebaseUid = cred.user.uid;
         } catch {
           firebaseUid = deterministicOwnerUid;
@@ -535,7 +540,7 @@ export async function registerNewShopOwnerAccount(params: {
   // Ensure Firebase client is signed in anonymously if email provider is disabled or domain not yet whitelisted
   if (!auth.currentUser) {
     try {
-      await signInAnonymously(auth);
+      await Promise.race([signInAnonymously(auth), timeoutPromise(2000)]).catch(() => {});
       if (!firebaseUid && auth.currentUser) {
         firebaseUid = auth.currentUser.uid;
       }
@@ -565,28 +570,6 @@ export async function registerNewShopOwnerAccount(params: {
       updatedAtMs: Date.now(),
     };
 
-    if (cleanPhoneDigits) {
-      await setDoc(doc(db, 'registered_users', `user_phone_${cleanPhoneDigits}`), userDocData);
-      if (cleanPhoneDigits.length >= 10) {
-        await setDoc(doc(db, 'registered_users', `user_phone_${bd11}`), userDocData);
-        await setDoc(doc(db, 'registered_users', `user_phone_${bd10}`), userDocData);
-        await setDoc(doc(db, 'registered_users', `user_phone_880${bd10}`), userDocData);
-      }
-      await setDoc(doc(db, 'registered_users', `user_id_${cleanPhoneDigits}`), userDocData);
-      await setDoc(doc(db, 'registered_users', cleanPhoneDigits), userDocData).catch(() => {});
-    }
-    await setDoc(doc(db, 'registered_users', `user_email_${safeEmailKey}`), userDocData);
-    await setDoc(doc(db, 'registered_users', cleanEmail), userDocData).catch(() => {});
-    if (phone) {
-      await setDoc(doc(db, 'registered_users', phone), userDocData).catch(() => {});
-    }
-    if (rawEmail && !isValidEmail) {
-      const cleanCustomKey = rawEmail.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_');
-      await setDoc(doc(db, 'registered_users', `user_id_${cleanCustomKey}`), userDocData).catch(() => {});
-      await setDoc(doc(db, 'registered_users', rawEmail.toLowerCase()), userDocData).catch(() => {});
-    }
-
-    // Also persist into staff collection so staff lookups work across devices seamlessly
     const staffDocData = {
       id: finalStaffId,
       ownerId: finalOwnerUid,
@@ -600,7 +583,34 @@ export async function registerNewShopOwnerAccount(params: {
       active: true,
       updatedAtMs: Date.now(),
     };
-    await setDoc(doc(db, 'staff', finalStaffId), staffDocData, { merge: true });
+
+    const writePromises: Promise<any>[] = [];
+    if (cleanPhoneDigits) {
+      writePromises.push(setDoc(doc(db, 'registered_users', `user_phone_${cleanPhoneDigits}`), userDocData, { merge: true }));
+      writePromises.push(setDoc(doc(db, 'registered_users', `user_id_${cleanPhoneDigits}`), userDocData, { merge: true }));
+      writePromises.push(setDoc(doc(db, 'registered_users', cleanPhoneDigits), userDocData, { merge: true }));
+      if (cleanPhoneDigits.length >= 10) {
+        writePromises.push(setDoc(doc(db, 'registered_users', `user_phone_${bd11}`), userDocData, { merge: true }));
+        writePromises.push(setDoc(doc(db, 'registered_users', `user_phone_${bd10}`), userDocData, { merge: true }));
+        writePromises.push(setDoc(doc(db, 'registered_users', `user_phone_880${bd10}`), userDocData, { merge: true }));
+      }
+    }
+    writePromises.push(setDoc(doc(db, 'registered_users', `user_email_${safeEmailKey}`), userDocData, { merge: true }));
+    writePromises.push(setDoc(doc(db, 'registered_users', cleanEmail), userDocData, { merge: true }));
+    if (phone) {
+      writePromises.push(setDoc(doc(db, 'registered_users', phone), userDocData, { merge: true }));
+    }
+    if (rawEmail && !isValidEmail) {
+      const cleanCustomKey = rawEmail.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_');
+      writePromises.push(setDoc(doc(db, 'registered_users', `user_id_${cleanCustomKey}`), userDocData, { merge: true }));
+      writePromises.push(setDoc(doc(db, 'registered_users', rawEmail.toLowerCase()), userDocData, { merge: true }));
+    }
+    writePromises.push(setDoc(doc(db, 'staff', finalStaffId), staffDocData, { merge: true }));
+
+    await Promise.race([
+      Promise.allSettled(writePromises),
+      timeoutPromise(3000),
+    ]);
 
     // Also persist directly to server multi-device database so any other device logs in instantly
     try {

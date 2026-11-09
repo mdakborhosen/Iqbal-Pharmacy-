@@ -156,11 +156,14 @@ export interface Transaction {
   updatedAtMs?: number;
 }
 
+export type StaffRoleTitle = 'owner' | 'sub_owner' | 'manager' | 'pharmacist' | 'salesman' | 'cashier';
+
 export interface StaffMember {
   id: string;
   ownerId: string;
-  name: string; // For owner, displays "Owner", for staff displays their specific name
-  roleTitle: 'owner' | 'manager' | 'pharmacist' | 'salesman';
+  name: string; // For owner, displays "Owner", for sub_owner displays specific name or Sub Owner, for staff displays name
+  roleTitle: StaffRoleTitle;
+  isMandatoryOwner?: boolean; // Exactly one mandatory owner (যাকে ডিলিট করা যাবে না)
   phone: string;
   email?: string; // Email / Gmail for staff login
   password?: string; // Password for staff login
@@ -171,6 +174,23 @@ export interface StaffMember {
   createdAt?: unknown;
   updatedAt?: unknown;
   updatedAtMs?: number;
+}
+
+export function isMandatoryOwner(st?: Partial<StaffMember> | null): boolean {
+  if (!st) return false;
+  if (st.isMandatoryOwner) return true;
+  if (st.id === 'staff-owner-1' || st.id === 'staff_owner_default') return true;
+  const digits = (st.phone || '').replace(/[^0-9]/g, '');
+  if (digits.endsWith('01812358839') || digits.endsWith('1812358839')) return true;
+  if (
+    st.email &&
+    (st.email.toLowerCase() === 'iqbalmahmud498@gmail.com' ||
+      st.email.toLowerCase() === '01812358839@iqbalpharmacy.bd' ||
+      st.email.toLowerCase() === 'mhakbor2001@gmail.com')
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export interface CustomMedicine {

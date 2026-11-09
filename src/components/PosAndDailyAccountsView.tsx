@@ -567,9 +567,9 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
         BD_PHARMA_COMPANIES[0];
       setSupplierCompany(cleanComp);
       setSupplierPhone(editingInvoiceTx.partyPhone);
-      setPurDiscountStr(String(editingInvoiceTx.discount));
-      setPurVatStr(editingInvoiceTx.vat !== undefined && editingInvoiceTx.vat > 0 ? String(editingInvoiceTx.vat) : '');
-      setPurPaidStr(String(editingInvoiceTx.paidAmount));
+      setPurDiscountStr(String(editingInvoiceTx.discount ?? 0));
+      setPurVatStr(editingInvoiceTx.vat !== undefined ? String(editingInvoiceTx.vat) : '');
+      setPurPaidStr(String(editingInvoiceTx.paidAmount ?? 0));
       setPurPaymentMethod(editingInvoiceTx.paymentMethod);
     }
 
@@ -692,77 +692,85 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
 
   // Purchase Invoice calculations
   const purchaseSubTotal = useMemo(() => {
-    return purchaseCart.reduce((acc, item) => {
-      const effPackRate =
-        item.packRate && item.packRate > 0
-          ? item.packRate
-          : item.purchasePrice > 0
-          ? Number((item.purchasePrice * (item.unitsPerPack || 1)).toFixed(2))
-          : 0;
-      const count = Math.max(1, item.packCount || 1);
-      const isPack = Boolean(item.packUnit && item.packUnit !== 'piece' && effPackRate > 0);
-      const lineCost = isPack
-        ? Number((effPackRate * count).toFixed(2))
-        : Number((item.purchasePrice * item.qty).toFixed(2));
-      return acc + lineCost;
-    }, 0);
+    return purchaseCart
+      .filter((item) => item.brandName.trim().length > 0)
+      .reduce((acc, item) => {
+        const effPackRate =
+          item.packRate && item.packRate > 0
+            ? item.packRate
+            : item.purchasePrice > 0
+            ? Number((item.purchasePrice * (item.unitsPerPack || 1)).toFixed(2))
+            : 0;
+        const count = Math.max(1, item.packCount || 1);
+        const isPack = Boolean(item.packUnit && item.packUnit !== 'piece' && effPackRate > 0);
+        const lineCost = isPack
+          ? Number((effPackRate * count).toFixed(2))
+          : Number((item.purchasePrice * item.qty).toFixed(2));
+        return acc + lineCost;
+      }, 0);
   }, [purchaseCart]);
 
   const totalPurchaseUnits = useMemo(() => {
-    return purchaseCart.reduce((acc, item) => acc + item.qty, 0);
+    return purchaseCart
+      .filter((item) => item.brandName.trim().length > 0)
+      .reduce((acc, item) => acc + item.qty, 0);
   }, [purchaseCart]);
 
   const totalBonusUnits = useMemo(() => {
-    return purchaseCart.reduce((acc, item) => acc + (item.bonusQty || 0), 0);
+    return purchaseCart
+      .filter((item) => item.brandName.trim().length > 0)
+      .reduce((acc, item) => acc + (item.bonusQty || 0), 0);
   }, [purchaseCart]);
 
   const purchaseItemsVatTotal = useMemo(() => {
-    return purchaseCart.reduce((acc, item) => {
-      const effPackRate =
-        item.packRate && item.packRate > 0
-          ? item.packRate
-          : item.purchasePrice > 0
-          ? Number((item.purchasePrice * (item.unitsPerPack || 1)).toFixed(2))
-          : 0;
-      const count = Math.max(1, item.packCount || 1);
-      const isPack = Boolean(item.packUnit && item.packUnit !== 'piece' && effPackRate > 0);
-      const lineCost = isPack
-        ? Number((effPackRate * count).toFixed(2))
-        : Number((item.purchasePrice * item.qty).toFixed(2));
+    return purchaseCart
+      .filter((item) => item.brandName.trim().length > 0)
+      .reduce((acc, item) => {
+        const effPackRate =
+          item.packRate && item.packRate > 0
+            ? item.packRate
+            : item.purchasePrice > 0
+            ? Number((item.purchasePrice * (item.unitsPerPack || 1)).toFixed(2))
+            : 0;
+        const count = Math.max(1, item.packCount || 1);
+        const isPack = Boolean(item.packUnit && item.packUnit !== 'piece' && effPackRate > 0);
+        const lineCost = isPack
+          ? Number((effPackRate * count).toFixed(2))
+          : Number((item.purchasePrice * item.qty).toFixed(2));
 
-      // 1. Product price VAT (piece_vat: single piece ৳, ৳/fixed: direct line total, %: percentage)
-      const pMode = item.productVatMode || (item.pieceVatAmount !== undefined && item.pieceVatAmount > 0 ? 'piece_vat' : item.vatAmount && item.vatAmount > 0 ? '৳' : '%');
-      let productVat = 0;
-      if (pMode === 'piece_vat' && item.pieceVatAmount !== undefined && item.pieceVatAmount > 0) {
-        productVat = Number((item.pieceVatAmount * item.qty).toFixed(2));
-      } else if (pMode === '৳' || pMode === 'fixed') {
-        productVat = Math.max(0, item.vatAmount || 0);
-      } else if (item.vatPercent && item.vatPercent > 0) {
-        productVat = Number(((lineCost * item.vatPercent) / 100).toFixed(2));
-      } else if (item.vatAmount && item.vatAmount > 0) {
-        productVat = item.vatAmount;
-      }
-
-      // 2. Bonus item VAT: multiplied by its quantity (bonusQty × rate) or fixed money
-      const bQty = Math.max(0, item.bonusQty || 0);
-      const bMode = item.bonusVatMode || '৳';
-      const bRate = Math.max(0, item.bonusVatRate || 0);
-      let bonusVat = 0;
-      if (bQty > 0 && bRate > 0) {
-        if (bMode === '৳') {
-          bonusVat = Number((bQty * bRate).toFixed(2));
-        } else if (bMode === 'fixed') {
-          bonusVat = Number(bRate.toFixed(2));
-        } else {
-          const unitP = item.purchasePrice > 0 ? item.purchasePrice : 0;
-          bonusVat = Number((bQty * ((unitP * bRate) / 100)).toFixed(2));
+        // 1. Product price VAT (piece_vat: single piece ৳, ৳/fixed: direct line total, %: percentage)
+        const pMode = item.productVatMode || (item.pieceVatAmount !== undefined && item.pieceVatAmount > 0 ? 'piece_vat' : item.vatAmount && item.vatAmount > 0 ? '৳' : '%');
+        let productVat = 0;
+        if (pMode === 'piece_vat' && item.pieceVatAmount !== undefined && item.pieceVatAmount > 0) {
+          productVat = Number((item.pieceVatAmount * item.qty).toFixed(2));
+        } else if (pMode === '৳' || pMode === 'fixed') {
+          productVat = Math.max(0, item.vatAmount || 0);
+        } else if (item.vatPercent && item.vatPercent > 0) {
+          productVat = Number(((lineCost * item.vatPercent) / 100).toFixed(2));
+        } else if (item.vatAmount && item.vatAmount > 0) {
+          productVat = item.vatAmount;
         }
-      } else if (item.bonusVatAmount && item.bonusVatAmount > 0) {
-        bonusVat = Number(item.bonusVatAmount.toFixed(2));
-      }
 
-      return acc + productVat + bonusVat;
-    }, 0);
+        // 2. Bonus item VAT: multiplied by its quantity (bonusQty × rate) or fixed money
+        const bQty = Math.max(0, item.bonusQty || 0);
+        const bMode = item.bonusVatMode || '৳';
+        const bRate = Math.max(0, item.bonusVatRate || 0);
+        let bonusVat = 0;
+        if (bQty > 0 && bRate > 0) {
+          if (bMode === '৳') {
+            bonusVat = Number((bQty * bRate).toFixed(2));
+          } else if (bMode === 'fixed') {
+            bonusVat = Number(bRate.toFixed(2));
+          } else {
+            const unitP = item.purchasePrice > 0 ? item.purchasePrice : 0;
+            bonusVat = Number((bQty * ((unitP * bRate) / 100)).toFixed(2));
+          }
+        } else if (item.bonusVatAmount && item.bonusVatAmount > 0) {
+          bonusVat = Number(item.bonusVatAmount.toFixed(2));
+        }
+
+        return acc + productVat + bonusVat;
+      }, 0);
   }, [purchaseCart]);
 
   const purDiscountVal = Math.max(0, parseFloat(purDiscountStr) || 0);

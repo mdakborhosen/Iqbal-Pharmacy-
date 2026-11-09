@@ -87,6 +87,7 @@ export const INITIAL_DEMO_STAFF: StaffMember[] = [
     ownerId: 'demo-owner',
     name: 'Owner',
     roleTitle: 'owner',
+    isMandatoryOwner: true,
     phone: '01812-358839',
     email: 'mhakbor2001@gmail.com',
     password: 'IqbalPharmacy#2026',

@@ -5395,15 +5395,17 @@ export function parseTransactionItemsDetailed(
             const totM = inner.match(/=\s*৳([\d.]+)/);
             if (totM) bonusVatAmount = parseFloat(totM[1]);
           } else if (inner.includes('পণ্য ভ্যাট:') || inner.includes('ভ্যাট:')) {
-            if (inner.includes('%')) {
-              productVatMode = '%';
-              const vMatch = inner.match(/(?:পণ্য\s*)?ভ্যাট:\s*([\d.]+)%/);
-              if (vMatch) vatPercent = parseFloat(vMatch[1]);
-            } else if (inner.includes('×') && inner.includes('=')) {
+            if (inner.includes('×') && inner.includes('=')) {
               productVatMode = 'piece_vat';
               const pieceM = inner.match(/×\s*৳([\d.]+)/);
               if (pieceM) pieceVatAmount = parseFloat(pieceM[1]);
               const totM = inner.match(/=\s*৳([\d.]+)/);
+              if (totM) vatAmount = parseFloat(totM[1]);
+            } else if (inner.includes('%')) {
+              productVatMode = '%';
+              const vMatch = inner.match(/(?:পণ্য\s*)?ভ্যাট:\s*([\d.]+)%/);
+              if (vMatch) vatPercent = parseFloat(vMatch[1]);
+              const totM = inner.match(/=\s*৳([\d.]+)/) || inner.match(/\(৳([\d.]+)\)/);
               if (totM) vatAmount = parseFloat(totM[1]);
             } else {
               productVatMode = '৳';
@@ -5588,10 +5590,11 @@ export function buildSaleCartFromTransaction(
 
   return parsed.map((pItem, idx) => {
     const med = pItem.matchedMedicine;
-    const split = splitBrandAndStrengthText(pItem.brandAndStrength);
-    const brandName = med ? med.brandName : split.brandName;
-    const strength = med ? med.strength : split.strength;
-    const dosageForm = med ? med.dosageForm : dosageFormFromInvoicePrefix(pItem.formPrefix);
+    const rawClean = (pItem.cleanName || pItem.brandAndStrength.replace(/\[.*?\]/g, '')).trim();
+    const split = splitBrandAndStrengthText(rawClean);
+    const brandName = rawClean.length > 0 ? (split.brandName || rawClean) : (med ? med.brandName : 'Medicine');
+    const strength = split.strength || (med ? med.strength : '');
+    const dosageForm = pItem.formPrefix ? dosageFormFromInvoicePrefix(pItem.formPrefix) : (med ? med.dosageForm : 'Tablet');
 
     const invMatch = findMatchingInventoryRecord(inventory, {
       medicineId: med?.id,
@@ -5606,8 +5609,9 @@ export function buildSaleCartFromTransaction(
       ? `${invMatch.medicineId}__edit_${idx}`
       : `custom-sale-${idx}-${brandName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 
-    const baseCatalogPrice = invMatch ? invMatch.unitPrice : med ? med.unitPrice : pItem.unitPrice || 10;
-    const unitPrice = pItem.unitPrice > 0 ? pItem.unitPrice : baseCatalogPrice;
+    // Strictly preserve the unitPrice saved in the invoice
+    const unitPrice = pItem.unitPrice > 0 ? pItem.unitPrice : (invMatch?.unitPrice || med?.unitPrice || 10);
+    const baseCatalogPrice = unitPrice;
     const basePurPrice = invMatch
       ? invMatch.purchasePrice
       : med && typeof med.purchasePrice === 'number' && med.purchasePrice > 0
@@ -5648,10 +5652,11 @@ export function buildPurchaseCartFromTransaction(
 
   const items: PurchaseCartItem[] = parsed.map((pItem, idx) => {
     const med = pItem.matchedMedicine;
-    const split = splitBrandAndStrengthText(pItem.brandAndStrength);
-    const brandName = med ? med.brandName : split.brandName;
-    const strength = med ? med.strength : split.strength;
-    const dosageForm = med ? med.dosageForm : dosageFormFromInvoicePrefix(pItem.formPrefix);
+    const rawClean = (pItem.cleanName || pItem.brandAndStrength.replace(/\[.*?\]/g, '')).trim();
+    const split = splitBrandAndStrengthText(rawClean);
+    const brandName = rawClean.length > 0 ? (split.brandName || rawClean) : (med ? med.brandName : 'Custom Product');
+    const strength = split.strength || (med ? med.strength : '');
+    const dosageForm = pItem.formPrefix ? dosageFormFromInvoicePrefix(pItem.formPrefix) : (med ? med.dosageForm : 'Tablet');
 
     const invMatch = findMatchingInventoryRecord(inventory, {
       medicineId: med?.id,
@@ -5711,22 +5716,27 @@ export function buildPurchaseCartFromTransaction(
 
     const rateMatch = (pItem.packDetail || '').match(/@৳([\d.]+)\/দর/);
     let packRate = rateMatch ? parseFloat(rateMatch[1]) : 0;
-    if ((!packRate || packRate <= 0) && packUnit !== 'piece' && pItem.lineTotal > 0 && packCount > 0) {
-      packRate = Number((pItem.lineTotal / packCount).toFixed(2));
-    }
 
+    // Strict preservation of base TP per piece from the invoice line
     let purchasePrice = pItem.unitPrice;
+    const totalItemVat = (pItem.vatAmount || 0) + (pItem.bonusVatAmount || 0);
+    const netBaseCost = Math.max(0, pItem.lineTotal - totalItemVat);
+
     if ((!purchasePrice || purchasePrice <= 0) && packRate > 0 && unitsPerPack > 0) {
       purchasePrice = Number((packRate / unitsPerPack).toFixed(4));
     }
-    if ((!purchasePrice || purchasePrice <= 0) && pItem.lineTotal > 0 && pItem.qty > 0) {
-      purchasePrice = Number((pItem.lineTotal / pItem.qty).toFixed(4));
+    if ((!purchasePrice || purchasePrice <= 0) && netBaseCost > 0 && pItem.qty > 0) {
+      purchasePrice = Number((netBaseCost / pItem.qty).toFixed(4));
     }
     if (!purchasePrice || purchasePrice <= 0) {
       purchasePrice = med?.purchasePrice || (med ? Number((med.unitPrice * 0.88).toFixed(2)) : 8.8);
     }
-    if (!packRate && packUnit !== 'piece') {
-      packRate = Number((purchasePrice * unitsPerPack).toFixed(2));
+    if (!packRate || packRate <= 0) {
+      if (packUnit !== 'piece') {
+        packRate = Number((purchasePrice * unitsPerPack).toFixed(2));
+      } else {
+        packRate = purchasePrice;
+      }
     }
 
     const retailMrp = invMatch
@@ -5744,6 +5754,23 @@ export function buildPurchaseCartFromTransaction(
       : 0;
 
     const totalQty = pItem.qty > 0 ? pItem.qty : packCount * unitsPerPack;
+
+    const restoredProductVatMode =
+      pItem.productVatMode ||
+      (pItem.pieceVatAmount && pItem.pieceVatAmount > 0
+        ? 'piece_vat'
+        : pItem.vatPercent && pItem.vatPercent > 0
+        ? '%'
+        : pItem.vatAmount && pItem.vatAmount > 0
+        ? '৳'
+        : '%');
+
+    const restoredPieceVat =
+      pItem.pieceVatAmount !== undefined && pItem.pieceVatAmount > 0
+        ? pItem.pieceVatAmount
+        : restoredProductVatMode === 'piece_vat' && pItem.vatAmount && totalQty > 0
+        ? Number((pItem.vatAmount / totalQty).toFixed(4))
+        : 0;
 
     return {
       medicineId,
@@ -5774,40 +5801,43 @@ export function buildPurchaseCartFromTransaction(
       pcsPerStrip,
       bonusQty: pItem.bonusQty || 0,
       bonusVatMode: pItem.bonusVatMode || '৳',
-      bonusVatRate: pItem.bonusVatRate || 0,
+      bonusVatRate: pItem.bonusVatRate || (pItem.bonusVatAmount && pItem.bonusQty ? Number((pItem.bonusVatAmount / pItem.bonusQty).toFixed(4)) : 0),
       bonusVatAmount: pItem.bonusVatAmount || 0,
-      productVatMode: pItem.productVatMode || (pItem.vatAmount && pItem.vatAmount > 0 && !pItem.vatPercent ? '৳' : '%'),
+      productVatMode: restoredProductVatMode,
+      pieceVatAmount: restoredPieceVat > 0 ? restoredPieceVat : undefined,
       vatPercent: pItem.vatPercent || 0,
       vatAmount: pItem.vatAmount || 0,
     };
   });
 
-  // Always append a trailing blank box so user can enter the next row immediately
-  const blankRow: PurchaseCartItem = {
-    medicineId: `box_${Date.now()}_blank`,
-    brandName: '',
-    genericName: '',
-    companyName: tx.partyName.replace(/\s*\(ডিপো চালান\)\s*$/, '').trim() || BD_PHARMA_COMPANIES[0],
-    strength: '',
-    dosageForm: 'Tablet',
-    packSize: '1*10',
-    purchasePrice: 0,
-    unitPrice: 0,
-    qty: 10,
-    batchNo: `B-${Math.floor(1000 + Math.random() * 9000)}`,
-    expiryDate: '2028-06-30',
-    availableStock: 0,
-    updateStock: true,
-    packUnit: 'strip',
-    packCount: 1,
-    unitsPerPack: 10,
-    packRate: 0,
-    packDetailFormula: '1*10',
-    stripsPerBox: 10,
-    pcsPerStrip: 10,
-  };
+  if (items.length === 0) {
+    const blankRow: PurchaseCartItem = {
+      medicineId: `box_${Date.now()}_blank`,
+      brandName: '',
+      genericName: '',
+      companyName: tx.partyName.replace(/\s*\(ডিপো চালান\)\s*$/, '').trim() || BD_PHARMA_COMPANIES[0],
+      strength: '',
+      dosageForm: 'Tablet',
+      packSize: '1*10',
+      purchasePrice: 0,
+      unitPrice: 0,
+      qty: 10,
+      batchNo: `B-${Math.floor(1000 + Math.random() * 9000)}`,
+      expiryDate: '2028-06-30',
+      availableStock: 0,
+      updateStock: true,
+      packUnit: 'strip',
+      packCount: 1,
+      unitsPerPack: 10,
+      packRate: 0,
+      packDetailFormula: '1*10',
+      stripsPerBox: 10,
+      pcsPerStrip: 10,
+    };
+    return [blankRow];
+  }
 
-  return [...items, blankRow];
+  return items;
 }
 
 export function numberToBanglaWords(amount: number): string {
