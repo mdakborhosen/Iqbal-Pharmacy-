@@ -46,6 +46,7 @@ export const googleProvider = new GoogleAuthProvider();
 
 export interface ShopCloudSession {
   uid: string;
+  shopId?: string; // Isolated shop ID
   email: string;
   displayName: string;
   shopName: string;
@@ -61,6 +62,7 @@ export const LOGGED_OUT_FLAG_KEY = 'iqbal_pharmacy_is_logged_out_v1';
 
 export const DEFAULT_SHOP_CLOUD_SESSION: ShopCloudSession = {
   uid: 'shop_iqbal_mhakbor2001_gmail_com',
+  shopId: 'shop_iqbal_pharmacy',
   email: 'mhakbor2001@gmail.com',
   displayName: 'ইকবাল মাহমুদ (Owner)',
   shopName: 'ইকবাল ফার্মেসী',

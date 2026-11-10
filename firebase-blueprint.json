@@ -684,12 +684,67 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "ShopRegistration": {
+      "title": "ShopRegistration",
+      "description": "Pharmacy shop registration pending app owner approval",
+      "type": "object",
+      "properties": {
+        "shopId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "shopName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "ownerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "phone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 30
+        },
+        "email": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending_approval", "approved", "rejected", "suspended"]
+        },
+        "isApproved": {
+          "type": "boolean"
+        },
+        "registeredAtMs": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "shopName",
+        "ownerName",
+        "phone",
+        "email",
+        "status",
+        "isApproved",
+        "registeredAtMs"
+      ]
     }
   },
   "firestore": {
     "/shops/{shopId}": {
       "schema": { "$ref": "#/entities/Shop" },
       "description": "Pharmacy shop profile settings"
+    },
+    "/shop_registrations/{regId}": {
+      "schema": { "$ref": "#/entities/ShopRegistration" },
+      "description": "Shop registration pending approval by app owner"
     },
     "/inventory/{itemId}": {
       "schema": { "$ref": "#/entities/InventoryItem" },

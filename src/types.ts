@@ -69,6 +69,7 @@ export interface CustomInvoiceSettings {
 
 export interface ShopRegistration {
   id: string;
+  shopId?: string;
   shopName: string;
   ownerName: string;
   phone: string;
@@ -84,6 +85,7 @@ export interface ShopRegistration {
 
 export interface ShopProfile {
   id: string;
+  shopId?: string;
   ownerId: string;
   shopName: string;
   licenseNo: string;
@@ -100,6 +102,7 @@ export interface ShopProfile {
 
 export interface InventoryItem {
   id: string;
+  shopId?: string;
   ownerId: string;
   medicineId: string;
   brandName: string;
@@ -123,6 +126,7 @@ export interface InventoryItem {
 
 export interface Customer {
   id: string;
+  shopId?: string;
   ownerId: string;
   name: string;
   phone: string;
@@ -163,10 +167,11 @@ export interface DentalClinicalDetails {
   ext?: string;
   others?: string;
   inv?: string;
-}
+  }
 
 export interface Transaction {
   id: string;
+  shopId?: string;
   ownerId: string;
   txType: 'sale' | 'purchase' | 'due_payment';
   invoiceNo: string;
@@ -204,6 +209,7 @@ export type StaffRoleTitle = 'owner' | 'sub_owner' | 'manager' | 'pharmacist' | 
 
 export interface StaffMember {
   id: string;
+  shopId?: string;
   ownerId: string;
   name: string; // For owner, displays "Owner", for sub_owner displays specific name or Sub Owner, for staff displays name
   roleTitle: StaffRoleTitle;
@@ -239,6 +245,7 @@ export function isMandatoryOwner(st?: Partial<StaffMember> | null): boolean {
 
 export interface CustomMedicine {
   id: string;
+  shopId?: string;
   ownerId: string;
   brandName: string;
   genericName: string;
@@ -258,6 +265,7 @@ export interface CustomMedicine {
 
 export interface PriceWatch {
   id: string;
+  shopId?: string;
   ownerId: string;
   medicineId: string;
   brandName: string;
@@ -275,6 +283,7 @@ export interface PriceWatch {
 
 export interface PriceAlert {
   id: string;
+  shopId?: string;
   ownerId: string;
   medicineId: string;
   brandName: string;
