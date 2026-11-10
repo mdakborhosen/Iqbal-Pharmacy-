@@ -4483,10 +4483,15 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
             <div className="print-avoid-break">
               {(() => {
                 const currentSeal = activeInvoiceSeal || previewInvoice.selectedSeal || 'iqbal_pharmacy';
-                const sealMap = {
+                const activeBranch = shopProfile.branches?.find((b) => b.id === shopProfile.activeBranchId) || shopProfile.branches?.[0];
+                const customSettings = shopProfile.customInvoiceSettings;
+                const defaultTitle = customSettings?.invoiceTitle || activeBranch?.name || shopProfile.shopName || 'ইকবাল ফার্মেসী';
+                const defaultLocation = customSettings?.address || activeBranch?.address || shopProfile.address || 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর';
+
+                const sealMap: Record<string, { title: string; location: string }> = {
                   iqbal_pharmacy: {
-                    title: 'ইকবাল ফার্মেসী',
-                    location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
+                    title: defaultTitle,
+                    location: defaultLocation,
                   },
                   dental_care_1: {
                     title: 'ইকবাল ডেন্টাল কেয়ার-১',
@@ -4497,7 +4502,12 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                     location: 'উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী',
                   },
                 };
-                const sealConfig = sealMap[currentSeal] || sealMap.iqbal_pharmacy;
+                if (shopProfile.branches) {
+                  for (const b of shopProfile.branches) {
+                    sealMap[b.id] = { title: b.name, location: b.address || defaultLocation };
+                  }
+                }
+                const sealConfig = sealMap[currentSeal] || { title: defaultTitle, location: defaultLocation };
                 const previewItemCount = parsedPreviewItems.length;
                 const isMicro = previewItemCount >= 14;
                 const isUltraCompact = previewItemCount >= 9 && previewItemCount < 14;

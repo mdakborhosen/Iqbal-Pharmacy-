@@ -19,11 +19,14 @@ import {
   Plus,
   Search,
   ShoppingCart,
+  LayoutGrid,
+  List,
   Trash2,
   TrendingDown,
   TrendingUp,
   X,
 } from 'lucide-react';
+import { MedExMedicineCard } from './MedExMedicineCard';
 import {
   BD_COMPANIES_DIRECTORY,
   BD_GENERICS_DIRECTORY,
@@ -91,7 +94,8 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
   const [selectedDosageForm, setSelectedDosageForm] = useState<string>('ALL');
   const [selectedLetter, setSelectedLetter] = useState<string>('ALL');
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [activeMedicineId, setActiveMedicineId] = useState<string>('med-seclo-20');
+  const [activeMedicineId, setActiveMedicineId] = useState<string>('med-a-cal-dx-500');
+  const [medViewMode, setMedViewMode] = useState<'cards' | 'table'>('cards');
   const [addedFeedbackId, setAddedFeedbackId] = useState<string | null>(null);
   const [showWatchCenter, setShowWatchCenter] = useState<boolean>(false);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
@@ -1029,11 +1033,39 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
           <div className="xl:col-span-7 bg-white border border-slate-200 rounded-lg overflow-hidden">
             <div className="px-5 py-3.5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <h2 className="text-sm font-bold text-slate-900">
-                  ঔষধের বিস্তারিত তালিকা (ব্র্যান্ড, জেনেরিক, প্রস্তুতকারক, ডোজ ও খুচরা মূল্য)
-                </h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm font-bold text-slate-900">
+                    ঔষধের বিস্তারিত তালিকা (ব্র্যান্ড, জেনেরিক, ডোজ ও মূল্য)
+                  </h2>
+                  <div className="flex items-center bg-slate-100 p-0.5 rounded-md border border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => setMedViewMode('cards')}
+                      className={`px-2 py-0.5 text-xs font-semibold rounded flex items-center gap-1 transition-colors cursor-pointer ${
+                        medViewMode === 'cards'
+                          ? 'bg-teal-700 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <LayoutGrid className="w-3 h-3" />
+                      <span>MedEx কার্ড</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMedViewMode('table')}
+                      className={`px-2 py-0.5 text-xs font-semibold rounded flex items-center gap-1 transition-colors cursor-pointer ${
+                        medViewMode === 'table'
+                          ? 'bg-teal-700 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <List className="w-3 h-3" />
+                      <span>টেবিল</span>
+                    </button>
+                  </div>
+                </div>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  মোট <strong className="text-slate-800 font-mono">{filteredMedicines.length.toLocaleString()}</strong>টি ঔষধ পাওয়া গেছে (পৃষ্ঠা {safeMedPage} / {totalMedicinePages}) · তুলনা করতে যেকোনো ঔষধে ক্লিক করুন
+                  মোট <strong className="text-slate-800 font-mono">{filteredMedicines.length.toLocaleString()}</strong>টি ঔষধ পাওয়া গেছে (পৃষ্ঠা {safeMedPage} / {totalMedicinePages}) · কার্ডের [Pack Image] ও [Alternate Brands] ক্লিক করে বিস্তারিত দেখুন
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-md">
@@ -1102,7 +1134,43 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
               </div>
             )}
 
-            <div className="overflow-x-auto max-h-[680px] overflow-y-auto">
+            {medViewMode === 'cards' ? (
+              <div className="p-4 space-y-3.5 max-h-[680px] overflow-y-auto bg-slate-50/50">
+                {paginatedMedicines.length === 0 ? (
+                  <div className="py-12 px-4 text-center text-slate-500 bg-white rounded-lg border border-slate-200">
+                    আপনার অনুসন্ধানের সাথে মিলে এমন কোনো ঔষধ পাওয়া যায়নি। অন্য নাম বা জেনেরিক দিয়ে চেষ্টা করুন।
+                  </div>
+                ) : (
+                  paginatedMedicines.map((med) => (
+                    <div
+                      key={med.id}
+                      onClick={() => setActiveMedicineId(med.id)}
+                      className={`cursor-pointer transition-all ${
+                        activeMedicine?.id === med.id ? 'ring-2 ring-teal-600 rounded-xl' : ''
+                      }`}
+                    >
+                      <MedExMedicineCard
+                        medicine={med}
+                        allMedicines={catalog}
+                        onSelectMedicine={(m) => setActiveMedicineId(m.id)}
+                        onAddToPosCart={(m, q) => handleAddPos(m, q)}
+                        onAddToPurchaseCart={
+                          onAddToPurchaseCart
+                            ? (m, q) => {
+                                onAddToPurchaseCart(m, q);
+                                setAddedFeedbackId(m.id);
+                                setTimeout(() => setAddedFeedbackId(null), 1200);
+                              }
+                            : undefined
+                        }
+                        onOpenEditPrice={(m) => openEditMedicineModal(m)}
+                      />
+                    </div>
+                  ))
+                )}
+              </div>
+            ) : (
+              <div className="overflow-x-auto max-h-[680px] overflow-y-auto">
               <table className="w-full text-left border-collapse">
                 <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
                   <tr className="text-xs font-semibold text-slate-600">
@@ -1332,6 +1400,7 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                 </tbody>
               </table>
             </div>
+            )}
 
             {/* Pagination Footer for 21,000+ Medicines */}
             <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
@@ -1376,7 +1445,33 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
           {/* Right 5 Cols: Selected Medicine Details & Same Generic Group Price Comparison */}
           <div className="xl:col-span-5 space-y-5">
             {activeMedicine ? (
-              <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+              <>
+                <div className="space-y-1.5">
+                  <div className="text-xs font-bold text-teal-900 flex items-center justify-between px-1">
+                    <span>নির্বাচিত ঔষধের অফিসিয়াল MedEx ভিউ:</span>
+                    <span className="text-[11px] font-medium text-slate-500 font-mono">
+                      {activeMedicine.companyName}
+                    </span>
+                  </div>
+                  <MedExMedicineCard
+                    medicine={activeMedicine}
+                    allMedicines={catalog}
+                    onSelectMedicine={(m) => setActiveMedicineId(m.id)}
+                    onAddToPosCart={(m, q) => handleAddPos(m, q)}
+                    onAddToPurchaseCart={
+                      onAddToPurchaseCart
+                        ? (m, q) => {
+                            onAddToPurchaseCart(m, q);
+                            setAddedFeedbackId(m.id);
+                            setTimeout(() => setAddedFeedbackId(null), 1200);
+                          }
+                        : undefined
+                    }
+                    onOpenEditPrice={(m) => openEditMedicineModal(m)}
+                  />
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
                 {/* Active Medicine Header Card */}
                 <div className="p-5 border-b border-slate-200 bg-slate-50/60">
                   <div className="flex items-start justify-between gap-3">
@@ -1694,6 +1789,7 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                   </div>
                 )}
               </div>
+            </>
             ) : null}
           </div>
         </div>

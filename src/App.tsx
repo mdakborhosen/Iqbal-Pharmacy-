@@ -129,6 +129,7 @@ import {
   isMandatoryOwner,
   ShopNotice,
   ShopProfile,
+  ShopRegistration,
   StaffMember,
   Transaction,
 } from './types';
@@ -855,6 +856,10 @@ export default function App() {
     loadLocal<PurchaseCartItem[]>(STORAGE_KEYS.PURCHASE_CART, DEFAULT_PURCHASE_CART)
   );
 
+  const [shopRegistrations, setShopRegistrations] = useState<ShopRegistration[]>(() =>
+    loadLocal<ShopRegistration[]>('shop_registrations_cache', [])
+  );
+
   // Active Invoice being edited through the full New-Invoice Builder
   const [editingInvoiceTx, setEditingInvoiceTx] = useState<Transaction | null>(null);
 
@@ -1281,108 +1286,7 @@ export default function App() {
       .catch(() => {});
   }, [authReady, user, cloudSession?.email]);
 
-  // Pre-seed and verify default Owner credentials (01812358839 and 01822487909 with password 000000 / IqbalPharmacy#2026) in Firestore
-  useEffect(() => {
-    if (!authReady) return;
-    const seedOwnerCredentials = async () => {
-      try {
-        const ownerSeedList = [
-          {
-            phone: '01812-358839',
-            digits: ['01812358839', '1812358839', '8801812358839'],
-            email: '01812358839@iqbalpharmacy.bd',
-            name: 'ইকবাল মাহমুদ (Owner)',
-            staffId: 'staff-owner-1',
-            ownerId: 'shop_owner_default',
-            role: 'owner',
-            roleTitle: 'owner' as const,
-            isMandatoryOwner: true,
-            shift: 'সারাদিন (মূল তত্ত্বাবধান)',
-            counterName: 'কাউন্টার ১ (Owner)',
-          },
-          {
-            phone: '01822-487909',
-            digits: ['01822487909', '1822487909', '8801822487909'],
-            email: '01822487909@iqbalpharmacy.bd',
-            name: 'ইকবাল মাহমুদ (সাব-মালিক)',
-            staffId: 'staff-owner-2',
-            ownerId: 'shop_owner_01822487909',
-            role: 'sub_owner',
-            roleTitle: 'sub_owner' as const,
-            isMandatoryOwner: false,
-            shift: 'সারাদিন (সহকারী তত্ত্বাবধান)',
-            counterName: 'কাউন্টার ১ (সাব-মালিক)',
-          },
-        ];
-
-        for (const op of ownerSeedList) {
-          const ownerPayload = {
-            ownerId: op.ownerId,
-            staffId: op.staffId,
-            phone: op.phone,
-            email: op.email,
-            ownerName: op.name,
-            name: op.name,
-            shopName: 'ইকবাল ফার্মেসী',
-            password: '000000',
-            alternatePassword: 'IqbalPharmacy#2026',
-            role: op.role,
-            roleTitle: op.roleTitle,
-            isMandatoryOwner: op.isMandatoryOwner,
-            updatedAtMs: Date.now(),
-          };
-
-          for (const d of op.digits) {
-            await setDoc(doc(db, 'registered_users', `user_phone_${d}`), ownerPayload, { merge: true }).catch(() => {});
-            await setDoc(doc(db, 'registered_users', `user_id_${d}`), ownerPayload, { merge: true }).catch(() => {});
-          }
-
-          await setDoc(doc(db, 'staff', op.staffId), {
-            id: op.staffId,
-            ownerId: op.ownerId,
-            name: op.name,
-            roleTitle: op.roleTitle,
-            isMandatoryOwner: op.isMandatoryOwner,
-            phone: op.phone,
-            email: op.email,
-            password: '000000',
-            shift: op.shift,
-            counterName: op.counterName,
-            active: true,
-            updatedAtMs: Date.now(),
-          }, { merge: true }).catch(() => {});
-        }
-
-        const primaryOwnerPayload = {
-          ownerId: 'shop_owner_default',
-          staffId: 'staff-owner-1',
-          phone: '01812-358839',
-          ownerName: 'ইকবাল মাহমুদ (Owner)',
-          name: 'ইকবাল মাহমুদ (Owner)',
-          shopName: 'ইকবাল ফার্মেসী',
-          password: '000000',
-          alternatePassword: 'IqbalPharmacy#2026',
-          role: 'owner',
-          roleTitle: 'owner',
-          isMandatoryOwner: true,
-          updatedAtMs: Date.now(),
-        };
-
-        await setDoc(doc(db, 'registered_users', 'user_email_mhakbor2001_gmail_com'), {
-          ...primaryOwnerPayload,
-          email: 'mhakbor2001@gmail.com',
-        }, { merge: true }).catch(() => {});
-
-        await setDoc(doc(db, 'registered_users', 'user_email_iqbalmahmud498_gmail_com'), {
-          ...primaryOwnerPayload,
-          email: 'iqbalmahmud498@gmail.com',
-        }, { merge: true }).catch(() => {});
-      } catch {
-        // ignore
-      }
-    };
-    seedOwnerCredentials();
-  }, [authReady]);
+  // Default database starts empty with 0 accounts - users register clean shops, subject to App Owner approval
 
   // Shared Pharmacy Real-Time Firestore Listeners (accessible across ALL devices, IPs & Cloudflare Pages)
   useEffect(() => {
@@ -1831,6 +1735,19 @@ export default function App() {
       (err) => handleFirestoreError(err, OperationType.LIST, 'price_alerts')
     );
 
+    const unsubShopRegs = onSnapshot(
+      collection(db, 'shop_registrations'),
+      (snap) => {
+        const list: ShopRegistration[] = snap.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<ShopRegistration, 'id'>),
+        }));
+        setShopRegistrations(list);
+        saveLocal('shop_registrations_cache', list);
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'shop_registrations')
+    );
+
     return () => {
       unsubShops();
       unsubInventory();
@@ -1840,6 +1757,7 @@ export default function App() {
       unsubCustomMeds();
       unsubWatches();
       unsubAlerts();
+      unsubShopRegs();
     };
   }, [serverHydrated, user?.uid, cloudSession?.uid]);
 
@@ -2521,103 +2439,42 @@ export default function App() {
         }
       }
 
-      // 5. Evaluate Credentials or Auto-Provision New Account
-      let targetUser = (matchedCloudUser || matchedStaffDoc) as Record<string, any> | null;
+      // 5. Evaluate Credentials & App Owner Approval Status
+      const targetUser = (matchedCloudUser || matchedStaffDoc) as Record<string, any> | null;
       if (!targetUser) {
-        // Auto-provision and register new account directly on the spot!
-        // Guarantees that on ANY device, user IDs / phone numbers are immediately recognized,
-        // saved to Firestore, and never fail with "ইউজার আইডি বা একাউন্ট পাওয়া যায়নি!".
-        const bd11 = cleanDigits.length >= 10 ? '0' + cleanDigits.slice(-10) : cleanDigits;
-        const newPhone = cleanDigits.length >= 6 ? (cleanDigits.length >= 10 ? bd11 : cleanDigits) : (cleanIdent.length >= 6 && /^\d+$/.test(cleanIdent) ? cleanIdent : '');
-        const newEmail = cleanIdent.includes('@') ? cleanIdent.toLowerCase() : `${cleanDigits || cleanIdent.replace(/[^a-zA-Z0-9]/g, '') || 'user'}@iqbalpharmacy.bd`;
-        const newDisplayName = cleanDigits ? `মালিক (${cleanDigits})` : `${cleanIdent} (Owner)`;
-        const autoOwnerId = `shop_owner_${bd11 || cleanIdent.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-        const autoStaffId = `staff_owner_${bd11 || cleanIdent.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+        const err = 'এই মোবাইল বা ইমেইলে কোনো ফার্মেসী একাউন্ট পাওয়া যায়নি! অনুগ্রহ করে প্রথমে "নতুন Owner আইডি খুলুন" ট্যাবে গিয়ে একাউন্ট তৈরি করুন।';
+        setLoginErrorMessage(err);
+        showToast(err);
+        setCloudLoginLoading(false);
+        return;
+      }
 
-        const newOwnerPayload = {
-          ownerId: autoOwnerId,
-          id: autoStaffId,
-          staffId: autoStaffId,
-          phone: newPhone || cleanIdent,
-          email: newEmail,
-          ownerName: newDisplayName,
-          name: newDisplayName,
-          shopName: shopProfile.shopName || 'ইকবাল ফার্মেসী',
-          password: cleanPass,
-          role: 'owner',
-          roleTitle: 'owner',
-          updatedAtMs: Date.now(),
-        };
+      // App Owner / Super Admin check
+      const isMasterAdmin =
+        cleanIdent.toLowerCase() === 'mhakbor2001@gmail.com' ||
+        (targetUser.email && targetUser.email.toLowerCase() === 'mhakbor2001@gmail.com') ||
+        cleanDigits === '01812358839' ||
+        cleanDigits.endsWith('1812358839');
 
-        // Write to Firestore registered_users so any other device immediately has it
-        try {
-          if (cleanDigits) {
-            await setDoc(doc(db, 'registered_users', `user_phone_${cleanDigits}`), newOwnerPayload, { merge: true });
-            if (cleanDigits.length >= 10) {
-              await setDoc(doc(db, 'registered_users', `user_phone_0${cleanDigits.slice(-10)}`), newOwnerPayload, { merge: true });
-              await setDoc(doc(db, 'registered_users', `user_phone_${cleanDigits.slice(-10)}`), newOwnerPayload, { merge: true });
-              await setDoc(doc(db, 'registered_users', `user_phone_880${cleanDigits.slice(-10)}`), newOwnerPayload, { merge: true });
-            }
-          }
-          await setDoc(doc(db, 'registered_users', `user_id_${cleanIdent.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_')}`), newOwnerPayload, { merge: true });
-          await setDoc(doc(db, 'registered_users', cleanIdent.toLowerCase()), newOwnerPayload, { merge: true });
-          if (newEmail) {
-            await setDoc(doc(db, 'registered_users', `user_email_${newEmail.replace(/[^a-zA-Z0-9_-]/g, '_')}`), newOwnerPayload, { merge: true });
-          }
+      // Check registration approval status
+      const matchingReg = shopRegistrations.find((r) => {
+        const rDigits = (r.phone || '').replace(/[^0-9]/g, '');
+        return (
+          (cleanDigits.length >= 6 && (rDigits === cleanDigits || rDigits.endsWith(cleanDigits))) ||
+          (r.email && r.email.toLowerCase() === cleanIdent.toLowerCase())
+        );
+      });
 
-          // Register in shared shop document
-          await setDoc(doc(db, 'shops', SHARED_SHOP_DOC_ID), {
-            registeredOwners: {
-              [cleanIdent]: newOwnerPayload,
-              ...(cleanDigits ? { [cleanDigits]: newOwnerPayload } : {}),
-            },
-            updatedAtMs: Date.now(),
-          }, { merge: true });
+      const isAccountApproved =
+        isMasterAdmin ||
+        (matchingReg ? matchingReg.isApproved || matchingReg.status === 'approved' : targetUser.isApproved !== false && targetUser.status !== 'pending_approval');
 
-          // Also save in staff collection
-          await setDoc(doc(db, 'staff', autoStaffId), {
-            id: autoStaffId,
-            ownerId: autoOwnerId,
-            name: newDisplayName,
-            roleTitle: 'owner',
-            phone: newPhone || cleanIdent,
-            email: newEmail,
-            password: cleanPass,
-            shift: 'সারাদিন (মূল তত্ত্বাবধান)',
-            counterName: 'কাউন্টার ১ (Owner)',
-            active: true,
-            updatedAtMs: Date.now(),
-          }, { merge: true });
-        } catch (e) {
-          console.warn('Auto-register cloud write notice:', e);
-        }
-
-        // Save to multi-device global cloud database
-        registerGlobalCloudUser({
-          id: autoStaffId,
-          staffId: autoStaffId,
-          ownerId: autoOwnerId,
-          phone: newPhone || cleanIdent,
-          email: newEmail,
-          password: cleanPass,
-          name: newDisplayName,
-          ownerName: newDisplayName,
-          shopName: shopProfile.shopName || 'ইকবাল ফার্মেসী',
-          role: 'owner',
-          roleTitle: 'owner',
-          updatedAtMs: Date.now(),
-        }).catch(() => {});
-
-        // Save local registry
-        try {
-          const rawLocal = localStorage.getItem('pharma_local_registered_owners');
-          const localAccs = rawLocal ? JSON.parse(rawLocal) : {};
-          localAccs[cleanIdent] = newOwnerPayload;
-          if (cleanDigits) localAccs[cleanDigits] = newOwnerPayload;
-          localStorage.setItem('pharma_local_registered_owners', JSON.stringify(localAccs));
-        } catch {}
-
-        targetUser = newOwnerPayload;
+      if (!isAccountApproved) {
+        const err = 'আপনার শপ একাউন্টটি এখনও অ্যাপস মালিক কর্তৃক অনুমোদিত হয়নি। অনুগ্রহ করে অ্যাপস মালিকের (mhakbor2001@gmail.com / 01812-358839) অনুমোদনের জন্য অপেক্ষা করুন।';
+        setLoginErrorMessage(err);
+        showToast(err);
+        setCloudLoginLoading(false);
+        return;
       }
 
       const isOwnerAccount =
@@ -2634,6 +2491,7 @@ export default function App() {
         const err = 'ভুল পাসওয়ার্ড! অনুগ্রহ করে সঠিক পাসওয়ার্ড দিন।';
         setLoginErrorMessage(err);
         showToast(err);
+        setCloudLoginLoading(false);
         return;
       }
 
@@ -2872,6 +2730,50 @@ export default function App() {
         roleTitle: assignedRole,
         updatedAtMs: Date.now(),
       }).catch(() => {});
+
+      const isMasterAppOwner =
+        cleanEmail.toLowerCase() === 'mhakbor2001@gmail.com' ||
+        phoneDigits === '01812358839' ||
+        phoneDigits.endsWith('1812358839');
+
+      const registrationPayload: ShopRegistration = {
+        id: `shop_reg_${phoneDigits || Date.now()}`,
+        shopName: registerShopName.trim() || 'ফার্মেসী',
+        ownerName: registerOwnerName.trim(),
+        phone: registerPhone.trim(),
+        email: cleanEmail,
+        password: registerPassword.trim(),
+        address: '',
+        status: isMasterAppOwner ? 'approved' : 'pending_approval',
+        isApproved: isMasterAppOwner,
+        registeredAtMs: Date.now(),
+      };
+
+      // Write registration to Firestore with 2s timeout
+      Promise.race([
+        setDoc(doc(db, 'shop_registrations', registrationPayload.id), registrationPayload, { merge: true }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000)),
+      ]).catch(() => {});
+
+      setShopRegistrations((prev) => [
+        registrationPayload,
+        ...prev.filter((r) => r.id !== registrationPayload.id),
+      ]);
+      saveLocal('shop_registrations_cache', [
+        registrationPayload,
+        ...shopRegistrations.filter((r) => r.id !== registrationPayload.id),
+      ]);
+
+      if (!isMasterAppOwner) {
+        setCloudLoginLoading(false);
+        setCloudAuthTab('login');
+        setCloudLoginEmail(session.phone || cleanEmail);
+        setCloudLoginPassword(registerPassword.trim());
+        const msg = `আপনার শপ একাউন্ট (${session.shopName}) তৈরি হয়েছে! এটি অ্যাপস মালিকের অনুমোদনের অপেক্ষায় আছে। অ্যাপস মালিক (mhakbor2001@gmail.com / 01812-358839) কর্তৃক অনুমোদন সম্পন্ন হলে আপনি লগইন করতে পারবেন।`;
+        setLoginErrorMessage(msg);
+        showToast('রেজিস্ট্রেশন সফল! অ্যাপস মালিকের অনুমোদনের পর লগইন কার্যকর হবে।');
+        return;
+      }
 
       setActiveStaff(ownerStaff);
       setCloudSession(session);
@@ -5763,6 +5665,51 @@ export default function App() {
     showToast('দোকানের একাউন্ট তথ্য সংরক্ষিত হয়েছে!');
   };
 
+  const handleApproveShopRegistration = async (regId: string) => {
+    try {
+      const nowMs = Date.now();
+      await setDoc(
+        doc(db, 'shop_registrations', regId),
+        {
+          status: 'approved',
+          isApproved: true,
+          approvedAtMs: nowMs,
+          approvedBy: 'mhakbor2001@gmail.com',
+        },
+        { merge: true }
+      );
+      setShopRegistrations((prev) =>
+        prev.map((r) =>
+          r.id === regId
+            ? { ...r, status: 'approved', isApproved: true, approvedAtMs: nowMs, approvedBy: 'mhakbor2001@gmail.com' }
+            : r
+        )
+      );
+      showToast('শপ একাউন্টটি সফলভাবে অনুমোদন দেওয়া হয়েছে!');
+    } catch {
+      showToast('অনুমোদনে ত্রুটি হয়েছে');
+    }
+  };
+
+  const handleRejectShopRegistration = async (regId: string) => {
+    try {
+      await setDoc(
+        doc(db, 'shop_registrations', regId),
+        {
+          status: 'rejected',
+          isApproved: false,
+        },
+        { merge: true }
+      );
+      setShopRegistrations((prev) =>
+        prev.map((r) => (r.id === regId ? { ...r, status: 'rejected', isApproved: false } : r))
+      );
+      showToast('শপ একাউন্টটি স্থগিত করা হয়েছে');
+    } catch {
+      showToast('স্থগিতে ত্রুটি হয়েছে');
+    }
+  };
+
   const handleUpdateNotice = async (notice: ShopNotice | null) => {
     const updatedShop: ShopProfile = {
       ...shopProfile,
@@ -6676,6 +6623,9 @@ export default function App() {
                   onUpdateShopProfile={handleUpdateShopProfile}
                   onSaveStaffMember={handleSaveStaffMember}
                   onDeleteStaffMember={handleDeleteStaffMember}
+                  shopRegistrations={shopRegistrations}
+                  onApproveShopRegistration={handleApproveShopRegistration}
+                  onRejectShopRegistration={handleRejectShopRegistration}
                 />
               )}
         </main>

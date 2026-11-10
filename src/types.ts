@@ -41,6 +41,47 @@ export interface ShopNotice {
   updatedBy?: string;
 }
 
+export interface ShopBranch {
+  id: string;
+  name: string; // e.g. "প্রধান শাখা", "শাখা ২ (হাসপাতাল মোড়)"
+  branchCode?: string;
+  address: string;
+  phone: string;
+  licenseNo?: string;
+  drugLicenseNo?: string;
+  vatRegNo?: string;
+  isDefault?: boolean;
+}
+
+export interface CustomInvoiceSettings {
+  invoiceTitle?: string; // e.g. "ইকবাল ফার্মেসী"
+  tagline?: string; // e.g. "এখানে সকল প্রকার দেশি-বিদেশি পাইকারি ও খুচরা ঔষধ সুলভ মূল্যে পাওয়া যায়"
+  address?: string;
+  phone?: string;
+  licenseNo?: string;
+  sealType?: 'paid' | 'cash_received' | 'due' | 'custom';
+  customSealText?: string; // e.g. "পরিশোধিত", "ধন্যবাদ আবার আসবেন"
+  footerNotes?: string[];
+  termsAndConditions?: string;
+  showDrugLicense?: boolean;
+  vatRegNo?: string;
+}
+
+export interface ShopRegistration {
+  id: string;
+  shopName: string;
+  ownerName: string;
+  phone: string;
+  email: string;
+  password?: string;
+  address: string;
+  status: 'pending_approval' | 'approved' | 'rejected' | 'suspended';
+  isApproved: boolean;
+  registeredAtMs: number;
+  approvedAtMs?: number;
+  approvedBy?: string;
+}
+
 export interface ShopProfile {
   id: string;
   ownerId: string;
@@ -48,6 +89,9 @@ export interface ShopProfile {
   licenseNo: string;
   phone: string;
   address: string;
+  branches?: ShopBranch[];
+  activeBranchId?: string;
+  customInvoiceSettings?: CustomInvoiceSettings;
   notice?: ShopNotice;
   createdAt?: unknown;
   updatedAt?: unknown;
