@@ -1316,10 +1316,10 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                     <span className="w-6 h-6 rounded-full bg-teal-700 text-white flex items-center justify-center text-xs">
                       ৪
                     </span>
-                    <span>ধাপ ৪: বিক্রয় ইনভয়েস মেমো, স্টক হ্রাস ও ফাইনাল বিল সম্পন্ন</span>
+                    <span>ধাপ ৪: বিক্রয় ইনভয়েস মেমো ও ফাইনাল বিল সম্পন্ন</span>
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    ওষুধের বিক্রয় দর, ক্রয় দর, পরিমাণ ও স্টক হ্রাসের টিক নিশ্চিত করুন এবং মেমো সম্পন্ন করুন
+                    ওষুধের বিক্রয় দর, পরিমাণ ও স্টক হ্রাসের টিক নিশ্চিত করুন এবং মেমো সম্পন্ন করুন
                   </p>
                 </div>
 
@@ -1352,7 +1352,7 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                 </div>
               </div>
 
-              {/* Sale Items Table (Screenshot 4) */}
+              {/* Sale Items Table (No Purchase Price shown to customer/operator) */}
               <div className="border border-slate-200 rounded-lg overflow-hidden bg-white">
                 {posCart.length === 0 ? (
                   <div className="py-10 px-4 text-center text-xs text-slate-500 space-y-2">
@@ -1370,7 +1370,6 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                     <thead className="bg-teal-50/80 border-b border-slate-200 text-xs font-semibold text-slate-700">
                       <tr>
                         <th className="py-2.5 px-3">প্রডাক্ট / ওষুধের নাম, সেবনবিধি ও স্টক হ্রাস</th>
-                        <th className="py-2.5 px-2 text-center">ক্রয় দর (৳)</th>
                         <th className="py-2.5 px-2 text-center">বিক্রয় দর (৳)</th>
                         <th className="py-2.5 px-2 text-center">পরিমাণ</th>
                         <th className="py-2.5 px-3 text-right">মোট (৳)</th>
@@ -1382,10 +1381,6 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                         const priceChanged =
                           item.originalUnitPrice !== undefined &&
                           Math.abs(item.unitPrice - item.originalUnitPrice) > 0.001;
-                        const purPriceVal =
-                          typeof item.purchasePrice === 'number' && item.purchasePrice > 0
-                            ? item.purchasePrice
-                            : Number((item.unitPrice * 0.88).toFixed(2));
                         const lineTotal = item.unitPrice * item.qty;
                         const rawCurrentStock = getStockForMed(item);
                         const oldEditedQty = isEditingSale ? getOldEditedQtyForMed(item) : 0;
@@ -1457,23 +1452,6 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                                   </span>
                                 )}
                               </div>
-                            </td>
-
-                            {/* Purchase Price Input */}
-                            <td className="py-2.5 px-2 text-center">
-                              <input
-                                type="number"
-                                step="any"
-                                min="0.01"
-                                value={purPriceVal}
-                                onChange={(e) =>
-                                  onUpdateCartPurchasePrice(
-                                    item.medicineId,
-                                    Math.max(0, parseFloat(e.target.value) || 0)
-                                  )
-                                }
-                                className="w-20 text-center py-1 px-1 text-xs font-mono tabular-nums border border-slate-300 rounded bg-white text-indigo-950 font-semibold"
-                              />
                             </td>
 
                             {/* Selling Price Input */}
