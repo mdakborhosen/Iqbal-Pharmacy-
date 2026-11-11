@@ -4,7 +4,9 @@ import {
   Building2,
   Check,
   ChevronDown,
+  Download,
   Edit3,
+  FileSpreadsheet,
   FlaskConical,
   Lock,
   Package,
@@ -117,6 +119,68 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       expiringCount,
     };
   }, [inventory]);
+
+  const lowStockAlertItems = useMemo(() => {
+    return inventory.filter((item) => item.stockQty <= item.minStockLevel);
+  }, [inventory]);
+
+  const handleExportStockCsv = () => {
+    const headers = [
+      'ঔষধের নাম (Brand Name)',
+      'জেনেরিক নাম (Generic)',
+      'প্রস্তুতকারক (Company)',
+      'ধরণ (Dosage Form)',
+      'মাত্রা (Strength)',
+      'প্যাক সাইজ (Pack Size)',
+      'ব্যাচ নং (Batch No)',
+      'মেয়াদ উত্তীর্ণ (Expiry Date)',
+      'র‍্যাক / তাক (Shelf Location)',
+      'বর্তমান স্টক (Stock Qty)',
+      'সর্বনিম্ন স্টক মাত্রা (Min Stock Level)',
+      'একক ক্রয়মূল্য (Purchase Price)',
+      'একক বিক্রয়মূল্য (Unit MRP)',
+      'মোট ক্রয়মূল্য (Total Purchase Val)',
+      'মোট বিক্রয়মূল্য (Total MRP Val)',
+      'স্ট্যাটাস (Status)',
+    ];
+
+    const rows = inventory.map((item) => {
+      const isLow = item.stockQty <= item.minStockLevel;
+      const isExp = isExpiringSoon(item.expiryDate);
+      const status = isExp ? 'মেয়াদ উত্তীর্ণের পথে' : isLow ? 'স্টক স্বল্প' : 'স্বাভাবিক';
+      const totPur = item.stockQty * item.purchasePrice;
+      const totMrp = item.stockQty * item.unitPrice;
+
+      return [
+        `"${item.brandName.replace(/"/g, '""')}"`,
+        `"${item.genericName.replace(/"/g, '""')}"`,
+        `"${item.companyName.replace(/"/g, '""')}"`,
+        `"${item.dosageForm.replace(/"/g, '""')}"`,
+        `"${item.strength.replace(/"/g, '""')}"`,
+        `"${item.packSize.replace(/"/g, '""')}"`,
+        `"${item.batchNo.replace(/"/g, '""')}"`,
+        `"${item.expiryDate}"`,
+        `"${item.shelfLocation.replace(/"/g, '""')}"`,
+        item.stockQty,
+        item.minStockLevel,
+        item.purchasePrice.toFixed(2),
+        item.unitPrice.toFixed(2),
+        totPur.toFixed(2),
+        totMrp.toFixed(2),
+        `"${status}"`,
+      ].join(',');
+    });
+
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `inventory_stock_report_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   const filteredItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -473,6 +537,90 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         </div>
       </div>
 
+      {/* Low Stock Alerts Dashboard Widget */}
+      {lowStockAlertItems.length > 0 && (
+        <div className="bg-amber-50/90 border border-amber-300 rounded-xl p-4 shadow-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-200 pb-2.5 mb-3">
+            <div className="flex items-center gap-2">
+              <span className="p-1.5 rounded-lg bg-amber-500 text-white">
+                <AlertTriangle className="w-4 h-4" />
+              </span>
+              <div>
+                <h3 className="text-sm font-bold text-amber-950">
+                  জরুরি স্টক স্বল্পতা নোটিশ (Low Stock Alerts Widget)
+                </h3>
+                <p className="text-xs text-amber-800">
+                  মোট {lowStockAlertItems.length}টি ওষুধের স্টক তাদের নির্ধারিত সর্বনিম্ন লেভেলের (Min Stock Level) নিচে নেমে গেছে।
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setFilterMode('low_stock')}
+              className="text-xs font-bold text-amber-900 bg-amber-200/80 hover:bg-amber-200 px-3 py-1.5 rounded-md self-start sm:self-auto cursor-pointer"
+            >
+              তালিকায় সবগুলো দেখুন ({lowStockAlertItems.length}) →
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+            {lowStockAlertItems.slice(0, 6).map((item) => (
+              <div
+                key={item.id}
+                className="bg-white border border-amber-200/80 rounded-lg p-2.5 flex items-center justify-between gap-2 shadow-2xs"
+              >
+                <div className="min-w-0">
+                  <div className="font-bold text-xs text-slate-900 truncate">
+                    {item.brandName} <span className="text-[10px] text-slate-500 font-normal">({item.dosageForm} {item.strength})</span>
+                  </div>
+                  <div className="text-[10.5px] text-slate-500 truncate">
+                    {item.companyName}
+                  </div>
+                  <div className="mt-1 flex items-center gap-2 text-[10.5px]">
+                    <span className="text-red-700 font-bold font-mono">
+                      মজুদ: {item.stockQty} পিস
+                    </span>
+                    <span className="text-slate-400">/</span>
+                    <span className="text-slate-600 font-mono">
+                      টার্গেট: {item.minStockLevel} পিস
+                    </span>
+                  </div>
+                </div>
+
+                {onAddToPurchaseCart && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const matchedCatalogMed = catalog.find((c) => c.id === item.medicineId) || {
+                        id: item.medicineId,
+                        brandName: item.brandName,
+                        genericName: item.genericName,
+                        companyName: item.companyName,
+                        dosageForm: item.dosageForm as any,
+                        strength: item.strength,
+                        packSize: item.packSize,
+                        unitPrice: item.unitPrice,
+                        stripPrice: item.stripPrice,
+                        unitsPerStrip: 10,
+                        darNo: '',
+                        therapeuticClass: '',
+                        indication: '',
+                      };
+                      onAddToPurchaseCart(matchedCatalogMed, Math.max(10, item.minStockLevel * 2));
+                    }}
+                    className="shrink-0 px-2.5 py-1.5 text-[11px] font-bold text-white bg-indigo-700 hover:bg-indigo-800 rounded-md cursor-pointer flex items-center gap-1 shadow-2xs"
+                    title="ক্রয় চালানে যুক্ত করে স্টক বৃদ্ধি করুন"
+                  >
+                    <PackagePlus className="w-3.5 h-3.5" />
+                    <span>+ ক্রয় চালান</span>
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Inventory Controls & Table */}
       <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
         <div className="p-5 border-b border-slate-200 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -522,6 +670,16 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 মেয়াদ সতর্কতা ({metrics.expiringCount})
               </button>
             </div>
+
+            <button
+              type="button"
+              onClick={handleExportStockCsv}
+              className="px-3.5 py-2 text-xs font-semibold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-300 rounded-md transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer shadow-2xs"
+              title="বর্তমান সম্পূর্ণ স্টক তালিকা এক্সেল/CSV ফাইলে ডাউনলোড করুন"
+            >
+              <Download className="w-3.5 h-3.5 text-teal-700" />
+              <span>📥 CSV এক্সপোর্ট</span>
+            </button>
 
             <button
               type="button"

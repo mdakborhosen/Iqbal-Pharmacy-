@@ -417,6 +417,37 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
     setShowMedModal(true);
   };
 
+  const openAddVariantModal = (baseMed: MedicineCatalogItem) => {
+    setEditingMed(null);
+    setMedBrand(baseMed.brandName);
+    setMedGeneric(baseMed.genericName);
+    setMedCompany(baseMed.companyName);
+    const currentStr = baseMed.strength.trim();
+    if (currentStr.includes('20')) {
+      setMedStrength(currentStr.replace('20', '40'));
+      const estimatedNewPrice = Number((baseMed.unitPrice * 1.5).toFixed(2));
+      setMedUnitPrice(estimatedNewPrice.toFixed(2));
+      setMedPurchasePrice((estimatedNewPrice * 0.88).toFixed(2));
+      setMedStripPrice((estimatedNewPrice * 10).toFixed(2));
+    } else if (currentStr.includes('500')) {
+      setMedStrength(currentStr.replace('500', '650'));
+      const estimatedNewPrice = Number((baseMed.unitPrice * 1.3).toFixed(2));
+      setMedUnitPrice(estimatedNewPrice.toFixed(2));
+      setMedPurchasePrice((estimatedNewPrice * 0.88).toFixed(2));
+      setMedStripPrice((estimatedNewPrice * 10).toFixed(2));
+    } else {
+      setMedStrength(baseMed.strength);
+      setMedUnitPrice(baseMed.unitPrice.toFixed(2));
+      setMedPurchasePrice(getMedPurchasePrice(baseMed).toFixed(2));
+      setMedStripPrice(baseMed.stripPrice.toFixed(2));
+    }
+    setMedForm(baseMed.dosageForm);
+    setMedPackSize(baseMed.packSize);
+    setMedClass(baseMed.therapeuticClass);
+    setMedIndication(baseMed.indication);
+    setShowMedModal(true);
+  };
+
   const handleSaveMedSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!medBrand.trim() || !medGeneric.trim()) return;
@@ -1164,6 +1195,7 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                             : undefined
                         }
                         onOpenEditPrice={(m) => openEditMedicineModal(m)}
+                        onAddVariant={(m) => openAddVariantModal(m)}
                       />
                     </div>
                   ))
@@ -1468,6 +1500,7 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                         : undefined
                     }
                     onOpenEditPrice={(m) => openEditMedicineModal(m)}
+                    onAddVariant={(m) => openAddVariantModal(m)}
                   />
                 </div>
 

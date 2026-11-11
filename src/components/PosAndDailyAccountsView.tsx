@@ -494,9 +494,14 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
   const [paymentNoteInput, setPaymentNoteInput] = useState<string>('');
   const [submittingPayment, setSubmittingPayment] = useState<boolean>(false);
 
-  // Daily Cashbook Filter states
+  // Daily Cashbook & Period Filter states
   const [dateFilter, setDateFilter] = useState<string>(getTodayDateStr());
   const [showAllDates, setShowAllDates] = useState<boolean>(true);
+  const [dateRangePreset, setDateRangePreset] = useState<
+    'all' | 'today' | 'yesterday' | 'this_week' | 'this_month' | 'custom'
+  >('all');
+  const [startDateFilter, setStartDateFilter] = useState<string>(getTodayDateStr());
+  const [endDateFilter, setEndDateFilter] = useState<string>(getTodayDateStr());
   const [txTypeFilter, setTxTypeFilter] = useState<'ALL' | 'sale' | 'purchase' | 'due_payment'>(
     'ALL'
   );
@@ -1065,15 +1070,36 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     }
   };
 
-  // Filtered Daily Transactions
+  // Filtered Daily Transactions with Date Range presets & Custom range
   const filteredTransactions = useMemo(() => {
+    const todayStr = getTodayDateStr();
     return transactions.filter((tx) => {
-      if (!showAllDates && tx.dateStr !== dateFilter) return false;
+      if (dateRangePreset === 'today') {
+        if (tx.dateStr !== todayStr) return false;
+      } else if (dateRangePreset === 'yesterday') {
+        const d = new Date();
+        d.setDate(d.getDate() - 1);
+        const yStr = d.toISOString().split('T')[0];
+        if (tx.dateStr !== yStr) return false;
+      } else if (dateRangePreset === 'this_week') {
+        const d = new Date();
+        d.setDate(d.getDate() - 7);
+        const start = d.toISOString().split('T')[0];
+        if (tx.dateStr < start || tx.dateStr > todayStr) return false;
+      } else if (dateRangePreset === 'this_month') {
+        const now = new Date();
+        const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+        if (tx.dateStr < start || tx.dateStr > todayStr) return false;
+      } else if (dateRangePreset === 'custom') {
+        if (startDateFilter && tx.dateStr < startDateFilter) return false;
+        if (endDateFilter && tx.dateStr > endDateFilter) return false;
+      }
+
       if (txTypeFilter !== 'ALL' && tx.txType !== txTypeFilter) return false;
       if (staffRoleFilter !== 'ALL' && tx.staffRole !== staffRoleFilter) return false;
       return true;
     });
-  }, [transactions, dateFilter, showAllDates, txTypeFilter, staffRoleFilter]);
+  }, [transactions, dateRangePreset, startDateFilter, endDateFilter, txTypeFilter, staffRoleFilter]);
 
   // Daily Accounting Summary Metrics
   const dailyMetrics = useMemo(() => {
@@ -3243,39 +3269,85 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5">
-            {/* Monthly Sales & Purchase Printable PDF Report Trigger */}
-            <button
-              type="button"
-              onClick={() => setIsMonthlyReportOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-teal-900 bg-teal-50 hover:bg-teal-100 border border-teal-300 rounded-md shadow-2xs transition-all active:scale-95 cursor-pointer shrink-0"
-              title="মাসিক বিক্রয় ও ক্রয় অডিট রিপোর্ট এবং মুদ্রণযোগ্য PDF তৈরি করুন"
-            >
-              <FileText className="w-3.5 h-3.5 text-teal-700" />
-              <span>📊 মাসিক রিপোর্ট (PDF / প্রিন্ট)</span>
-            </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Date Range Presets */}
+            <div className="flex items-center gap-0.5 bg-slate-100 p-1 rounded-md border border-slate-200 text-xs">
+              <button
+                type="button"
+                onClick={() => setDateRangePreset('all')}
+                className={`px-2.5 py-1 rounded font-medium cursor-pointer transition-colors ${
+                  dateRangePreset === 'all' ? 'bg-slate-900 text-white shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                সকল
+              </button>
+              <button
+                type="button"
+                onClick={() => setDateRangePreset('today')}
+                className={`px-2.5 py-1 rounded font-medium cursor-pointer transition-colors ${
+                  dateRangePreset === 'today' ? 'bg-teal-700 text-white shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                আজ
+              </button>
+              <button
+                type="button"
+                onClick={() => setDateRangePreset('yesterday')}
+                className={`px-2.5 py-1 rounded font-medium cursor-pointer transition-colors ${
+                  dateRangePreset === 'yesterday' ? 'bg-teal-700 text-white shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                গতকাল
+              </button>
+              <button
+                type="button"
+                onClick={() => setDateRangePreset('this_week')}
+                className={`px-2.5 py-1 rounded font-medium cursor-pointer transition-colors ${
+                  dateRangePreset === 'this_week' ? 'bg-teal-700 text-white shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                চলতি সপ্তাহ
+              </button>
+              <button
+                type="button"
+                onClick={() => setDateRangePreset('this_month')}
+                className={`px-2.5 py-1 rounded font-medium cursor-pointer transition-colors ${
+                  dateRangePreset === 'this_month' ? 'bg-teal-700 text-white shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                চলতি মাস
+              </button>
+              <button
+                type="button"
+                onClick={() => setDateRangePreset('custom')}
+                className={`px-2.5 py-1 rounded font-medium cursor-pointer transition-colors ${
+                  dateRangePreset === 'custom' ? 'bg-indigo-700 text-white shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                কাস্টম রেঞ্জ
+              </button>
+            </div>
 
-            <input
-              type="date"
-              value={dateFilter}
-              onChange={(e) => {
-                setDateFilter(e.target.value);
-                setShowAllDates(false);
-              }}
-              aria-label="তারিখ নির্বাচন"
-              className="px-3 py-1.5 text-xs font-mono border border-slate-200 rounded-md bg-slate-50"
-            />
-            <button
-              type="button"
-              onClick={() => setShowAllDates(!showAllDates)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                showAllDates
-                  ? 'bg-slate-900 text-white border-slate-900'
-                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-              }`}
-            >
-              {showAllDates ? 'সকল তারিখ দেখানো হচ্ছে' : 'সকল তারিখের হিসাব'}
-            </button>
+            {/* Custom Date Range Picker */}
+            {dateRangePreset === 'custom' && (
+              <div className="flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 p-1 rounded-md text-xs">
+                <span className="text-[11px] font-bold text-indigo-900 pl-1">শুরু:</span>
+                <input
+                  type="date"
+                  value={startDateFilter}
+                  onChange={(e) => setStartDateFilter(e.target.value)}
+                  className="px-2 py-1 text-xs border border-indigo-200 rounded bg-white font-mono"
+                />
+                <span className="text-[11px] font-bold text-indigo-900">শেষ:</span>
+                <input
+                  type="date"
+                  value={endDateFilter}
+                  onChange={(e) => setEndDateFilter(e.target.value)}
+                  className="px-2 py-1 text-xs border border-indigo-200 rounded bg-white font-mono"
+                />
+              </div>
+            )}
+
             <select
               value={staffRoleFilter}
               onChange={(e) => setStaffRoleFilter(e.target.value as 'ALL' | 'owner' | 'staff')}
@@ -3286,6 +3358,17 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
               <option value="owner">শুধুমাত্র Owner-এর এন্ট্রি</option>
               <option value="staff">শুধুমাত্র স্টাফদের এন্ট্রি</option>
             </select>
+
+            {/* Monthly Sales & Purchase Printable PDF Report Trigger */}
+            <button
+              type="button"
+              onClick={() => setIsMonthlyReportOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-teal-900 bg-teal-50 hover:bg-teal-100 border border-teal-300 rounded-md shadow-2xs transition-all active:scale-95 cursor-pointer shrink-0"
+              title="পিরিয়ড বিক্রয় ও ক্রয় অডিট রিপোর্ট এবং মুদ্রণযোগ্য PDF তৈরি করুন"
+            >
+              <FileText className="w-3.5 h-3.5 text-teal-700" />
+              <span>📊 রিপোর্ট (PDF / প্রিন্ট)</span>
+            </button>
           </div>
         </div>
 
@@ -3736,31 +3819,32 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
               const isCompact = previewItemCount >= 5 && previewItemCount < 9;
               const isDense = isMicro || isUltraCompact || isCompact;
 
+              const customSettings = shopProfile.customInvoiceSettings;
+              const activeBranch = shopProfile.branches?.find((b) => b.id === shopProfile.activeBranchId) || shopProfile.branches?.[0];
+              const defaultTitle = customSettings?.invoiceTitle || activeBranch?.name || shopProfile.shopName || 'ইকবাল ফার্মেসী';
+              const defaultLocation = customSettings?.address || activeBranch?.address || shopProfile.address || 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর';
+
               const currentSeal = activeInvoiceSeal || previewInvoice.selectedSeal || 'iqbal_pharmacy';
-              const sealMap = {
+              const sealMap: Record<string, { title: string; location: string }> = {
                 iqbal_pharmacy: {
-                  title: 'ইকবাল ফার্মেসী',
-                  sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (ডি.এম.টি.ডি (ডেন্টাল), এল.এম.এ.এফ (ঢাকা), আর.এম.পি (ঢাকা), ফার্মাসিস্ট, ওরাল এন্ড ডেন্টাল টেকনোলজিষ্ট)',
-                  address: 'ঠিকানা:- নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।',
-                  mobile: 'মোবাইল:- 01812-358839, 01315645076',
-                  location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
+                  title: defaultTitle,
+                  location: defaultLocation,
                 },
                 dental_care_1: {
                   title: 'ইকবাল ডেন্টাল কেয়ার-১',
-                  sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (ডি.এম.টি.ডি (ডেন্টাল), এল.এম.এ.এফ (ঢাকা), আর.এম.পি (ঢাকা), ফার্মাসিস্ট, ওরাল এন্ড ডেন্টাল টেকনোলজিষ্ট)',
-                  address: 'ঠিকানা:- নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।',
-                  mobile: 'মোবাইল:- 01812-358839, 01315645076',
                   location: 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর',
                 },
                 dental_care_2: {
                   title: 'ইকবাল ডেন্টাল কেয়ার-২ (ওদারহাট ডেন্টাল কেয়ার)',
-                  sub: 'ডেন্টিস্ট:- ইকবাল মাহমুদ (ডি.এম.টি.ডি (ডেন্টাল), এল.এম.এ.এফ (ঢাকা), আর.এম.পি (ঢাকা), ফার্মাসিস্ট, ওরাল এন্ড ডেন্টাল টেকনোলজিষ্ট)',
-                  address: 'ঠিকানা:- উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী।',
-                  mobile: 'মোবাইল:- 01812-358839, 01315645076',
-                  location: 'উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী',
+                  location: 'উদয় সাধুরহাট,পশ্চিম বাজার, পানা মিয়া স্কুল গেইট (ইউনিয়ন পরিষদ রোড), সদর,নোয়াখালী।',
                 },
               };
-              const sealConfig = sealMap[currentSeal] || sealMap.iqbal_pharmacy;
+              if (shopProfile.branches) {
+                for (const b of shopProfile.branches) {
+                  sealMap[b.id] = { title: b.name, location: b.address || defaultLocation };
+                }
+              }
+              const sealConfig = sealMap[currentSeal] || { title: defaultTitle, location: defaultLocation };
               const sealDimensions = isMicro ? 'w-18 h-18' : isUltraCompact ? 'w-20 h-20' : isCompact ? 'w-22 h-22' : 'w-26 h-26';
 
               return (
@@ -3862,31 +3946,41 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                   </div>
 
                   {/* Header Row: Purchase B2B Header OR Doctor Qualifications (Sale) */}
+                  {/* Header Row: Purchase B2B Header OR Pharmacy/Clinic Header */}
                   {previewInvoice.txType === 'purchase' ? (
                     <div className={`border-b-2 border-indigo-900 ${isDense ? 'pb-2 mb-2' : 'pb-3 mb-3'}`}>
                       <div className="flex flex-col sm:flex-row sm:items-stretch justify-between gap-3 bg-white">
                         {/* Left: Pharmacy B2B Header */}
-                        <div className="text-left space-y-0.5 sm:max-w-[55%]">
-                          <div className="flex items-center gap-1.5 mb-0.5">
-                            <span className="px-1.5 py-0.5 text-[9.5px] font-extrabold uppercase bg-indigo-900 text-white rounded tracking-wider">
-                              ক্রয় চালান / B2B INVOICE
-                            </span>
-                            <span className="text-[10px] font-bold text-indigo-700 font-mono">
-                              স্টক বৃদ্ধি ভাউচার
-                            </span>
-                          </div>
-                          <h3 className={`font-black text-indigo-950 tracking-tight ${isDense ? 'text-lg sm:text-xl' : 'text-2xl'}`}>
-                            ইকবাল ফার্মেসী (IQBAL PHARMACY)
-                          </h3>
-                          <div className={`font-semibold text-slate-800 leading-snug space-y-0.5 ${isDense ? 'text-[9.5px]' : 'text-[11px]'}`}>
-                            <div className="font-bold text-indigo-900">
-                              ঔষধ ও সার্জিক্যাল পণ্য ক্রয় ও স্টক ইনভয়েস (Stock-In Receipt)
+                        <div className="text-left space-y-0.5 sm:max-w-[55%] flex items-start gap-3">
+                          {customSettings?.logoImageDataUrl && (
+                            <img
+                              src={customSettings.logoImageDataUrl}
+                              alt="Shop Logo"
+                              className="w-14 h-14 object-contain rounded border border-indigo-200 bg-white p-0.5 shrink-0"
+                            />
+                          )}
+                          <div>
+                            <div className="flex items-center gap-1.5 mb-0.5">
+                              <span className="px-1.5 py-0.5 text-[9.5px] font-extrabold uppercase bg-indigo-900 text-white rounded tracking-wider">
+                                ক্রয় চালান / B2B INVOICE
+                              </span>
+                              <span className="text-[10px] font-bold text-indigo-700 font-mono">
+                                স্টক বৃদ্ধি ভাউচার
+                              </span>
                             </div>
-                            <div className="text-slate-700 font-medium">
-                              ড্রাগ লাইসেন্স নং: <strong className="font-mono text-slate-900">DGDA-12904 / নোয়াখালী-লক্ষ্মীপুর</strong>
-                            </div>
-                            <div className="text-slate-600">
-                              ঠিকানা: নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর · মোবাইল: 01812-358839, 01315645076
+                            <h3 className={`font-black text-indigo-950 tracking-tight ${isDense ? 'text-lg sm:text-xl' : 'text-2xl'}`}>
+                              {customSettings?.invoiceTitle || activeBranch?.name || shopProfile.shopName || 'ইকবাল ফার্মেসী (IQBAL PHARMACY)'}
+                            </h3>
+                            <div className={`font-semibold text-slate-800 leading-snug space-y-0.5 ${isDense ? 'text-[9.5px]' : 'text-[11px]'}`}>
+                              <div className="font-bold text-indigo-900">
+                                {customSettings?.tagline || 'ঔষধ ও সার্জিক্যাল পণ্য ক্রয় ও স্টক ইনভয়েস (Stock-In Receipt)'}
+                              </div>
+                              <div className="text-slate-700 font-medium">
+                                ড্রাগ লাইসেন্স নং: <strong className="font-mono text-slate-900">{customSettings?.licenseNo || activeBranch?.drugLicenseNo || shopProfile.licenseNo || 'DGDA-12904 / নোয়াখালী-লক্ষ্মীপুর'}</strong>
+                              </div>
+                              <div className="text-slate-600">
+                                ঠিকানা: {customSettings?.address || activeBranch?.address || shopProfile.address || 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর'} · মোবাইল: {customSettings?.phone || activeBranch?.phone || shopProfile.phone || '01812-358839, 01315645076'}
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -3927,25 +4021,32 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                   ) : (
                     <div className={`border-b-2 border-slate-900 ${isDense ? 'pb-2 mb-2' : 'pb-3 mb-3'}`}>
                       <div className="flex flex-col sm:flex-row sm:items-stretch justify-between gap-3 bg-white">
-                        {/* Left Doctor Info */}
-                        <div className="text-left space-y-0.5 sm:max-w-[48%]">
+                        {/* Left Doctor / Shop Info */}
+                        <div className="text-left space-y-0.5 sm:max-w-[48%] flex items-start gap-3">
+                          {customSettings?.logoImageDataUrl && (
+                            <img
+                              src={customSettings.logoImageDataUrl}
+                              alt="Shop Logo"
+                              className="w-14 h-14 object-contain rounded border border-teal-200 bg-white p-0.5 shrink-0"
+                            />
+                          )}
                           <div>
                             <h3 className={`font-black text-rose-900 tracking-tight ${isDense ? 'text-base sm:text-lg' : 'text-xl'}`}>
-                              ডেন্টিস্ট:- ইকবাল মাহমুদ
+                              {customSettings?.invoiceTitle || (currentSeal === 'iqbal_pharmacy' ? 'ডেন্টিস্ট:- ইকবাল মাহমুদ' : sealConfig.title)}
                             </h3>
-                          </div>
-                          <div className={`font-semibold text-slate-800 leading-snug space-y-0.5 ${isDense ? 'text-[9.5px]' : 'text-[11px]'}`}>
-                            <div className={`font-bold text-teal-900 ${isDense ? 'text-[10px]' : 'text-[11.5px]'}`}>
-                              ডি.এম.টি.ডি (ডেন্টাল) · এল.এম.এ.এফ (ঢাকা) · আর.এম.পি (ঢাকা)
-                            </div>
-                            <div className="text-slate-700 font-medium">
-                              ফার্মাসিস্ট · ওরাল এন্ড ডেন্টাল টেকনোলজিষ্ট
-                            </div>
-                            <div className={`font-mono font-bold text-slate-900 ${isDense ? 'text-[10px] pt-0.5' : 'text-xs pt-0.5'}`}>
-                              মোবাইল: 01812-358839, 01315645076
-                            </div>
-                            <div className={`font-bold text-teal-800 ${isDense ? 'text-[10px]' : 'text-[11px]'}`}>
-                              শাখা: {sealConfig.title}
+                            <div className={`font-semibold text-slate-800 leading-snug space-y-0.5 ${isDense ? 'text-[9.5px]' : 'text-[11px]'}`}>
+                              <div className={`font-bold text-teal-900 ${isDense ? 'text-[10px]' : 'text-[11.5px]'}`}>
+                                {customSettings?.tagline || 'ডি.এম.টি.ডি (ডেন্টাল) · এল.এম.এ.এফ (ঢাকা) · আর.এম.পি (ঢাকা)'}
+                              </div>
+                              <div className="text-slate-700 font-medium">
+                                ফার্মাসিস্ট · ওরাল এন্ড ডেন্টাল টেকনোলজিষ্ট
+                              </div>
+                              <div className={`font-mono font-bold text-slate-900 ${isDense ? 'text-[10px] pt-0.5' : 'text-xs pt-0.5'}`}>
+                                মোবাইল: {customSettings?.phone || activeBranch?.phone || shopProfile.phone || '01812-358839, 01315645076'}
+                              </div>
+                              <div className={`font-bold text-teal-800 ${isDense ? 'text-[10px]' : 'text-[11px]'}`}>
+                                শাখা / ঠিকানা: {customSettings?.address || sealConfig.location || activeBranch?.address || shopProfile.address}
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -3972,7 +4073,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                 নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।
                               </div>
                               <div className="mt-0.5 text-[9.5px] text-teal-200 border-t border-teal-600/50 pt-0.5">
-                                ফার্মেসী শাখা: ইকবাল ফার্মেসী, নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর।
+                                ফার্মেসী শাখা: {customSettings?.invoiceTitle || activeBranch?.name || shopProfile.shopName || 'ইকবাল ফার্মেসী'}, {customSettings?.address || activeBranch?.address || shopProfile.address || 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর'}
                               </div>
                             </div>
                           </div>
@@ -4553,30 +4654,43 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                       {/* 4. Iqbal Pharmacy Store Rubber Stamp & Verification Seal */}
                       <div className="flex flex-col items-center sm:items-end">
                         <div className="flex items-center gap-2.5">
-                          {/* Circular Pharmacy Rubber Stamp */}
-                          <div className={`${sealDimensions} rounded-full border-2 border-dashed border-indigo-900 p-0.5 flex items-center justify-center relative select-none shadow-xs bg-indigo-50/25`}>
-                            <div className="w-full h-full rounded-full border border-solid border-indigo-900 flex flex-col items-center justify-center text-center p-0.5 text-indigo-950">
-                              <div className={`font-black uppercase tracking-tight text-indigo-950 leading-tight ${isDense ? 'text-[7px]' : 'text-[8px]'}`}>
-                                ★ ইকবাল ফার্মেসী ★
-                              </div>
-                              <div className="w-10 h-px bg-indigo-800 my-0.2" />
-                              <div className={`font-bold text-indigo-950 ${isDense ? 'text-[6.5px]' : 'text-[7.5px]'}`}>
-                                নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর
-                              </div>
-                              <div className={`font-semibold text-indigo-900 leading-tight ${isDense ? 'text-[5.5px]' : 'text-[6.5px]'}`}>
-                                ড্রাগ লাইসেন্স: DGDA-12904
-                              </div>
-                              <div className={`font-extrabold text-indigo-900 tracking-wider border-y border-indigo-700 py-0.2 my-0.2 ${isDense ? 'text-[6px]' : 'text-[7px]'}`}>
-                                ★ GOODS RECEIVED & VERIFIED ★
-                              </div>
-                              <div className={`font-mono font-bold text-indigo-950 ${isDense ? 'text-[5.5px]' : 'text-[6.5px]'}`}>
-                                {previewInvoice.dateStr || getTodayDateStr()}
-                              </div>
-                              <div className={`text-indigo-800 font-semibold leading-tight truncate max-w-[80px] ${isDense ? 'text-[5.5px]' : 'text-[6px]'}`}>
-                                সেন্ট্রাল স্টক অনুমোদন
+                          {/* Circular Pharmacy Rubber Stamp or Uploaded Seal */}
+                          {customSettings?.sealImageDataUrl ? (
+                            <div className={`${sealDimensions} flex flex-col items-center justify-center p-0.5 select-none`}>
+                              <img
+                                src={customSettings.sealImageDataUrl}
+                                alt="Official Shop Seal"
+                                className="w-full h-full object-contain drop-shadow-xs transform -rotate-3"
+                              />
+                              <span className="text-[7px] font-mono text-indigo-900 font-bold uppercase mt-0.5">
+                                OFFICIAL SEAL
+                              </span>
+                            </div>
+                          ) : (
+                            <div className={`${sealDimensions} rounded-full border-2 border-dashed border-indigo-900 p-0.5 flex items-center justify-center relative select-none shadow-xs bg-indigo-50/25`}>
+                              <div className="w-full h-full rounded-full border border-solid border-indigo-900 flex flex-col items-center justify-center text-center p-0.5 text-indigo-950">
+                                <div className={`font-black uppercase tracking-tight text-indigo-950 leading-tight ${isDense ? 'text-[7px]' : 'text-[8px]'}`}>
+                                  ★ {customSettings?.invoiceTitle || 'ইকবাল ফার্মেসী'} ★
+                                </div>
+                                <div className="w-10 h-px bg-indigo-800 my-0.2" />
+                                <div className={`font-bold text-indigo-950 ${isDense ? 'text-[6.5px]' : 'text-[7.5px]'}`}>
+                                  {customSettings?.address || 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর'}
+                                </div>
+                                <div className={`font-semibold text-indigo-900 leading-tight ${isDense ? 'text-[5.5px]' : 'text-[6.5px]'}`}>
+                                  ড্রাগ লাইসেন্স: {customSettings?.licenseNo || 'DGDA-12904'}
+                                </div>
+                                <div className={`font-extrabold text-indigo-900 tracking-wider border-y border-indigo-700 py-0.2 my-0.2 ${isDense ? 'text-[6px]' : 'text-[7px]'}`}>
+                                  ★ GOODS RECEIVED & VERIFIED ★
+                                </div>
+                                <div className={`font-mono font-bold text-indigo-950 ${isDense ? 'text-[5.5px]' : 'text-[6.5px]'}`}>
+                                  {previewInvoice.dateStr || getTodayDateStr()}
+                                </div>
+                                <div className={`text-indigo-800 font-semibold leading-tight truncate max-w-[80px] ${isDense ? 'text-[5.5px]' : 'text-[6px]'}`}>
+                                  সেন্ট্রাল স্টক অনুমোদন
+                                </div>
                               </div>
                             </div>
-                          </div>
+                          )}
 
                           {/* Pharmacy Owner / Store Manager Signature Text */}
                           <div className="text-right space-y-0.5">
@@ -4588,10 +4702,10 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                               প্রোপ্রাইটর / ফার্মাসিস্ট
                             </div>
                             <div className={`text-slate-600 ${isDense ? 'text-[8.5px]' : 'text-[9.5px]'}`}>
-                              ইকবাল ফার্মেসী, নতুনহাট
+                              {customSettings?.invoiceTitle || activeBranch?.name || 'ইকবাল ফার্মেসী, নতুনহাট'}
                             </div>
                             <div className={`text-indigo-800 font-medium ${isDense ? 'text-[7.5px]' : 'text-[8.5px]'}`}>
-                              মোবাইল: 01812-358839
+                              মোবাইল: {customSettings?.phone || activeBranch?.phone || '01812-358839'}
                             </div>
                           </div>
                         </div>
@@ -4636,30 +4750,43 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                     {/* Doctor Seal & Signature Block */}
                     <div className="flex flex-col items-center sm:items-end">
                       <div className="flex items-center gap-2.5">
-                        {/* Circular Rubber Stamp */}
-                        <div className={`${sealDimensions} rounded-full border-2 border-dashed border-blue-900 p-0.5 flex items-center justify-center relative select-none shadow-xs bg-blue-50/25`}>
-                          <div className="w-full h-full rounded-full border border-solid border-blue-900 flex flex-col items-center justify-center text-center p-0.5 text-blue-950">
-                            <div className={`font-black uppercase tracking-tight text-blue-950 leading-tight ${isDense ? 'text-[7px]' : 'text-[8px]'}`}>
-                              ★ {sealConfig.title} ★
-                            </div>
-                            <div className="w-10 h-px bg-blue-800 my-0.2" />
-                            <div className={`font-bold text-blue-950 ${isDense ? 'text-[6.5px]' : 'text-[7.5px]'}`}>
-                              ডেন্টিস্ট:- ইকবাল মাহমুদ
-                            </div>
-                            <div className={`font-semibold text-blue-900 leading-tight ${isDense ? 'text-[5.5px]' : 'text-[6.5px]'}`}>
-                              ডি.এম.টি.ডি · এল.এম.এ.এফ · আর.এম.পি
-                            </div>
-                            <div className={`font-extrabold text-blue-900 tracking-wider border-y border-blue-700 py-0.2 my-0.2 ${isDense ? 'text-[6px]' : 'text-[7px]'}`}>
-                              ★ VERIFIED & APPROVED ★
-                            </div>
-                            <div className={`font-mono font-bold text-blue-950 ${isDense ? 'text-[5.5px]' : 'text-[6.5px]'}`}>
-                              {previewInvoice.dateStr || getTodayDateStr()}
-                            </div>
-                            <div className={`text-blue-800 font-semibold leading-tight truncate max-w-[80px] ${isDense ? 'text-[5.5px]' : 'text-[6px]'}`}>
-                              {sealConfig.location}
+                        {/* Circular Rubber Stamp or Uploaded Seal */}
+                        {customSettings?.sealImageDataUrl ? (
+                          <div className={`${sealDimensions} flex flex-col items-center justify-center p-0.5 select-none`}>
+                            <img
+                              src={customSettings.sealImageDataUrl}
+                              alt="Official Shop Seal"
+                              className="w-full h-full object-contain drop-shadow-xs transform -rotate-3"
+                            />
+                            <span className="text-[7px] font-mono text-blue-900 font-bold uppercase mt-0.5">
+                              OFFICIAL SEAL
+                            </span>
+                          </div>
+                        ) : (
+                          <div className={`${sealDimensions} rounded-full border-2 border-dashed border-blue-900 p-0.5 flex items-center justify-center relative select-none shadow-xs bg-blue-50/25`}>
+                            <div className="w-full h-full rounded-full border border-solid border-blue-900 flex flex-col items-center justify-center text-center p-0.5 text-blue-950">
+                              <div className={`font-black uppercase tracking-tight text-blue-950 leading-tight ${isDense ? 'text-[7px]' : 'text-[8px]'}`}>
+                                ★ {sealConfig.title} ★
+                              </div>
+                              <div className="w-10 h-px bg-blue-800 my-0.2" />
+                              <div className={`font-bold text-blue-950 ${isDense ? 'text-[6.5px]' : 'text-[7.5px]'}`}>
+                                ডেন্টিস্ট:- ইকবাল মাহমুদ
+                              </div>
+                              <div className={`font-semibold text-blue-900 leading-tight ${isDense ? 'text-[5.5px]' : 'text-[6.5px]'}`}>
+                                ডি.এম.টি.ডি · এল.এম.এ.এফ · আর.এম.পি
+                              </div>
+                              <div className={`font-extrabold text-blue-900 tracking-wider border-y border-blue-700 py-0.2 my-0.2 ${isDense ? 'text-[6px]' : 'text-[7px]'}`}>
+                                ★ {customSettings?.customSealText || 'VERIFIED & APPROVED'} ★
+                              </div>
+                              <div className={`font-mono font-bold text-blue-950 ${isDense ? 'text-[5.5px]' : 'text-[6.5px]'}`}>
+                                {previewInvoice.dateStr || getTodayDateStr()}
+                              </div>
+                              <div className={`text-blue-800 font-semibold leading-tight truncate max-w-[80px] ${isDense ? 'text-[5.5px]' : 'text-[6px]'}`}>
+                                {sealConfig.location}
+                              </div>
                             </div>
                           </div>
-                        </div>
+                        )}
 
                         {/* Doctor's Signature Text */}
                         <div className="text-right space-y-0.5">

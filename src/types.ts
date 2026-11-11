@@ -65,6 +65,8 @@ export interface CustomInvoiceSettings {
   termsAndConditions?: string;
   showDrugLicense?: boolean;
   vatRegNo?: string;
+  logoImageDataUrl?: string;
+  sealImageDataUrl?: string;
 }
 
 export interface ShopRegistration {

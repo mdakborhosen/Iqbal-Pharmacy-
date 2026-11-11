@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import {
   AlertCircle,
   Building2,
+  Camera,
   Check,
   CheckCircle2,
   Clock,
@@ -11,6 +12,7 @@ import {
   Eye,
   EyeOff,
   FileText,
+  Image,
   Key,
   Layers,
   Lock,
@@ -27,6 +29,7 @@ import {
   Stamp,
   Store,
   Trash2,
+  Upload,
   UserCheck,
   Users,
   XCircle,
@@ -269,6 +272,65 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
       setTimeout(() => setInvoiceSettingsSaved(false), 2000);
     } finally {
       setSavingInvoiceSettings(false);
+    }
+  };
+
+  // Helper to compress images via canvas to keep within Firestore doc limits (< 50KB)
+  const compressImageFile = (file: File, maxDim: number = 300): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = document.createElement('img');
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(e.target?.result as string);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/png', 0.85));
+        };
+        img.onerror = reject;
+        img.src = e.target?.result as string;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const compressed = await compressImageFile(file, 280);
+      setInvoiceSettings((prev) => ({ ...prev, logoImageDataUrl: compressed }));
+    } catch (err) {
+      console.error('Failed to compress logo', err);
+    }
+  };
+
+  const handleSealUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const compressed = await compressImageFile(file, 220);
+      setInvoiceSettings((prev) => ({ ...prev, sealImageDataUrl: compressed }));
+    } catch (err) {
+      console.error('Failed to compress seal image', err);
     }
   };
 
@@ -944,6 +1006,85 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
                 />
               </div>
 
+              {/* Shop Logo & Seal Uploads */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-teal-50/50 border border-teal-200/70 rounded-lg">
+                {/* Logo Upload */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-800">
+                    দোকানের লোগো (Shop Logo)
+                  </label>
+                  {invoiceSettings.logoImageDataUrl ? (
+                    <div className="flex items-center gap-3 bg-white p-2 border border-slate-200 rounded-md">
+                      <img
+                        src={invoiceSettings.logoImageDataUrl}
+                        alt="Shop Logo Preview"
+                        className="w-12 h-12 object-contain rounded border border-slate-100 bg-slate-50"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[11px] font-semibold text-emerald-800">লোগো আপলোড করা হয়েছে ✓</div>
+                        <button
+                          type="button"
+                          onClick={() => setInvoiceSettings({ ...invoiceSettings, logoImageDataUrl: undefined })}
+                          className="mt-1 text-[10px] text-red-600 hover:text-red-800 font-semibold cursor-pointer"
+                        >
+                          লোগো মুছে ফেলুন
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <label className="flex flex-col items-center justify-center p-3 border-2 border-dashed border-teal-300 hover:border-teal-500 rounded-md bg-white cursor-pointer transition-colors text-center">
+                      <Upload className="w-5 h-5 text-teal-600 mb-1" />
+                      <span className="text-[11px] font-semibold text-teal-900">লোগো ছবি নির্বাচন করুন</span>
+                      <span className="text-[9.5px] text-slate-500">PNG, JPG (সর্বোচ্চ 2MB)</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleLogoUpload}
+                        className="hidden"
+                      />
+                    </label>
+                  )}
+                </div>
+
+                {/* Seal Image Upload */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-800">
+                    দোকানের অফিসিয়াল সিল ছবি (Official Seal Stamp Image)
+                  </label>
+                  {invoiceSettings.sealImageDataUrl ? (
+                    <div className="flex items-center gap-3 bg-white p-2 border border-slate-200 rounded-md">
+                      <img
+                        src={invoiceSettings.sealImageDataUrl}
+                        alt="Seal Preview"
+                        className="w-12 h-12 object-contain rounded border border-slate-100 bg-slate-50"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[11px] font-semibold text-emerald-800">সিল আপলোড করা হয়েছে ✓</div>
+                        <button
+                          type="button"
+                          onClick={() => setInvoiceSettings({ ...invoiceSettings, sealImageDataUrl: undefined })}
+                          className="mt-1 text-[10px] text-red-600 hover:text-red-800 font-semibold cursor-pointer"
+                        >
+                          সিল ছবি মুছে ফেলুন
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <label className="flex flex-col items-center justify-center p-3 border-2 border-dashed border-indigo-300 hover:border-indigo-500 rounded-md bg-white cursor-pointer transition-colors text-center">
+                      <Stamp className="w-5 h-5 text-indigo-600 mb-1" />
+                      <span className="text-[11px] font-semibold text-indigo-900">সিল বা স্ট্যাম্প ইমেজ নির্বাচন করুন</span>
+                      <span className="text-[9.5px] text-slate-500">স্বচ্ছ PNG বা রাবার সিল স্ক্যান</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleSealUpload}
+                        className="hidden"
+                      />
+                    </label>
+                  )}
+                </div>
+              </div>
+
               {/* Official Seal Settings */}
               <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg space-y-3">
                 <div className="font-bold text-xs text-slate-900 flex items-center justify-between">
@@ -1062,23 +1203,32 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
             <div className="bg-white border-2 border-slate-300 rounded-xl p-5 shadow-sm space-y-4 text-xs font-sans">
               {/* Header Box */}
               <div className="border-b-2 border-slate-800 pb-3 flex justify-between items-start gap-3">
-                <div>
-                  <h3 className="text-lg font-black text-slate-900 tracking-tight">
-                    {invoiceSettings.invoiceTitle || shopProfile.shopName || 'ইকবাল ফার্মেসী'}
-                  </h3>
-                  <div className="text-[11px] text-teal-800 font-semibold mt-0.5">
-                    {invoiceSettings.tagline || 'সুলভ মূল্যে জেনুইন ঔষধের বিশ্বস্ত প্রতিষ্ঠান'}
-                  </div>
-                  <div className="text-[10px] text-slate-600 mt-1">
-                    ঠিকানা: {invoiceSettings.address || shopProfile.address || 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর'}
-                  </div>
-                  <div className="text-[10px] font-mono text-slate-700 font-bold">
-                    মোবাইল: {invoiceSettings.phone || shopProfile.phone || '01812-358839'} · লাইসেন্স:{' '}
-                    {invoiceSettings.licenseNo || shopProfile.licenseNo || 'DGDA-12904'}
+                <div className="flex items-start gap-3">
+                  {invoiceSettings.logoImageDataUrl && (
+                    <img
+                      src={invoiceSettings.logoImageDataUrl}
+                      alt="Shop Logo"
+                      className="w-14 h-14 object-contain rounded border border-slate-200 bg-white p-0.5 shrink-0"
+                    />
+                  )}
+                  <div>
+                    <h3 className="text-lg font-black text-slate-900 tracking-tight">
+                      {invoiceSettings.invoiceTitle || shopProfile.shopName || 'ইকবাল ফার্মেসী'}
+                    </h3>
+                    <div className="text-[11px] text-teal-800 font-semibold mt-0.5">
+                      {invoiceSettings.tagline || 'সুলভ মূল্যে জেনুইন ঔষধের বিশ্বস্ত প্রতিষ্ঠান'}
+                    </div>
+                    <div className="text-[10px] text-slate-600 mt-1">
+                      ঠিকানা: {invoiceSettings.address || shopProfile.address || 'নতুনহাট, চন্দ্রগঞ্জ, লক্ষ্মীপুর'}
+                    </div>
+                    <div className="text-[10px] font-mono text-slate-700 font-bold">
+                      মোবাইল: {invoiceSettings.phone || shopProfile.phone || '01812-358839'} · লাইসেন্স:{' '}
+                      {invoiceSettings.licenseNo || shopProfile.licenseNo || 'DGDA-12904'}
+                    </div>
                   </div>
                 </div>
 
-                <div className="text-right font-mono text-[10px] bg-slate-50 p-2 rounded border border-slate-200">
+                <div className="text-right font-mono text-[10px] bg-slate-50 p-2 rounded border border-slate-200 shrink-0">
                   <div className="font-bold text-slate-800">
                     {previewInvoiceType === 'sale' ? 'ক্যাশ মেমো (INVOICE)' : 'স্টক-ইন চালান (PURCHASE)'}
                   </div>
@@ -1120,11 +1270,22 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
               {/* Totals & Stamped Official Seal */}
               <div className="pt-2 border-t border-slate-200 flex items-center justify-between">
                 {/* Official Stamp Render */}
-                <div className="relative border-2 border-emerald-600 text-emerald-700 px-4 py-2 rounded-lg font-black uppercase tracking-wider text-center transform -rotate-3 select-none bg-emerald-50/40">
-                  <div className="text-[10px] tracking-widest">{invoiceSettings.invoiceTitle || 'ইকবাল ফার্মেসী'}</div>
-                  <div className="text-sm font-extrabold">{invoiceSettings.customSealText || 'PAID · পরিশোধিত'}</div>
-                  <div className="text-[8px] font-mono tracking-tight">VERIFIED OFFICIAL SEAL</div>
-                </div>
+                {invoiceSettings.sealImageDataUrl ? (
+                  <div className="relative p-1 select-none">
+                    <img
+                      src={invoiceSettings.sealImageDataUrl}
+                      alt="Uploaded Seal"
+                      className="w-20 h-20 object-contain drop-shadow-xs transform -rotate-3"
+                    />
+                    <div className="text-[8px] font-mono text-center text-slate-400 mt-0.5">OFFICIAL SEAL</div>
+                  </div>
+                ) : (
+                  <div className="relative border-2 border-emerald-600 text-emerald-700 px-4 py-2 rounded-lg font-black uppercase tracking-wider text-center transform -rotate-3 select-none bg-emerald-50/40">
+                    <div className="text-[10px] tracking-widest">{invoiceSettings.invoiceTitle || 'ইকবাল ফার্মেসী'}</div>
+                    <div className="text-sm font-extrabold">{invoiceSettings.customSealText || 'PAID · পরিশোধিত'}</div>
+                    <div className="text-[8px] font-mono tracking-tight">VERIFIED OFFICIAL SEAL</div>
+                  </div>
+                )}
 
                 <div className="font-mono text-right text-xs space-y-0.5">
                   <div className="text-slate-500">মোট মূল্য: ৳285.00</div>

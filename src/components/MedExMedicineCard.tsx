@@ -20,6 +20,7 @@ interface MedExMedicineCardProps {
   onAddToPosCart?: (med: MedicineCatalogItem, qty: number) => void;
   onAddToPurchaseCart?: (med: MedicineCatalogItem, qty: number) => void;
   onOpenEditPrice?: (med: MedicineCatalogItem) => void;
+  onAddVariant?: (baseMed: MedicineCatalogItem) => void;
   isCompact?: boolean;
 }
 
@@ -30,6 +31,7 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
   onAddToPosCart,
   onAddToPurchaseCart,
   onOpenEditPrice,
+  onAddVariant,
   isCompact = false,
 }) => {
   const [showPackImageModal, setShowPackImageModal] = useState(false);
@@ -150,22 +152,34 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
           )}
         </div>
 
-        {/* Also available as: [ Variant Pills ] */}
-        {brandFamilyVariants.length > 0 && (
-          <div className="mt-3.5 flex items-center gap-2 flex-wrap text-xs text-slate-600">
-            <span className="font-medium">Also available as:</span>
-            {brandFamilyVariants.map((v) => (
-              <button
-                key={v.id}
-                type="button"
-                onClick={() => onSelectMedicine && onSelectMedicine(v)}
-                className="px-2.5 py-1 text-xs font-semibold text-[#1e6b7b] bg-white border border-[#1e6b7b] hover:bg-teal-50 rounded-md transition-colors cursor-pointer shadow-2xs"
-              >
-                {v.strength}
-              </button>
-            ))}
-          </div>
-        )}
+        {/* Also available as: [ Variant Pills with Prices & Add Variant Button ] */}
+        <div className="mt-3.5 flex items-center gap-2 flex-wrap text-xs text-slate-600">
+          <span className="font-semibold text-slate-700">ভ্যারিয়েন্টসমূহ:</span>
+          {brandFamilyVariants.map((v) => (
+            <button
+              key={v.id}
+              type="button"
+              onClick={() => onSelectMedicine && onSelectMedicine(v)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-[#1e6b7b] bg-white border border-[#1e6b7b] hover:bg-teal-50 rounded-md transition-colors cursor-pointer shadow-2xs"
+              title={`${v.brandName} ${v.dosageForm} (${v.strength}) - বিক্রয়মূল্য: ৳${v.unitPrice.toFixed(2)}`}
+            >
+              <span>{v.dosageForm !== medicine.dosageForm ? `${v.dosageForm} ` : ''}{v.strength}</span>
+              <span className="font-mono text-emerald-700 font-bold">৳{v.unitPrice.toFixed(2)}</span>
+            </button>
+          ))}
+
+          {onAddVariant && (
+            <button
+              type="button"
+              onClick={() => onAddVariant(medicine)}
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-md transition-colors cursor-pointer shadow-2xs"
+              title="এই ঔষধের নতুন মাত্রা বা ধরণ (যেমন: ৪০ মি.গ্রা, সিরাপ, ইত্যাদি) এবং ভিন্ন দাম যুক্ত করুন"
+            >
+              <Layers className="w-3.5 h-3.5 text-emerald-600" />
+              <span>+ নতুন ভ্যারিয়েন্ট/ধরণ</span>
+            </button>
+          )}
+        </div>
 
         {/* Bottom Actions Row: [ Alternate Brands ] button + Cart options */}
         <div className="mt-4 pt-3.5 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap">

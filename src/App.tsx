@@ -18,9 +18,11 @@ import {
   getDoc,
   getDocs,
   onSnapshot,
+  query,
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
   writeBatch,
 } from 'firebase/firestore';
 import {
@@ -176,6 +178,29 @@ const STORAGE_KEYS = {
   SEED_MIGRATED: 'pharma_pos_bd_v3_seed_migrated_v3',
   HAS_USER_DATA: 'pharma_pos_bd_v3_has_user_data',
 };
+
+export function computeCurrentShopId(
+  session: ShopCloudSession | null,
+  activeStaff?: StaffMember | null,
+  user?: User | null
+): string {
+  if (session?.shopId) return session.shopId;
+  if (activeStaff?.shopId) return activeStaff.shopId;
+  const ident = session?.email || session?.phone || user?.email || '';
+  const digits = ident.replace(/[^0-9]/g, '');
+  const isMaster =
+    ident.toLowerCase() === 'mhakbor2001@gmail.com' ||
+    digits === '01812358839' ||
+    digits.endsWith('1812358839');
+  if (isMaster) return 'shop_iqbal_pharmacy';
+  if (digits.length >= 6) return `shop_${digits}`;
+  if (session?.uid) return `shop_${session.uid.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+  return 'shop_iqbal_pharmacy';
+}
+
+export function getScopedStorageKey(baseKey: string, shopId: string): string {
+  return `${baseKey}_${shopId || 'shop_iqbal_pharmacy'}`;
+}
 
 const DEFAULT_POS_CART: CartItem[] = [
   {
@@ -337,20 +362,27 @@ function mergeEntityList<T extends { id: string; updatedAtMs?: number }>(
   return Array.from(byId.values());
 }
 
-function buildShopCloudPayload(shop: ShopProfile, ownerId = SHARED_PHARMACY_OWNER_ID) {
+function buildShopCloudPayload(shop: ShopProfile, ownerId = SHARED_PHARMACY_OWNER_ID, shopId = 'shop_iqbal_pharmacy') {
   return {
+    id: shop.id || shopId,
+    shopId: sanitizeString(shopId, 128, 'shop_iqbal_pharmacy'),
     ownerId: sanitizeString(ownerId, 128, SHARED_PHARMACY_OWNER_ID),
     shopName: sanitizeString(shop.shopName, 120, DEFAULT_SHOP_PROFILE.shopName),
     licenseNo: sanitizeString(shop.licenseNo, 60, DEFAULT_SHOP_PROFILE.licenseNo),
     phone: sanitizeString(shop.phone, 30, DEFAULT_SHOP_PROFILE.phone),
     address: sanitizeString(shop.address, 250, DEFAULT_SHOP_PROFILE.address),
+    branches: shop.branches || [],
+    activeBranchId: shop.activeBranchId || 'branch-1',
+    customInvoiceSettings: shop.customInvoiceSettings || {},
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
 }
 
-function buildInventoryCloudPayload(inv: InventoryItem, ownerId = SHARED_PHARMACY_OWNER_ID) {
+function buildInventoryCloudPayload(inv: InventoryItem, ownerId = SHARED_PHARMACY_OWNER_ID, shopId = 'shop_iqbal_pharmacy') {
   return {
+    id: inv.id,
+    shopId: sanitizeString(shopId, 128, 'shop_iqbal_pharmacy'),
     ownerId: sanitizeString(ownerId, 128, SHARED_PHARMACY_OWNER_ID),
     medicineId: sanitizeString(inv.medicineId, 100, 'custom-item'),
     brandName: sanitizeString(inv.brandName, 120, 'Custom Product'),
@@ -372,8 +404,10 @@ function buildInventoryCloudPayload(inv: InventoryItem, ownerId = SHARED_PHARMAC
   };
 }
 
-function buildCustomerCloudPayload(cust: Customer, ownerId = SHARED_PHARMACY_OWNER_ID) {
+function buildCustomerCloudPayload(cust: Customer, ownerId = SHARED_PHARMACY_OWNER_ID, shopId = 'shop_iqbal_pharmacy') {
   return {
+    id: cust.id,
+    shopId: sanitizeString(shopId, 128, 'shop_iqbal_pharmacy'),
     ownerId: sanitizeString(ownerId, 128, SHARED_PHARMACY_OWNER_ID),
     name: sanitizeString(cust.name, 120),
     phone: sanitizeString(cust.phone, 30),
@@ -386,8 +420,10 @@ function buildCustomerCloudPayload(cust: Customer, ownerId = SHARED_PHARMACY_OWN
   };
 }
 
-function buildTransactionCloudPayload(tx: Transaction, ownerId = SHARED_PHARMACY_OWNER_ID) {
+function buildTransactionCloudPayload(tx: Transaction, ownerId = SHARED_PHARMACY_OWNER_ID, shopId = 'shop_iqbal_pharmacy') {
   const payload: Record<string, unknown> = {
+    id: tx.id,
+    shopId: sanitizeString(shopId, 128, 'shop_iqbal_pharmacy'),
     ownerId: sanitizeString(ownerId, 128, SHARED_PHARMACY_OWNER_ID),
     txType: tx.txType,
     invoiceNo: sanitizeString(tx.invoiceNo, 60, 'INV-01'),
@@ -418,11 +454,14 @@ function buildTransactionCloudPayload(tx: Transaction, ownerId = SHARED_PHARMACY
   return payload;
 }
 
-function buildStaffCloudPayload(st: StaffMember, ownerId = SHARED_PHARMACY_OWNER_ID) {
+function buildStaffCloudPayload(st: StaffMember, ownerId = SHARED_PHARMACY_OWNER_ID, shopId = 'shop_iqbal_pharmacy') {
   const payload: Record<string, unknown> = {
+    id: st.id,
+    shopId: sanitizeString(shopId, 128, 'shop_iqbal_pharmacy'),
     ownerId: sanitizeString(ownerId, 128, SHARED_PHARMACY_OWNER_ID),
     name: sanitizeString(st.roleTitle === 'owner' ? 'Owner' : st.name, 100, 'Owner'),
     roleTitle: st.roleTitle,
+    isMandatoryOwner: Boolean(st.isMandatoryOwner),
     phone: sanitizeString(st.phone, 30),
     shift: sanitizeString(st.shift, 60),
     counterName: sanitizeString(st.counterName, 60),
@@ -442,7 +481,7 @@ function buildStaffCloudPayload(st: StaffMember, ownerId = SHARED_PHARMACY_OWNER
   return payload;
 }
 
-function buildCustomMedCloudPayload(cm: CustomMedicine, ownerId = SHARED_PHARMACY_OWNER_ID) {
+function buildCustomMedCloudPayload(cm: CustomMedicine, ownerId = SHARED_PHARMACY_OWNER_ID, shopId = 'shop_iqbal_pharmacy') {
   const unitPrice = sanitizeNumber(cm.unitPrice, 0, 1000000);
   const purchasePrice = sanitizeNumber(
     typeof cm.purchasePrice === 'number' && cm.purchasePrice > 0
@@ -452,6 +491,8 @@ function buildCustomMedCloudPayload(cm: CustomMedicine, ownerId = SHARED_PHARMAC
     1000000
   );
   return {
+    id: cm.id,
+    shopId: sanitizeString(shopId, 128, 'shop_iqbal_pharmacy'),
     ownerId: sanitizeString(ownerId, 128, SHARED_PHARMACY_OWNER_ID),
     brandName: sanitizeString(cm.brandName, 120, 'Custom Product'),
     genericName: sanitizeString(cm.genericName, 150, cm.brandName || 'Custom Product'),
@@ -469,8 +510,10 @@ function buildCustomMedCloudPayload(cm: CustomMedicine, ownerId = SHARED_PHARMAC
   };
 }
 
-function buildPriceWatchCloudPayload(w: PriceWatch, ownerId = SHARED_PHARMACY_OWNER_ID) {
+function buildPriceWatchCloudPayload(w: PriceWatch, ownerId = SHARED_PHARMACY_OWNER_ID, shopId = 'shop_iqbal_pharmacy') {
   return {
+    id: w.id,
+    shopId: sanitizeString(shopId, 128, 'shop_iqbal_pharmacy'),
     ownerId: sanitizeString(ownerId, 128, SHARED_PHARMACY_OWNER_ID),
     medicineId: sanitizeString(w.medicineId, 100),
     brandName: sanitizeString(w.brandName, 120),
@@ -486,8 +529,10 @@ function buildPriceWatchCloudPayload(w: PriceWatch, ownerId = SHARED_PHARMACY_OW
   };
 }
 
-function buildPriceAlertCloudPayload(a: PriceAlert, ownerId = SHARED_PHARMACY_OWNER_ID) {
+function buildPriceAlertCloudPayload(a: PriceAlert, ownerId = SHARED_PHARMACY_OWNER_ID, shopId = 'shop_iqbal_pharmacy') {
   return {
+    id: a.id,
+    shopId: sanitizeString(shopId, 128, 'shop_iqbal_pharmacy'),
     ownerId: sanitizeString(ownerId, 128, SHARED_PHARMACY_OWNER_ID),
     medicineId: sanitizeString(a.medicineId, 100),
     brandName: sanitizeString(a.brandName, 120),
@@ -845,6 +890,8 @@ export default function App() {
   const [activeStaff, setActiveStaff] = useState<StaffMember>(
     () => loadLocal(STORAGE_KEYS.STAFF, INITIAL_DEMO_STAFF)[0] || INITIAL_DEMO_STAFF[0]
   );
+
+  const effectiveShopId = computeCurrentShopId(cloudSession, activeStaff, user);
 
   // Persistent POS Cart state (saved in localStorage so refreshing never resets cart)
   const [posCart, setPosCart] = useState<CartItem[]>(() =>
@@ -1388,56 +1435,73 @@ export default function App() {
     };
 
     const unsubShops = onSnapshot(
-      collection(db, 'shops'),
+      doc(db, 'shops', effectiveShopId),
       (snap) => {
-        if (!snap.empty) {
-          let bestDoc = snap.docs[0];
-          let bestTs = getDocTimestampMs(bestDoc.data() as Record<string, unknown>);
-          for (const d of snap.docs) {
-            const ts = getDocTimestampMs(d.data() as Record<string, unknown>);
-            if (ts > bestTs || (ts === bestTs && d.id === SHARED_SHOP_DOC_ID)) {
-              bestDoc = d;
-              bestTs = ts;
-            }
-          }
-          const rawData = bestDoc.data() as Omit<ShopProfile, 'id'>;
+        if (snap.exists()) {
+          const rawData = snap.data() as Omit<ShopProfile, 'id'>;
+          const bestTs = getDocTimestampMs(rawData as Record<string, unknown>);
           const rawShop: ShopProfile = {
-            id: SHARED_SHOP_DOC_ID,
+            id: effectiveShopId,
+            shopId: effectiveShopId,
             ...rawData,
             updatedAtMs: bestTs || Date.now(),
           };
-          const nextShop =
-            !rawShop.shopName || rawShop.shopName === 'সেবা মেডিসিন কর্নার অ্যান্ড ফার্মেসি'
-              ? { ...DEFAULT_SHOP_PROFILE, id: SHARED_SHOP_DOC_ID, updatedAtMs: bestTs || Date.now() }
-              : rawShop;
-
-          setShopProfile((prev) => {
-            if ((prev.updatedAtMs || 0) > (nextShop.updatedAtMs || 0) + 2000) {
-              setDoc(doc(db, 'shops', SHARED_SHOP_DOC_ID), buildShopCloudPayload(prev, effectiveOwnerId)).catch(() => {});
-              return prev;
-            }
-            saveLocal(STORAGE_KEYS.SHOP, nextShop);
-            return nextShop;
-          });
+          setShopProfile(rawShop);
+          saveLocal(getScopedStorageKey(STORAGE_KEYS.SHOP, effectiveShopId), rawShop);
         } else {
-          // Seed shop profile to cloud if empty
-          setShopProfile((prev) => {
-            setDoc(doc(db, 'shops', SHARED_SHOP_DOC_ID), buildShopCloudPayload(prev, effectiveOwnerId)).catch(() => {});
-            return prev;
-          });
+          // Initialize fresh shop profile for this isolated shopId
+          const initialShop: ShopProfile =
+            effectiveShopId === 'shop_iqbal_pharmacy'
+              ? { ...DEFAULT_SHOP_PROFILE, id: 'shop_iqbal_pharmacy', shopId: 'shop_iqbal_pharmacy' }
+              : {
+                  id: effectiveShopId,
+                  shopId: effectiveShopId,
+                  ownerId: effectiveOwnerId,
+                  shopName: cloudSession?.shopName || 'ফার্মেসী',
+                  licenseNo: '',
+                  phone: cloudSession?.phone || '',
+                  address: '',
+                  branches: [
+                    {
+                      id: 'branch-1',
+                      name: 'প্রধান শাখা',
+                      address: '',
+                      phone: cloudSession?.phone || '',
+                      isDefault: true,
+                    },
+                  ],
+                  activeBranchId: 'branch-1',
+                  customInvoiceSettings: {
+                    invoiceTitle: cloudSession?.shopName || 'ফার্মেসী',
+                    tagline: 'সুলভ মূল্যে জেনুইন ঔষধের বিশ্বস্ত প্রতিষ্ঠান',
+                    address: '',
+                    phone: cloudSession?.phone || '',
+                    sealType: 'paid',
+                    customSealText: 'PAID · পরিশোধিত',
+                  },
+                  updatedAtMs: Date.now(),
+                };
+          setShopProfile(initialShop);
+          saveLocal(getScopedStorageKey(STORAGE_KEYS.SHOP, effectiveShopId), initialShop);
+          setDoc(
+            doc(db, 'shops', effectiveShopId),
+            buildShopCloudPayload(initialShop, effectiveOwnerId, effectiveShopId)
+          ).catch(() => {});
         }
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'shops')
+      (err) => handleFirestoreError(err, OperationType.GET, `shops/${effectiveShopId}`)
     );
 
     const unsubInventory = onSnapshot(
-      collection(db, 'inventory'),
+      query(collection(db, 'inventory'), where('shopId', '==', effectiveShopId)),
       (snap) => {
         const rawList = snap.docs.map((d) => {
           const data = d.data() as Record<string, unknown>;
           const ts = getDocTimestampMs(data);
+          const rawId = (data.id as string) || d.id.replace(new RegExp(`^${effectiveShopId}_`), '');
           const item: InventoryItem = {
-            id: getCanonicalDocId(d.id),
+            id: getCanonicalDocId(rawId),
+            shopId: effectiveShopId,
             ...(data as Omit<InventoryItem, 'id'>),
             updatedAtMs: ts || Date.now(),
           };
@@ -1450,14 +1514,15 @@ export default function App() {
           const { merged, toUploadToCloud } = mergeCloudAndLocal(cloudItems, prev, {
             isInventory: true,
           });
-          saveLocal(STORAGE_KEYS.INVENTORY, merged);
+          saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveShopId), merged);
 
           if (toUploadToCloud.length > 0) {
             for (const item of toUploadToCloud) {
               const canonId = getCanonicalDocId(item.id);
+              const docKey = `${effectiveShopId}_${canonId}`;
               setDoc(
-                doc(db, 'inventory', canonId),
-                buildInventoryCloudPayload(item, effectiveOwnerId)
+                doc(db, 'inventory', docKey),
+                buildInventoryCloudPayload(item, effectiveOwnerId, effectiveShopId)
               ).catch(() => {});
             }
           }
@@ -1466,9 +1531,10 @@ export default function App() {
               const canonId = getCanonicalDocId(staleId);
               const winning = merged.find((m) => m.id === canonId);
               if (winning) {
+                const docKey = `${effectiveShopId}_${canonId}`;
                 setDoc(
-                  doc(db, 'inventory', canonId),
-                  buildInventoryCloudPayload(winning, effectiveOwnerId)
+                  doc(db, 'inventory', docKey),
+                  buildInventoryCloudPayload(winning, effectiveOwnerId, effectiveShopId)
                 )
                   .then(() => deleteDoc(doc(db, 'inventory', staleId)))
                   .catch(() => {});
@@ -1482,13 +1548,15 @@ export default function App() {
     );
 
     const unsubCustomers = onSnapshot(
-      collection(db, 'customers'),
+      query(collection(db, 'customers'), where('shopId', '==', effectiveShopId)),
       (snap) => {
         const rawList = snap.docs.map((d) => {
           const data = d.data() as Record<string, unknown>;
           const ts = getDocTimestampMs(data);
+          const rawId = (data.id as string) || d.id.replace(new RegExp(`^${effectiveShopId}_`), '');
           const item: Customer = {
-            id: getCanonicalDocId(d.id),
+            id: getCanonicalDocId(rawId),
+            shopId: effectiveShopId,
             ...(data as Omit<Customer, 'id'>),
             updatedAtMs: ts || Date.now(),
           };
@@ -1499,22 +1567,24 @@ export default function App() {
 
         setCustomers((prev) => {
           const { merged, toUploadToCloud } = mergeCloudAndLocal(cloudItems, prev);
-          saveLocal(STORAGE_KEYS.CUSTOMERS, merged);
+          saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOMERS, effectiveShopId), merged);
 
           for (const item of toUploadToCloud) {
             const canonId = getCanonicalDocId(item.id);
+            const docKey = `${effectiveShopId}_${canonId}`;
             setDoc(
-              doc(db, 'customers', canonId),
-              buildCustomerCloudPayload(item, effectiveOwnerId)
+              doc(db, 'customers', docKey),
+              buildCustomerCloudPayload(item, effectiveOwnerId, effectiveShopId)
             ).catch(() => {});
           }
           for (const staleId of staleSuffixIds) {
             const canonId = getCanonicalDocId(staleId);
             const winning = merged.find((m) => m.id === canonId);
             if (winning) {
+              const docKey = `${effectiveShopId}_${canonId}`;
               setDoc(
-                doc(db, 'customers', canonId),
-                buildCustomerCloudPayload(winning, effectiveOwnerId)
+                doc(db, 'customers', docKey),
+                buildCustomerCloudPayload(winning, effectiveOwnerId, effectiveShopId)
               )
                 .then(() => deleteDoc(doc(db, 'customers', staleId)))
                 .catch(() => {});
@@ -1527,13 +1597,15 @@ export default function App() {
     );
 
     const unsubTransactions = onSnapshot(
-      collection(db, 'transactions'),
+      query(collection(db, 'transactions'), where('shopId', '==', effectiveShopId)),
       (snap) => {
         const rawList = snap.docs.map((d) => {
           const data = d.data() as Record<string, unknown>;
           const ts = getDocTimestampMs(data);
+          const rawId = (data.id as string) || d.id.replace(new RegExp(`^${effectiveShopId}_`), '');
           const raw: Transaction = {
-            id: getCanonicalDocId(d.id),
+            id: getCanonicalDocId(rawId),
+            shopId: effectiveShopId,
             ...(data as Omit<Transaction, 'id'>),
             updatedAtMs: ts || Date.now(),
           };
@@ -1549,22 +1621,24 @@ export default function App() {
         setTransactions((prev) => {
           const { merged, toUploadToCloud } = mergeCloudAndLocal(cloudItems, prev);
           merged.sort((a, b) => (b.updatedAtMs || 0) - (a.updatedAtMs || 0) || b.invoiceNo.localeCompare(a.invoiceNo));
-          saveLocal(STORAGE_KEYS.TRANSACTIONS, merged);
+          saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), merged);
 
           for (const item of toUploadToCloud) {
             const canonId = getCanonicalDocId(item.id);
+            const docKey = `${effectiveShopId}_${canonId}`;
             setDoc(
-              doc(db, 'transactions', canonId),
-              buildTransactionCloudPayload(item, effectiveOwnerId)
+              doc(db, 'transactions', docKey),
+              buildTransactionCloudPayload(item, effectiveOwnerId, effectiveShopId)
             ).catch(() => {});
           }
           for (const staleId of staleSuffixIds) {
             const canonId = getCanonicalDocId(staleId);
             const winning = merged.find((m) => m.id === canonId);
             if (winning) {
+              const docKey = `${effectiveShopId}_${canonId}`;
               setDoc(
-                doc(db, 'transactions', canonId),
-                buildTransactionCloudPayload(winning, effectiveOwnerId)
+                doc(db, 'transactions', docKey),
+                buildTransactionCloudPayload(winning, effectiveOwnerId, effectiveShopId)
               )
                 .then(() => deleteDoc(doc(db, 'transactions', staleId)))
                 .catch(() => {});
@@ -1577,13 +1651,15 @@ export default function App() {
     );
 
     const unsubStaff = onSnapshot(
-      collection(db, 'staff'),
+      query(collection(db, 'staff'), where('shopId', '==', effectiveShopId)),
       (snap) => {
         const rawList = snap.docs.map((d) => {
           const data = d.data() as Record<string, unknown>;
           const ts = getDocTimestampMs(data);
+          const rawId = (data.id as string) || d.id.replace(new RegExp(`^${effectiveShopId}_`), '');
           const item: StaffMember = {
-            id: getCanonicalDocId(d.id),
+            id: getCanonicalDocId(rawId),
+            shopId: effectiveShopId,
             ...(data as Omit<StaffMember, 'id'>),
             updatedAtMs: ts || Date.now(),
           };
@@ -1594,12 +1670,33 @@ export default function App() {
 
         setStaffList((prev) => {
           const { merged, toUploadToCloud } = mergeCloudAndLocal(cloudItems, prev);
-          const finalMerged = merged.length > 0 ? merged : INITIAL_DEMO_STAFF;
-          saveLocal(STORAGE_KEYS.STAFF, finalMerged);
+          const finalMerged =
+            merged.length > 0
+              ? merged
+              : effectiveShopId === 'shop_iqbal_pharmacy'
+              ? INITIAL_DEMO_STAFF
+              : [
+                  {
+                    id: cloudSession?.staffId || `staff_owner_${effectiveShopId}`,
+                    shopId: effectiveShopId,
+                    ownerId: effectiveOwnerId,
+                    name: cloudSession?.displayName || 'Owner',
+                    roleTitle: 'owner' as const,
+                    isMandatoryOwner: true,
+                    phone: cloudSession?.phone || '',
+                    email: cloudSession?.email || '',
+                    shift: 'সারাদিন (মূল তত্ত্বাবধান)',
+                    counterName: 'কাউন্টার ১ (Owner)',
+                    active: true,
+                    updatedAtMs: Date.now(),
+                  },
+                ];
+          saveLocal(getScopedStorageKey(STORAGE_KEYS.STAFF, effectiveShopId), finalMerged);
 
           for (const item of toUploadToCloud) {
             const canonId = getCanonicalDocId(item.id);
-            setDoc(doc(db, 'staff', canonId), buildStaffCloudPayload(item, effectiveOwnerId)).catch(
+            const docKey = `${effectiveShopId}_${canonId}`;
+            setDoc(doc(db, 'staff', docKey), buildStaffCloudPayload(item, effectiveOwnerId, effectiveShopId)).catch(
               () => {}
             );
           }
@@ -1607,7 +1704,8 @@ export default function App() {
             const canonId = getCanonicalDocId(staleId);
             const winning = finalMerged.find((m) => m.id === canonId);
             if (winning) {
-              setDoc(doc(db, 'staff', canonId), buildStaffCloudPayload(winning, effectiveOwnerId))
+              const docKey = `${effectiveShopId}_${canonId}`;
+              setDoc(doc(db, 'staff', docKey), buildStaffCloudPayload(winning, effectiveOwnerId, effectiveShopId))
                 .then(() => deleteDoc(doc(db, 'staff', staleId)))
                 .catch(() => {});
             }
@@ -1626,7 +1724,10 @@ export default function App() {
             ) {
               return curr;
             }
-            const currentStaffList = loadLocal<StaffMember[]>(STORAGE_KEYS.STAFF, INITIAL_DEMO_STAFF);
+            const currentStaffList = loadLocal<StaffMember[]>(
+              getScopedStorageKey(STORAGE_KEYS.STAFF, effectiveShopId),
+              INITIAL_DEMO_STAFF
+            );
             return currentStaffList.find((i) => i.id === getCanonicalDocId(curr.id)) || curr;
           });
         });
@@ -1635,13 +1736,15 @@ export default function App() {
     );
 
     const unsubCustomMeds = onSnapshot(
-      collection(db, 'custom_medicines'),
+      query(collection(db, 'custom_medicines'), where('shopId', '==', effectiveShopId)),
       (snap) => {
         const rawList = snap.docs.map((d) => {
           const data = d.data() as Record<string, unknown>;
           const ts = getDocTimestampMs(data);
+          const rawId = (data.id as string) || d.id.replace(new RegExp(`^${effectiveShopId}_`), '');
           const item: CustomMedicine = {
-            id: getCanonicalDocId(d.id),
+            id: getCanonicalDocId(rawId),
+            shopId: effectiveShopId,
             ...(data as Omit<CustomMedicine, 'id'>),
             updatedAtMs: ts || Date.now(),
           };
@@ -1654,13 +1757,14 @@ export default function App() {
           const { merged, toUploadToCloud } = mergeCloudAndLocal(cloudItems, prev, {
             isCustomMeds: true,
           });
-          saveLocal(STORAGE_KEYS.CUSTOM_MEDS, merged);
+          saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOM_MEDS, effectiveShopId), merged);
 
           for (const item of toUploadToCloud) {
             const canonId = getCanonicalDocId(item.id);
+            const docKey = `${effectiveShopId}_${canonId}`;
             setDoc(
-              doc(db, 'custom_medicines', canonId),
-              buildCustomMedCloudPayload(item, effectiveOwnerId)
+              doc(db, 'custom_medicines', docKey),
+              buildCustomMedCloudPayload(item, effectiveOwnerId, effectiveShopId)
             ).catch(() => {});
           }
           return merged;
@@ -1670,13 +1774,15 @@ export default function App() {
     );
 
     const unsubWatches = onSnapshot(
-      collection(db, 'price_watches'),
+      query(collection(db, 'price_watches'), where('shopId', '==', effectiveShopId)),
       (snap) => {
         const rawList = snap.docs.map((d) => {
           const data = d.data() as Record<string, unknown>;
           const ts = getDocTimestampMs(data);
+          const rawId = (data.id as string) || d.id.replace(new RegExp(`^${effectiveShopId}_`), '');
           const item: PriceWatch = {
-            id: getCanonicalDocId(d.id),
+            id: getCanonicalDocId(rawId),
+            shopId: effectiveShopId,
             ...(data as Omit<PriceWatch, 'id'>),
             updatedAtMs: ts || Date.now(),
           };
@@ -1687,13 +1793,14 @@ export default function App() {
 
         setPriceWatches((prev) => {
           const { merged, toUploadToCloud } = mergeCloudAndLocal(cloudItems, prev);
-          saveLocal(STORAGE_KEYS.PRICE_WATCHES, merged);
+          saveLocal(getScopedStorageKey(STORAGE_KEYS.PRICE_WATCHES, effectiveShopId), merged);
 
           for (const item of toUploadToCloud) {
             const canonId = getCanonicalDocId(item.id);
+            const docKey = `${effectiveShopId}_${canonId}`;
             setDoc(
-              doc(db, 'price_watches', canonId),
-              buildPriceWatchCloudPayload(item, effectiveOwnerId)
+              doc(db, 'price_watches', docKey),
+              buildPriceWatchCloudPayload(item, effectiveOwnerId, effectiveShopId)
             ).catch(() => {});
           }
           return merged;
@@ -1703,13 +1810,15 @@ export default function App() {
     );
 
     const unsubAlerts = onSnapshot(
-      collection(db, 'price_alerts'),
+      query(collection(db, 'price_alerts'), where('shopId', '==', effectiveShopId)),
       (snap) => {
         const rawList = snap.docs.map((d) => {
           const data = d.data() as Record<string, unknown>;
           const ts = getDocTimestampMs(data);
+          const rawId = (data.id as string) || d.id.replace(new RegExp(`^${effectiveShopId}_`), '');
           const item: PriceAlert = {
-            id: getCanonicalDocId(d.id),
+            id: getCanonicalDocId(rawId),
+            shopId: effectiveShopId,
             ...(data as Omit<PriceAlert, 'id'>),
             updatedAtMs: ts || Date.now(),
           };
@@ -1720,13 +1829,14 @@ export default function App() {
 
         setPriceAlerts((prev) => {
           const { merged, toUploadToCloud } = mergeCloudAndLocal(cloudItems, prev);
-          saveLocal(STORAGE_KEYS.PRICE_ALERTS, merged);
+          saveLocal(getScopedStorageKey(STORAGE_KEYS.PRICE_ALERTS, effectiveShopId), merged);
 
           for (const item of toUploadToCloud) {
             const canonId = getCanonicalDocId(item.id);
+            const docKey = `${effectiveShopId}_${canonId}`;
             setDoc(
-              doc(db, 'price_alerts', canonId),
-              buildPriceAlertCloudPayload(item, effectiveOwnerId)
+              doc(db, 'price_alerts', docKey),
+              buildPriceAlertCloudPayload(item, effectiveOwnerId, effectiveShopId)
             ).catch(() => {});
           }
           return merged;
@@ -1759,7 +1869,7 @@ export default function App() {
       unsubAlerts();
       unsubShopRegs();
     };
-  }, [serverHydrated, user?.uid, cloudSession?.uid]);
+  }, [serverHydrated, user?.uid, cloudSession?.uid, effectiveShopId]);
 
   // Combined Medicine Catalog (Built-in 21,250+ DGDA core products can NEVER be deleted, but their purchasePrice & unitPrice can be modified)
   const fullCatalog = useMemo<MedicineCatalogItem[]>(() => {
