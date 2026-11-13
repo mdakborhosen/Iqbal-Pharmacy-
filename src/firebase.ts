@@ -441,8 +441,21 @@ export async function signInShopCloudAccount(params?: {
     }
   }
 
+  const resolvedDigits = phone.replace(/[^0-9]/g, '');
+  const resolvedBd11 = resolvedDigits.length >= 10 ? '0' + resolvedDigits.slice(-10) : resolvedDigits;
+  const isMasterResolved =
+    resolvedEmail.toLowerCase() === 'mhakbor2001@gmail.com' ||
+    resolvedEmail.toLowerCase() === 'iqbalmahmud498@gmail.com' ||
+    resolvedBd11 === '01812358839';
+  const resolvedShopId = isMasterResolved
+    ? 'shop_iqbal_pharmacy'
+    : resolvedBd11.length >= 6
+    ? `shop_${resolvedBd11}`
+    : `shop_${resolvedEmail.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 32)}`;
+
   const session: ShopCloudSession = {
     uid: firebaseUid || 'shared_iqbal_pharmacy',
+    shopId: resolvedShopId,
     email: resolvedEmail,
     displayName,
     shopName,
@@ -553,11 +566,22 @@ export async function registerNewShopOwnerAccount(params: {
 
   const finalOwnerUid = firebaseUid || deterministicOwnerUid;
   const finalStaffId = existingStaffId || deterministicStaffId;
+  const isMasterAccount =
+    cleanEmail === 'mhakbor2001@gmail.com' ||
+    cleanEmail === 'iqbalmahmud498@gmail.com' ||
+    bd11 === '01812358839';
+  const targetShopId = isMasterAccount
+    ? 'shop_iqbal_pharmacy'
+    : cleanPhoneDigits.length >= 6
+    ? `shop_${bd11}`
+    : `shop_${safeEmailKey.slice(0, 32)}`;
+  const scopedStaffDocId = `${targetShopId}_${finalStaffId}`;
 
   // Save owner account directly to Firestore registered_users and staff so ANY other device and IP can authenticate!
   try {
     const userDocData = {
       ownerId: finalOwnerUid,
+      shopId: targetShopId,
       staffId: finalStaffId,
       email: cleanEmail,
       phone,
@@ -574,9 +598,11 @@ export async function registerNewShopOwnerAccount(params: {
 
     const staffDocData = {
       id: finalStaffId,
+      shopId: targetShopId,
       ownerId: finalOwnerUid,
-      name: displayName,
+      name: isMasterAccount ? 'Owner' : displayName,
       roleTitle: 'owner',
+      isMandatoryOwner: true,
       phone,
       email: cleanEmail,
       password: cleanPassword,
@@ -607,7 +633,7 @@ export async function registerNewShopOwnerAccount(params: {
       writePromises.push(setDoc(doc(db, 'registered_users', `user_id_${cleanCustomKey}`), userDocData, { merge: true }));
       writePromises.push(setDoc(doc(db, 'registered_users', rawEmail.toLowerCase()), userDocData, { merge: true }));
     }
-    writePromises.push(setDoc(doc(db, 'staff', finalStaffId), staffDocData, { merge: true }));
+    writePromises.push(setDoc(doc(db, 'staff', scopedStaffDocId), staffDocData, { merge: true }));
 
     await Promise.race([
       Promise.allSettled(writePromises),
@@ -625,42 +651,11 @@ export async function registerNewShopOwnerAccount(params: {
           password: cleanPassword,
           name: displayName,
           shopName,
+          shopId: targetShopId,
           role: 'owner',
         }),
       }).catch(() => {});
     } catch {}
-
-    // Also persist into shared shop documents so all browsers & devices discover this owner immediately
-    try {
-      const ownerKey = cleanPhoneDigits ? `p_${cleanPhoneDigits}` : `e_${safeEmailKey}`;
-      const ownerPayload = {
-        registeredOwners: {
-          [ownerKey]: {
-            ownerId: finalOwnerUid,
-            staffId: finalStaffId,
-            email: cleanEmail,
-            phone,
-            ownerName: displayName,
-            shopName,
-            password: cleanPassword,
-          },
-          [phone]: {
-            ownerId: finalOwnerUid,
-            staffId: finalStaffId,
-            email: cleanEmail,
-            phone,
-            ownerName: displayName,
-            shopName,
-            password: cleanPassword,
-          },
-        },
-        updatedAt: serverTimestamp(),
-      };
-      await setDoc(doc(db, 'shops', 'shared_iqbal_pharmacy_v1'), ownerPayload, { merge: true });
-      await setDoc(doc(db, 'shops', 'shop_iqbal_pharmacy'), ownerPayload, { merge: true });
-    } catch {
-      // ignore merge error
-    }
   } catch (cloudErr) {
     console.warn('Failed to save to registered_users collection:', cloudErr);
   }
@@ -671,6 +666,7 @@ export async function registerNewShopOwnerAccount(params: {
     const existing = raw ? JSON.parse(raw) : {};
     const record = {
       ownerId: finalOwnerUid,
+      shopId: targetShopId,
       staffId: finalStaffId,
       phone,
       password: cleanPassword,
@@ -699,6 +695,7 @@ export async function registerNewShopOwnerAccount(params: {
 
   const session: ShopCloudSession = {
     uid: finalOwnerUid,
+    shopId: targetShopId,
     email: cleanEmail,
     displayName: `${displayName} (Owner)`,
     shopName,

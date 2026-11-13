@@ -190,10 +190,14 @@ export function computeCurrentShopId(
   const digits = ident.replace(/[^0-9]/g, '');
   const isMaster =
     ident.toLowerCase() === 'mhakbor2001@gmail.com' ||
+    ident.toLowerCase() === 'iqbalmahmud498@gmail.com' ||
     digits === '01812358839' ||
     digits.endsWith('1812358839');
   if (isMaster) return 'shop_iqbal_pharmacy';
-  if (digits.length >= 6) return `shop_${digits}`;
+  if (digits.length >= 6) {
+    const bd11 = digits.length >= 10 ? '0' + digits.slice(-10) : digits;
+    return `shop_${bd11}`;
+  }
   if (session?.uid) return `shop_${session.uid.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
   return 'shop_iqbal_pharmacy';
 }
@@ -302,15 +306,99 @@ const DEFAULT_PURCHASE_CART: PurchaseCartItem[] = [
 ];
 
 /**
- * Strips any legacy 6-character user UID suffix (e.g. "inv-seclo-20_a1b2c3" -> "inv-seclo-20")
- * so all logged-in users share the exact same canonical document IDs.
+ * Strips any stacked shopId prefixes (e.g. "shop_iqbal_pharmacy_staff-owner-1" -> "staff-owner-1")
+ * and any legacy 6-character user UID suffix (e.g. "inv-seclo-20_a1b2c3" -> "inv-seclo-20")
+ * so documents always resolve to a single canonical ID without stacking prefixes on refresh.
  */
-function getCanonicalDocId(rawId: string): string {
+function stripShopIdPrefixes(rawId: string, shopId?: string): string {
   if (!rawId) return rawId;
-  return rawId.replace(
+  let current = rawId.trim();
+  if (shopId) {
+    const exactPrefix = `${shopId}_`;
+    while (current.startsWith(exactPrefix) && current.length > exactPrefix.length) {
+      current = current.slice(exactPrefix.length);
+    }
+  }
+  current = current.replace(
+    /^(?:shop_[a-zA-Z0-9_-]+?_)+(?=(?:inv|cust|tx|staff|watch|alert|cmed|med|custom|box)[_-])/,
+    ''
+  );
+  return current;
+}
+
+function getCanonicalDocId(rawId: string, shopId?: string): string {
+  if (!rawId) return rawId;
+  const stripped = stripShopIdPrefixes(rawId, shopId);
+  return stripped.replace(
     /^(inv-[a-z0-9-]+|cust-\d+|tx-(?:sale|pur|due)-\d+|staff-[a-z0-9-]+|watch-[a-z0-9-]+|alert-demo-\d+)(?:_[a-zA-Z0-9_-]{6})+$/,
     '$1'
   );
+}
+
+function getScopedFirestoreDocId(shopId: string, rawId: string): string {
+  const sid = (shopId || 'shop_iqbal_pharmacy').trim();
+  const canon = getCanonicalDocId(rawId, sid);
+  return `${sid}_${canon}`;
+}
+
+function getStaffIdentityKey(st: Partial<StaffMember>, shopId = 'shop_iqbal_pharmacy'): string {
+  const canonId = getCanonicalDocId(st.id || '', shopId);
+  if (isMandatoryOwner({ ...st, id: canonId })) {
+    return `${shopId}::__MANDATORY_OWNER__`;
+  }
+  const digits = String(st.phone || '').replace(/[^0-9]/g, '');
+  const normPhone = digits.length >= 10 ? digits.slice(-10) : digits;
+  if (normPhone.length >= 6) return `${shopId}::phone:${normPhone}`;
+  const email = String(st.email || '').trim().toLowerCase();
+  if (email) return `${shopId}::email:${email}`;
+  return `${shopId}::id:${canonId}`;
+}
+
+function deduplicateStaffMembers(
+  items: StaffMember[],
+  shopId = 'shop_iqbal_pharmacy',
+  deletedSet?: Set<string>
+): StaffMember[] {
+  const byKey = new Map<string, StaffMember>();
+  for (const raw of items) {
+    if (!raw || !raw.id) continue;
+    if (raw.shopId && raw.shopId !== shopId) continue;
+    const canonId = getCanonicalDocId(raw.id, shopId);
+    const isMand = isMandatoryOwner({ ...raw, id: canonId });
+    if (!isMand && deletedSet && (deletedSet.has(raw.id) || deletedSet.has(canonId))) {
+      continue;
+    }
+    const finalId = isMand && shopId === 'shop_iqbal_pharmacy' ? 'staff-owner-1' : canonId;
+    const key = getStaffIdentityKey({ ...raw, id: finalId }, shopId);
+    const norm: StaffMember = {
+      ...raw,
+      id: finalId,
+      shopId,
+      isMandatoryOwner: isMand,
+      roleTitle: isMand ? 'owner' : raw.roleTitle === 'owner' ? 'sub_owner' : raw.roleTitle,
+      name: isMand ? 'Owner' : raw.roleTitle === 'owner' && raw.name === 'Owner' ? 'সাব-মালিক' : raw.name,
+    };
+
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, norm);
+    } else {
+      const nTs = norm.updatedAtMs || 0;
+      const eTs = existing.updatedAtMs || 0;
+      const preferNew = nTs > eTs || (nTs === eTs && norm.id === finalId && existing.id !== finalId);
+      const winner = preferNew ? norm : existing;
+      const loser = preferNew ? existing : norm;
+      byKey.set(key, {
+        ...winner,
+        phone: winner.phone || loser.phone,
+        email: winner.email || loser.email,
+        password: winner.password || loser.password,
+        shift: winner.shift || loser.shift,
+        counterName: winner.counterName || loser.counterName,
+      });
+    }
+  }
+  return Array.from(byKey.values());
 }
 
 function getDocTimestampMs(data: Record<string, unknown>): number {
@@ -324,11 +412,12 @@ function getDocTimestampMs(data: Record<string, unknown>): number {
   return 0;
 }
 
-function mergeEntityList<T extends { id: string; updatedAtMs?: number }>(
+function mergeEntityList<T extends { id: string; shopId?: string; updatedAtMs?: number }>(
   remoteList: T[],
   localList: T[],
   deletedSet: Set<string>,
-  isInv = false
+  isInv = false,
+  shopId?: string
 ): T[] {
   const byId = new Map<string, T>();
   const canDelete = (id: string) => {
@@ -338,24 +427,26 @@ function mergeEntityList<T extends { id: string; updatedAtMs?: number }>(
 
   for (const r of remoteList) {
     if (!r || !r.id) continue;
-    const canonId = getCanonicalDocId(r.id);
+    if (shopId && r.shopId && r.shopId !== shopId) continue;
+    const canonId = getCanonicalDocId(r.id, shopId);
     if (canDelete(canonId) && (deletedSet.has(r.id) || deletedSet.has(canonId))) continue;
-    byId.set(canonId, { ...r, id: canonId });
+    byId.set(canonId, { ...r, id: canonId, ...(shopId ? { shopId } : {}) });
   }
 
   for (const l of localList) {
     if (!l || !l.id) continue;
-    const canonId = getCanonicalDocId(l.id);
+    if (shopId && l.shopId && l.shopId !== shopId) continue;
+    const canonId = getCanonicalDocId(l.id, shopId);
     if (canDelete(canonId) && (deletedSet.has(l.id) || deletedSet.has(canonId))) continue;
     const existing = byId.get(canonId);
     const lTs = l.updatedAtMs || 0;
     const rTs = existing?.updatedAtMs || 0;
     if (!existing) {
       if (lTs > 0 || isInv || remoteList.length === 0) {
-        byId.set(canonId, { ...l, id: canonId });
+        byId.set(canonId, { ...l, id: canonId, ...(shopId ? { shopId } : {}) });
       }
     } else if (lTs > rTs) {
-      byId.set(canonId, { ...l, id: canonId });
+      byId.set(canonId, { ...l, id: canonId, ...(shopId ? { shopId } : {}) });
     }
   }
 
@@ -714,9 +805,14 @@ export default function App() {
     });
   };
 
+  const bootShopId = computeCurrentShopId(cloudSession);
+
   // Offline-first states initialized from localStorage or rich Bangladesh Pharmacy seed data
   const [shopProfile, setShopProfile] = useState<ShopProfile>(() => {
-    const saved = loadLocal(STORAGE_KEYS.SHOP, DEFAULT_SHOP_PROFILE);
+    const saved = loadLocal(
+      getScopedStorageKey(STORAGE_KEYS.SHOP, bootShopId),
+      loadLocal(STORAGE_KEYS.SHOP, DEFAULT_SHOP_PROFILE)
+    );
     if (
       !saved.shopName ||
       saved.shopName === 'সেবা মেডিসিন কর্নার অ্যান্ড ফার্মেসি' ||
@@ -734,12 +830,15 @@ export default function App() {
         (id) => !isCoreDatabaseMedicineId(id) && !id.startsWith('inv-seed-')
       )
     );
-    const saved = loadLocal<InventoryItem[]>(STORAGE_KEYS.INVENTORY, INITIAL_DEMO_INVENTORY);
+    const saved = loadLocal<InventoryItem[]>(
+      getScopedStorageKey(STORAGE_KEYS.INVENTORY, bootShopId),
+      loadLocal<InventoryItem[]>(STORAGE_KEYS.INVENTORY, INITIAL_DEMO_INVENTORY)
+    );
 
-    // Canonicalize IDs and deduplicate by canonical ID or medicineId (preferring newer updatedAtMs)
+    // Canonicalize IDs and deduplicate by canonical ID (preferring newer updatedAtMs)
     const byKey = new Map<string, InventoryItem>();
     for (const rawItem of saved) {
-      const canonId = getCanonicalDocId(rawItem.id);
+      const canonId = getCanonicalDocId(rawItem.id, bootShopId);
       const isCoreSeed =
         canonId.startsWith('inv-seed-') ||
         INITIAL_DEMO_INVENTORY.some((d) => d.id === canonId || d.medicineId === rawItem.medicineId);
@@ -749,6 +848,7 @@ export default function App() {
       const normalizedItem: InventoryItem = {
         ...rawItem,
         id: canonId,
+        shopId: bootShopId,
       };
       const existing = byKey.get(canonId);
       if (!existing || (normalizedItem.updatedAtMs || 0) >= (existing.updatedAtMs || 0)) {
@@ -761,10 +861,12 @@ export default function App() {
     const existingMedIds = new Set(cleaned.map((item) => item.medicineId));
     let changed = cleaned.length !== saved.length;
 
-    for (const demoItem of INITIAL_DEMO_INVENTORY) {
-      if (!existingIds.has(demoItem.id) && !existingMedIds.has(demoItem.medicineId)) {
-        cleaned.push(demoItem);
-        changed = true;
+    if (bootShopId === 'shop_iqbal_pharmacy') {
+      for (const demoItem of INITIAL_DEMO_INVENTORY) {
+        if (!existingIds.has(demoItem.id) && !existingMedIds.has(demoItem.medicineId)) {
+          cleaned.push({ ...demoItem, shopId: bootShopId });
+          changed = true;
+        }
       }
     }
 
@@ -781,12 +883,15 @@ export default function App() {
 
   const [customers, setCustomers] = useState<Customer[]>(() => {
     const initialDeleted = new Set(loadLocal<string[]>(STORAGE_KEYS.DELETED_IDS, []));
-    const saved = loadLocal(STORAGE_KEYS.CUSTOMERS, INITIAL_DEMO_CUSTOMERS);
+    const saved = loadLocal<Customer[]>(
+      getScopedStorageKey(STORAGE_KEYS.CUSTOMERS, bootShopId),
+      loadLocal(STORAGE_KEYS.CUSTOMERS, bootShopId === 'shop_iqbal_pharmacy' ? INITIAL_DEMO_CUSTOMERS : [])
+    );
     const byId = new Map<string, Customer>();
     for (const c of saved) {
-      const canonId = getCanonicalDocId(c.id);
+      const canonId = getCanonicalDocId(c.id, bootShopId);
       if (initialDeleted.has(c.id) || initialDeleted.has(canonId)) continue;
-      const norm = { ...c, id: canonId };
+      const norm = { ...c, id: canonId, shopId: bootShopId };
       const prev = byId.get(canonId);
       if (!prev || (norm.updatedAtMs || 0) >= (prev.updatedAtMs || 0)) {
         byId.set(canonId, norm);
@@ -797,15 +902,18 @@ export default function App() {
 
   const [transactions, setTransactions] = useState<Transaction[]>(() => {
     const initialDeleted = new Set(loadLocal<string[]>(STORAGE_KEYS.DELETED_IDS, []));
-    const loaded = loadLocal(STORAGE_KEYS.TRANSACTIONS, INITIAL_DEMO_TRANSACTIONS);
+    const loaded = loadLocal<Transaction[]>(
+      getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, bootShopId),
+      loadLocal(STORAGE_KEYS.TRANSACTIONS, bootShopId === 'shop_iqbal_pharmacy' ? INITIAL_DEMO_TRANSACTIONS : [])
+    );
     const byId = new Map<string, Transaction>();
     for (const t of loaded) {
-      const canonId = getCanonicalDocId(t.id);
+      const canonId = getCanonicalDocId(t.id, bootShopId);
       if (initialDeleted.has(t.id) || initialDeleted.has(canonId)) continue;
       const formatted =
         t.txType === 'sale' || t.txType === 'purchase'
-          ? { ...t, id: canonId, itemsSummary: formatTransactionItemsText(t.itemsSummary) }
-          : { ...t, id: canonId };
+          ? { ...t, id: canonId, shopId: bootShopId, itemsSummary: formatTransactionItemsText(t.itemsSummary) }
+          : { ...t, id: canonId, shopId: bootShopId };
       const prev = byId.get(canonId);
       if (!prev || (formatted.updatedAtMs || 0) >= (prev.updatedAtMs || 0)) {
         byId.set(canonId, formatted);
@@ -816,37 +924,36 @@ export default function App() {
 
   const [staffList, setStaffList] = useState<StaffMember[]>(() => {
     const initialDeleted = new Set(loadLocal<string[]>(STORAGE_KEYS.DELETED_IDS, []));
-    const saved = loadLocal<StaffMember[]>(STORAGE_KEYS.STAFF, INITIAL_DEMO_STAFF);
-    const byId = new Map<string, StaffMember>();
-    for (const s of saved) {
-      const canonId = getCanonicalDocId(s.id);
-      if (initialDeleted.has(s.id) || initialDeleted.has(canonId)) continue;
-      const isMand = isMandatoryOwner(s);
-      const norm: StaffMember = {
-        ...s,
-        id: canonId,
-        isMandatoryOwner: isMand,
-        roleTitle: isMand ? 'owner' : (s.roleTitle === 'owner' ? 'sub_owner' : s.roleTitle),
-        name: isMand ? 'Owner' : (s.roleTitle === 'owner' && s.name === 'Owner' ? 'সাব-মালিক' : s.name),
-      };
-      const prev = byId.get(canonId);
-      if (!prev || (norm.updatedAtMs || 0) >= (prev.updatedAtMs || 0)) {
-        byId.set(canonId, norm);
-      }
+    const saved = loadLocal<StaffMember[]>(
+      getScopedStorageKey(STORAGE_KEYS.STAFF, bootShopId),
+      loadLocal<StaffMember[]>(
+        STORAGE_KEYS.STAFF,
+        bootShopId === 'shop_iqbal_pharmacy' ? INITIAL_DEMO_STAFF : []
+      )
+    );
+    const deduped = deduplicateStaffMembers(saved, bootShopId, initialDeleted);
+    if (deduped.length !== saved.length) {
+      saveLocal(STORAGE_KEYS.STAFF, deduped);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.STAFF, bootShopId), deduped);
     }
-    const list = Array.from(byId.values());
-    return list.length > 0 ? list : INITIAL_DEMO_STAFF;
+    if (deduped.length > 0) return deduped;
+    return bootShopId === 'shop_iqbal_pharmacy'
+      ? INITIAL_DEMO_STAFF.map((s) => ({ ...s, shopId: bootShopId }))
+      : [];
   });
 
   const [customMedicines, setCustomMedicines] = useState<CustomMedicine[]>(() => {
     const initialDeleted = new Set(loadLocal<string[]>(STORAGE_KEYS.DELETED_IDS, []));
-    const saved = loadLocal<CustomMedicine[]>(STORAGE_KEYS.CUSTOM_MEDS, []);
+    const saved = loadLocal<CustomMedicine[]>(
+      getScopedStorageKey(STORAGE_KEYS.CUSTOM_MEDS, bootShopId),
+      loadLocal<CustomMedicine[]>(STORAGE_KEYS.CUSTOM_MEDS, [])
+    );
     const byId = new Map<string, CustomMedicine>();
     for (const m of saved) {
-      const canonId = getCanonicalDocId(m.id);
+      const canonId = getCanonicalDocId(m.id, bootShopId);
       const isCore = isCoreDatabaseMedicineId(canonId) || CATALOG_BY_ID.has(canonId);
       if (!isCore && (initialDeleted.has(m.id) || initialDeleted.has(canonId))) continue;
-      const norm = { ...m, id: canonId };
+      const norm = { ...m, id: canonId, shopId: bootShopId };
       const prev = byId.get(canonId);
       if (!prev || (norm.updatedAtMs || 0) >= (prev.updatedAtMs || 0)) {
         byId.set(canonId, norm);
@@ -857,12 +964,15 @@ export default function App() {
 
   const [priceWatches, setPriceWatches] = useState<PriceWatch[]>(() => {
     const initialDeleted = new Set(loadLocal<string[]>(STORAGE_KEYS.DELETED_IDS, []));
-    const saved = loadLocal(STORAGE_KEYS.PRICE_WATCHES, INITIAL_DEMO_PRICE_WATCHES);
+    const saved = loadLocal<PriceWatch[]>(
+      getScopedStorageKey(STORAGE_KEYS.PRICE_WATCHES, bootShopId),
+      loadLocal(STORAGE_KEYS.PRICE_WATCHES, INITIAL_DEMO_PRICE_WATCHES)
+    );
     const byId = new Map<string, PriceWatch>();
     for (const w of saved) {
-      const canonId = getCanonicalDocId(w.id);
+      const canonId = getCanonicalDocId(w.id, bootShopId);
       if (initialDeleted.has(w.id) || initialDeleted.has(canonId)) continue;
-      const norm = { ...w, id: canonId };
+      const norm = { ...w, id: canonId, shopId: bootShopId };
       const prev = byId.get(canonId);
       if (!prev || (norm.updatedAtMs || 0) >= (prev.updatedAtMs || 0)) {
         byId.set(canonId, norm);
@@ -873,12 +983,15 @@ export default function App() {
 
   const [priceAlerts, setPriceAlerts] = useState<PriceAlert[]>(() => {
     const initialDeleted = new Set(loadLocal<string[]>(STORAGE_KEYS.DELETED_IDS, []));
-    const saved = loadLocal(STORAGE_KEYS.PRICE_ALERTS, INITIAL_DEMO_PRICE_ALERTS);
+    const saved = loadLocal<PriceAlert[]>(
+      getScopedStorageKey(STORAGE_KEYS.PRICE_ALERTS, bootShopId),
+      loadLocal(STORAGE_KEYS.PRICE_ALERTS, INITIAL_DEMO_PRICE_ALERTS)
+    );
     const byId = new Map<string, PriceAlert>();
     for (const a of saved) {
-      const canonId = getCanonicalDocId(a.id);
+      const canonId = getCanonicalDocId(a.id, bootShopId);
       if (initialDeleted.has(a.id) || initialDeleted.has(canonId)) continue;
-      const norm = { ...a, id: canonId };
+      const norm = { ...a, id: canonId, shopId: bootShopId };
       const prev = byId.get(canonId);
       if (!prev || (norm.updatedAtMs || 0) >= (prev.updatedAtMs || 0)) {
         byId.set(canonId, norm);
@@ -888,7 +1001,7 @@ export default function App() {
   });
 
   const [activeStaff, setActiveStaff] = useState<StaffMember>(
-    () => loadLocal(STORAGE_KEYS.STAFF, INITIAL_DEMO_STAFF)[0] || INITIAL_DEMO_STAFF[0]
+    () => staffList[0] || INITIAL_DEMO_STAFF[0]
   );
 
   const effectiveShopId = computeCurrentShopId(cloudSession, activeStaff, user);
@@ -928,11 +1041,12 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
 
-    const mergeByUpdatedAt = <T extends { id: string; updatedAtMs?: number }>(
+    const mergeByUpdatedAt = <T extends { id: string; shopId?: string; updatedAtMs?: number }>(
       remoteList: T[],
       localList: T[],
       deletedSet: Set<string>,
-      isInv = false
+      isInv = false,
+      shopId = effectiveShopId
     ): T[] => {
       const byId = new Map<string, T>();
       const canDelete = (id: string) => {
@@ -941,23 +1055,27 @@ export default function App() {
       };
 
       for (const r of remoteList) {
-        const canonId = getCanonicalDocId(r.id);
+        if (!r || !r.id) continue;
+        if (r.shopId && r.shopId !== shopId) continue;
+        const canonId = getCanonicalDocId(r.id, shopId);
         if (canDelete(canonId) && (deletedSet.has(r.id) || deletedSet.has(canonId))) continue;
-        byId.set(canonId, { ...r, id: canonId });
+        byId.set(canonId, { ...r, id: canonId, shopId });
       }
 
       for (const l of localList) {
-        const canonId = getCanonicalDocId(l.id);
+        if (!l || !l.id) continue;
+        if (l.shopId && l.shopId !== shopId) continue;
+        const canonId = getCanonicalDocId(l.id, shopId);
         if (canDelete(canonId) && (deletedSet.has(l.id) || deletedSet.has(canonId))) continue;
         const existing = byId.get(canonId);
         const lTs = l.updatedAtMs || 0;
         const rTs = existing?.updatedAtMs || 0;
         if (!existing) {
           if (lTs > 0 || isInv || remoteList.length === 0) {
-            byId.set(canonId, { ...l, id: canonId });
+            byId.set(canonId, { ...l, id: canonId, shopId });
           }
         } else if (lTs > rTs) {
-          byId.set(canonId, { ...l, id: canonId });
+          byId.set(canonId, { ...l, id: canonId, shopId });
         }
       }
 
@@ -977,10 +1095,16 @@ export default function App() {
           : idbSnapshot || null;
 
       if (remote) {
-        if (!hadLocalDataOnBootRef.current) {
+        const hydrateShopId = computeCurrentShopId(remote.cloudSession || cloudSession);
+        const rShopMismatch =
+          Boolean(remote.shopProfile?.shopId && remote.shopProfile.shopId !== hydrateShopId) &&
+          Boolean(cloudSession?.shopId && cloudSession.shopId !== remote.shopProfile?.shopId);
+
+        if (!hadLocalDataOnBootRef.current && !rShopMismatch) {
           // Browser cache was cleared (or fresh browser/device):
-          // Directly restore the exact persisted state from Server / IndexedDB!
+          // Directly restore and deduplicate persisted state from Server / IndexedDB!
           const rDeleted = Array.isArray(remote.deletedIds) ? remote.deletedIds : [];
+          const rDeletedSet = new Set(rDeleted);
           setDeletedIds(rDeleted);
           saveLocal(STORAGE_KEYS.DELETED_IDS, rDeleted);
 
@@ -989,33 +1113,42 @@ export default function App() {
             saveLocal(STORAGE_KEYS.SHOP, remote.shopProfile);
           }
           if (Array.isArray(remote.inventory) && remote.inventory.length > 0) {
-            setInventory(remote.inventory);
-            saveLocal(STORAGE_KEYS.INVENTORY, remote.inventory);
+            const cleanInv = mergeByUpdatedAt(remote.inventory, [], rDeletedSet, true, hydrateShopId);
+            setInventory(cleanInv);
+            saveLocal(STORAGE_KEYS.INVENTORY, cleanInv);
           }
           if (Array.isArray(remote.customers)) {
-            setCustomers(remote.customers);
-            saveLocal(STORAGE_KEYS.CUSTOMERS, remote.customers);
+            const cleanCust = mergeByUpdatedAt(remote.customers, [], rDeletedSet, false, hydrateShopId);
+            setCustomers(cleanCust);
+            saveLocal(STORAGE_KEYS.CUSTOMERS, cleanCust);
           }
           if (Array.isArray(remote.transactions)) {
-            setTransactions(remote.transactions);
-            saveLocal(STORAGE_KEYS.TRANSACTIONS, remote.transactions);
+            const cleanTx = mergeByUpdatedAt(remote.transactions, [], rDeletedSet, false, hydrateShopId);
+            setTransactions(cleanTx);
+            saveLocal(STORAGE_KEYS.TRANSACTIONS, cleanTx);
           }
           if (Array.isArray(remote.staffList) && remote.staffList.length > 0) {
-            setStaffList(remote.staffList);
-            saveLocal(STORAGE_KEYS.STAFF, remote.staffList);
-            setActiveStaff(remote.staffList[0]);
+            const cleanStaff = deduplicateStaffMembers(remote.staffList, hydrateShopId, rDeletedSet);
+            if (cleanStaff.length > 0) {
+              setStaffList(cleanStaff);
+              saveLocal(STORAGE_KEYS.STAFF, cleanStaff);
+              setActiveStaff(cleanStaff[0]);
+            }
           }
           if (Array.isArray(remote.customMedicines)) {
-            setCustomMedicines(remote.customMedicines);
-            saveLocal(STORAGE_KEYS.CUSTOM_MEDS, remote.customMedicines);
+            const cleanMeds = mergeByUpdatedAt(remote.customMedicines, [], rDeletedSet, false, hydrateShopId);
+            setCustomMedicines(cleanMeds);
+            saveLocal(STORAGE_KEYS.CUSTOM_MEDS, cleanMeds);
           }
           if (Array.isArray(remote.priceWatches)) {
-            setPriceWatches(remote.priceWatches);
-            saveLocal(STORAGE_KEYS.PRICE_WATCHES, remote.priceWatches);
+            const cleanWatches = mergeByUpdatedAt(remote.priceWatches, [], rDeletedSet, false, hydrateShopId);
+            setPriceWatches(cleanWatches);
+            saveLocal(STORAGE_KEYS.PRICE_WATCHES, cleanWatches);
           }
           if (Array.isArray(remote.priceAlerts)) {
-            setPriceAlerts(remote.priceAlerts);
-            saveLocal(STORAGE_KEYS.PRICE_ALERTS, remote.priceAlerts);
+            const cleanAlerts = mergeByUpdatedAt(remote.priceAlerts, [], rDeletedSet, false, hydrateShopId);
+            setPriceAlerts(cleanAlerts);
+            saveLocal(STORAGE_KEYS.PRICE_ALERTS, cleanAlerts);
           }
           if (Array.isArray(remote.posCart)) {
             setPosCart(remote.posCart);
@@ -1038,7 +1171,7 @@ export default function App() {
             // ignore
           }
           hadLocalDataOnBootRef.current = true;
-        } else {
+        } else if (!rShopMismatch) {
           // Normal reload where localStorage was intact: merge remote & local by updatedAtMs
           const mergedDeletedArr = Array.from(
             new Set([
@@ -1061,21 +1194,21 @@ export default function App() {
           }
           if (Array.isArray(remote.inventory)) {
             setInventory((prev) => {
-              const next = mergeByUpdatedAt(remote.inventory, prev, mergedDeletedSet, true);
+              const next = mergeByUpdatedAt(remote.inventory, prev, mergedDeletedSet, true, hydrateShopId);
               saveLocal(STORAGE_KEYS.INVENTORY, next);
               return next;
             });
           }
           if (Array.isArray(remote.customers)) {
             setCustomers((prev) => {
-              const next = mergeByUpdatedAt(remote.customers, prev, mergedDeletedSet);
+              const next = mergeByUpdatedAt(remote.customers, prev, mergedDeletedSet, false, hydrateShopId);
               saveLocal(STORAGE_KEYS.CUSTOMERS, next);
               return next;
             });
           }
           if (Array.isArray(remote.transactions)) {
             setTransactions((prev) => {
-              const next = mergeByUpdatedAt(remote.transactions, prev, mergedDeletedSet);
+              const next = mergeByUpdatedAt(remote.transactions, prev, mergedDeletedSet, false, hydrateShopId);
               next.sort(
                 (a, b) =>
                   (b.updatedAtMs || 0) - (a.updatedAtMs || 0) ||
@@ -1087,29 +1220,38 @@ export default function App() {
           }
           if (Array.isArray(remote.staffList) && remote.staffList.length > 0) {
             setStaffList((prev) => {
-              const next = mergeByUpdatedAt(remote.staffList, prev, mergedDeletedSet);
-              const finalStaff = next.length > 0 ? next : INITIAL_DEMO_STAFF;
+              const next = deduplicateStaffMembers(
+                mergeByUpdatedAt(remote.staffList, prev, mergedDeletedSet, false, hydrateShopId),
+                hydrateShopId,
+                mergedDeletedSet
+              );
+              const finalStaff =
+                next.length > 0
+                  ? next
+                  : hydrateShopId === 'shop_iqbal_pharmacy'
+                  ? INITIAL_DEMO_STAFF
+                  : [];
               saveLocal(STORAGE_KEYS.STAFF, finalStaff);
               return finalStaff;
             });
           }
           if (Array.isArray(remote.customMedicines)) {
             setCustomMedicines((prev) => {
-              const next = mergeByUpdatedAt(remote.customMedicines, prev, mergedDeletedSet);
+              const next = mergeByUpdatedAt(remote.customMedicines, prev, mergedDeletedSet, false, hydrateShopId);
               saveLocal(STORAGE_KEYS.CUSTOM_MEDS, next);
               return next;
             });
           }
           if (Array.isArray(remote.priceWatches)) {
             setPriceWatches((prev) => {
-              const next = mergeByUpdatedAt(remote.priceWatches, prev, mergedDeletedSet);
+              const next = mergeByUpdatedAt(remote.priceWatches, prev, mergedDeletedSet, false, hydrateShopId);
               saveLocal(STORAGE_KEYS.PRICE_WATCHES, next);
               return next;
             });
           }
           if (Array.isArray(remote.priceAlerts)) {
             setPriceAlerts((prev) => {
-              const next = mergeByUpdatedAt(remote.priceAlerts, prev, mergedDeletedSet);
+              const next = mergeByUpdatedAt(remote.priceAlerts, prev, mergedDeletedSet, false, hydrateShopId);
               saveLocal(STORAGE_KEYS.PRICE_ALERTS, next);
               return next;
             });
@@ -1326,6 +1468,7 @@ export default function App() {
       shopName: cloudSession.shopName,
       phone: cloudSession.phone,
       operatorRole: cloudSession.operatorRole,
+      staffId: cloudSession.staffId,
     })
       .then((sess) => {
         setCloudSession(sess);
@@ -1339,38 +1482,52 @@ export default function App() {
   useEffect(() => {
     if (!authReady) return;
     const effectiveOwnerId = user?.uid || cloudSession?.uid || SHARED_PHARMACY_OWNER_ID;
+    const cleanedCloudKeys = new Set<string>();
 
-    const deduplicateCloudDocs = <T extends { id: string; updatedAtMs?: number }>(
-      rawDocs: { rawId: string; item: T }[]
-    ): { items: T[]; staleSuffixIds: string[] } => {
+    const deduplicateCloudDocs = <T extends { id: string; shopId?: string; updatedAtMs?: number }>(
+      rawDocs: { rawId: string; item: T }[],
+      shopId: string
+    ): { items: T[]; staleDocIds: string[] } => {
       const byCanonId = new Map<string, { rawId: string; item: T }>();
-      const staleSuffixIds: string[] = [];
+      const allRawEntriesByCanon = new Map<string, string[]>();
 
       for (const entry of rawDocs) {
-        const canonId = getCanonicalDocId(entry.rawId);
-        const normalizedItem: T = { ...entry.item, id: canonId };
-        if (entry.rawId !== canonId) {
-          staleSuffixIds.push(entry.rawId);
-        }
+        const canonId = getCanonicalDocId(entry.item.id || entry.rawId, shopId);
+        const normalizedItem: T = { ...entry.item, id: canonId, shopId };
+        const rawIds = allRawEntriesByCanon.get(canonId) || [];
+        rawIds.push(entry.rawId);
+        allRawEntriesByCanon.set(canonId, rawIds);
+
+        const expectedDocKey = getScopedFirestoreDocId(shopId, canonId);
         const existing = byCanonId.get(canonId);
         if (!existing) {
           byCanonId.set(canonId, { rawId: entry.rawId, item: normalizedItem });
         } else {
           const newTs = normalizedItem.updatedAtMs || 0;
           const oldTs = existing.item.updatedAtMs || 0;
-          if (newTs > oldTs || (newTs === oldTs && entry.rawId === canonId)) {
+          if (newTs > oldTs || (newTs === oldTs && entry.rawId === expectedDocKey)) {
             byCanonId.set(canonId, { rawId: entry.rawId, item: normalizedItem });
+          }
+        }
+      }
+
+      const staleDocIds: string[] = [];
+      for (const [canonId, rawIds] of allRawEntriesByCanon.entries()) {
+        const expectedDocKey = getScopedFirestoreDocId(shopId, canonId);
+        for (const rId of rawIds) {
+          if (rId !== expectedDocKey) {
+            staleDocIds.push(rId);
           }
         }
       }
 
       return {
         items: Array.from(byCanonId.values()).map((v) => v.item),
-        staleSuffixIds,
+        staleDocIds,
       };
     };
 
-    const mergeCloudAndLocal = <T extends { id: string; updatedAtMs?: number }>(
+    const mergeCloudAndLocal = <T extends { id: string; shopId?: string; updatedAtMs?: number }>(
       cloudItems: T[],
       localItems: T[],
       options?: { isInventory?: boolean; isCustomMeds?: boolean }
@@ -1386,25 +1543,27 @@ export default function App() {
       };
 
       const validCloud = cloudItems.filter((item) => {
-        const canonId = getCanonicalDocId(item.id);
+        const canonId = getCanonicalDocId(item.id, effectiveShopId);
         if (!canBeDeleted(canonId)) return true;
         return !currentDeleted.has(item.id) && !currentDeleted.has(canonId);
       });
 
       const cloudMap = new Map<string, T>();
       for (const c of validCloud) {
-        cloudMap.set(getCanonicalDocId(c.id), { ...c, id: getCanonicalDocId(c.id) });
+        const canon = getCanonicalDocId(c.id, effectiveShopId);
+        cloudMap.set(canon, { ...c, id: canon, shopId: effectiveShopId });
       }
 
       const mergedMap = new Map<string, T>(cloudMap);
       const toUploadToCloud: T[] = [];
 
       for (const l of localItems) {
-        const canonId = getCanonicalDocId(l.id);
+        if (l.shopId && l.shopId !== effectiveShopId) continue;
+        const canonId = getCanonicalDocId(l.id, effectiveShopId);
         if (canBeDeleted(canonId) && (currentDeleted.has(l.id) || currentDeleted.has(canonId))) {
           continue;
         }
-        const normLocal: T = { ...l, id: canonId };
+        const normLocal: T = { ...l, id: canonId, shopId: effectiveShopId };
         const cloudMatch = cloudMap.get(canonId);
         const localTs = normLocal.updatedAtMs || 0;
 
@@ -1417,10 +1576,6 @@ export default function App() {
           }
         } else {
           // Item is in local but not in cloud:
-          // Keep it if:
-          // 1) It was created/edited by the user (localTs > 0), OR
-          // 2) It is a core inventory item, OR
-          // 3) Cloud collection is completely empty (initial bootstrap)
           if (localTs > 0 || isInv || validCloud.length === 0) {
             mergedMap.set(canonId, normLocal);
             toUploadToCloud.push(normLocal);
@@ -1483,10 +1638,14 @@ export default function App() {
                 };
           setShopProfile(initialShop);
           saveLocal(getScopedStorageKey(STORAGE_KEYS.SHOP, effectiveShopId), initialShop);
-          setDoc(
-            doc(db, 'shops', effectiveShopId),
-            buildShopCloudPayload(initialShop, effectiveOwnerId, effectiveShopId)
-          ).catch(() => {});
+          const initKey = `shops:${effectiveShopId}`;
+          if (!cleanedCloudKeys.has(initKey)) {
+            cleanedCloudKeys.add(initKey);
+            setDoc(
+              doc(db, 'shops', effectiveShopId),
+              buildShopCloudPayload(initialShop, effectiveOwnerId, effectiveShopId)
+            ).catch(() => {});
+          }
         }
       },
       (err) => handleFirestoreError(err, OperationType.GET, `shops/${effectiveShopId}`)
@@ -1498,50 +1657,55 @@ export default function App() {
         const rawList = snap.docs.map((d) => {
           const data = d.data() as Record<string, unknown>;
           const ts = getDocTimestampMs(data);
-          const rawId = (data.id as string) || d.id.replace(new RegExp(`^${effectiveShopId}_`), '');
+          const rawId = (data.id as string) || d.id;
           const item: InventoryItem = {
-            id: getCanonicalDocId(rawId),
-            shopId: effectiveShopId,
             ...(data as Omit<InventoryItem, 'id'>),
+            id: getCanonicalDocId(rawId, effectiveShopId),
+            shopId: effectiveShopId,
             updatedAtMs: ts || Date.now(),
           };
           return { rawId: d.id, item };
         });
 
-        const { items: cloudItems, staleSuffixIds } = deduplicateCloudDocs(rawList);
+        const { items: cloudItems, staleDocIds } = deduplicateCloudDocs(rawList, effectiveShopId);
+        let pendingUploads: InventoryItem[] = [];
+        let finalSnapshot: InventoryItem[] = cloudItems;
 
         setInventory((prev) => {
           const { merged, toUploadToCloud } = mergeCloudAndLocal(cloudItems, prev, {
             isInventory: true,
           });
+          pendingUploads = toUploadToCloud;
+          finalSnapshot = merged;
           saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveShopId), merged);
-
-          if (toUploadToCloud.length > 0) {
-            for (const item of toUploadToCloud) {
-              const canonId = getCanonicalDocId(item.id);
-              const docKey = `${effectiveShopId}_${canonId}`;
-              setDoc(
-                doc(db, 'inventory', docKey),
-                buildInventoryCloudPayload(item, effectiveOwnerId, effectiveShopId)
-              ).catch(() => {});
-            }
-          }
-          if (staleSuffixIds.length > 0) {
-            for (const staleId of staleSuffixIds) {
-              const canonId = getCanonicalDocId(staleId);
-              const winning = merged.find((m) => m.id === canonId);
-              if (winning) {
-                const docKey = `${effectiveShopId}_${canonId}`;
-                setDoc(
-                  doc(db, 'inventory', docKey),
-                  buildInventoryCloudPayload(winning, effectiveOwnerId, effectiveShopId)
-                )
-                  .then(() => deleteDoc(doc(db, 'inventory', staleId)))
-                  .catch(() => {});
-              }
-            }
-          }
           return merged;
+        });
+
+        queueMicrotask(() => {
+          for (const item of pendingUploads) {
+            const docKey = getScopedFirestoreDocId(effectiveShopId, item.id);
+            const guardKey = `inv:up:${docKey}:${item.updatedAtMs || 0}`;
+            if (cleanedCloudKeys.has(guardKey)) continue;
+            cleanedCloudKeys.add(guardKey);
+            setDoc(
+              doc(db, 'inventory', docKey),
+              buildInventoryCloudPayload({ ...item, id: getCanonicalDocId(item.id, effectiveShopId) }, effectiveOwnerId, effectiveShopId)
+            ).catch(() => {});
+          }
+          for (const staleId of staleDocIds) {
+            const canonId = getCanonicalDocId(staleId, effectiveShopId);
+            const winning = finalSnapshot.find((m) => m.id === canonId);
+            const docKey = getScopedFirestoreDocId(effectiveShopId, canonId);
+            const guardKey = `inv:del:${staleId}`;
+            if (!winning || staleId === docKey || cleanedCloudKeys.has(guardKey)) continue;
+            cleanedCloudKeys.add(guardKey);
+            setDoc(
+              doc(db, 'inventory', docKey),
+              buildInventoryCloudPayload(winning, effectiveOwnerId, effectiveShopId)
+            )
+              .then(() => deleteDoc(doc(db, 'inventory', staleId)))
+              .catch(() => {});
+          }
         });
       },
       (err) => handleFirestoreError(err, OperationType.LIST, 'inventory')
@@ -1553,44 +1717,53 @@ export default function App() {
         const rawList = snap.docs.map((d) => {
           const data = d.data() as Record<string, unknown>;
           const ts = getDocTimestampMs(data);
-          const rawId = (data.id as string) || d.id.replace(new RegExp(`^${effectiveShopId}_`), '');
+          const rawId = (data.id as string) || d.id;
           const item: Customer = {
-            id: getCanonicalDocId(rawId),
-            shopId: effectiveShopId,
             ...(data as Omit<Customer, 'id'>),
+            id: getCanonicalDocId(rawId, effectiveShopId),
+            shopId: effectiveShopId,
             updatedAtMs: ts || Date.now(),
           };
           return { rawId: d.id, item };
         });
 
-        const { items: cloudItems, staleSuffixIds } = deduplicateCloudDocs(rawList);
+        const { items: cloudItems, staleDocIds } = deduplicateCloudDocs(rawList, effectiveShopId);
+        let pendingUploads: Customer[] = [];
+        let finalSnapshot: Customer[] = cloudItems;
 
         setCustomers((prev) => {
           const { merged, toUploadToCloud } = mergeCloudAndLocal(cloudItems, prev);
+          pendingUploads = toUploadToCloud;
+          finalSnapshot = merged;
           saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOMERS, effectiveShopId), merged);
+          return merged;
+        });
 
-          for (const item of toUploadToCloud) {
-            const canonId = getCanonicalDocId(item.id);
-            const docKey = `${effectiveShopId}_${canonId}`;
+        queueMicrotask(() => {
+          for (const item of pendingUploads) {
+            const docKey = getScopedFirestoreDocId(effectiveShopId, item.id);
+            const guardKey = `cust:up:${docKey}:${item.updatedAtMs || 0}`;
+            if (cleanedCloudKeys.has(guardKey)) continue;
+            cleanedCloudKeys.add(guardKey);
             setDoc(
               doc(db, 'customers', docKey),
-              buildCustomerCloudPayload(item, effectiveOwnerId, effectiveShopId)
+              buildCustomerCloudPayload({ ...item, id: getCanonicalDocId(item.id, effectiveShopId) }, effectiveOwnerId, effectiveShopId)
             ).catch(() => {});
           }
-          for (const staleId of staleSuffixIds) {
-            const canonId = getCanonicalDocId(staleId);
-            const winning = merged.find((m) => m.id === canonId);
-            if (winning) {
-              const docKey = `${effectiveShopId}_${canonId}`;
-              setDoc(
-                doc(db, 'customers', docKey),
-                buildCustomerCloudPayload(winning, effectiveOwnerId, effectiveShopId)
-              )
-                .then(() => deleteDoc(doc(db, 'customers', staleId)))
-                .catch(() => {});
-            }
+          for (const staleId of staleDocIds) {
+            const canonId = getCanonicalDocId(staleId, effectiveShopId);
+            const winning = finalSnapshot.find((m) => m.id === canonId);
+            const docKey = getScopedFirestoreDocId(effectiveShopId, canonId);
+            const guardKey = `cust:del:${staleId}`;
+            if (!winning || staleId === docKey || cleanedCloudKeys.has(guardKey)) continue;
+            cleanedCloudKeys.add(guardKey);
+            setDoc(
+              doc(db, 'customers', docKey),
+              buildCustomerCloudPayload(winning, effectiveOwnerId, effectiveShopId)
+            )
+              .then(() => deleteDoc(doc(db, 'customers', staleId)))
+              .catch(() => {});
           }
-          return merged;
         });
       },
       (err) => handleFirestoreError(err, OperationType.LIST, 'customers')
@@ -1602,11 +1775,11 @@ export default function App() {
         const rawList = snap.docs.map((d) => {
           const data = d.data() as Record<string, unknown>;
           const ts = getDocTimestampMs(data);
-          const rawId = (data.id as string) || d.id.replace(new RegExp(`^${effectiveShopId}_`), '');
+          const rawId = (data.id as string) || d.id;
           const raw: Transaction = {
-            id: getCanonicalDocId(rawId),
-            shopId: effectiveShopId,
             ...(data as Omit<Transaction, 'id'>),
+            id: getCanonicalDocId(rawId, effectiveShopId),
+            shopId: effectiveShopId,
             updatedAtMs: ts || Date.now(),
           };
           const item =
@@ -1616,35 +1789,44 @@ export default function App() {
           return { rawId: d.id, item };
         });
 
-        const { items: cloudItems, staleSuffixIds } = deduplicateCloudDocs(rawList);
+        const { items: cloudItems, staleDocIds } = deduplicateCloudDocs(rawList, effectiveShopId);
+        let pendingUploads: Transaction[] = [];
+        let finalSnapshot: Transaction[] = cloudItems;
 
         setTransactions((prev) => {
           const { merged, toUploadToCloud } = mergeCloudAndLocal(cloudItems, prev);
           merged.sort((a, b) => (b.updatedAtMs || 0) - (a.updatedAtMs || 0) || b.invoiceNo.localeCompare(a.invoiceNo));
+          pendingUploads = toUploadToCloud;
+          finalSnapshot = merged;
           saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), merged);
+          return merged;
+        });
 
-          for (const item of toUploadToCloud) {
-            const canonId = getCanonicalDocId(item.id);
-            const docKey = `${effectiveShopId}_${canonId}`;
+        queueMicrotask(() => {
+          for (const item of pendingUploads) {
+            const docKey = getScopedFirestoreDocId(effectiveShopId, item.id);
+            const guardKey = `tx:up:${docKey}:${item.updatedAtMs || 0}`;
+            if (cleanedCloudKeys.has(guardKey)) continue;
+            cleanedCloudKeys.add(guardKey);
             setDoc(
               doc(db, 'transactions', docKey),
-              buildTransactionCloudPayload(item, effectiveOwnerId, effectiveShopId)
+              buildTransactionCloudPayload({ ...item, id: getCanonicalDocId(item.id, effectiveShopId) }, effectiveOwnerId, effectiveShopId)
             ).catch(() => {});
           }
-          for (const staleId of staleSuffixIds) {
-            const canonId = getCanonicalDocId(staleId);
-            const winning = merged.find((m) => m.id === canonId);
-            if (winning) {
-              const docKey = `${effectiveShopId}_${canonId}`;
-              setDoc(
-                doc(db, 'transactions', docKey),
-                buildTransactionCloudPayload(winning, effectiveOwnerId, effectiveShopId)
-              )
-                .then(() => deleteDoc(doc(db, 'transactions', staleId)))
-                .catch(() => {});
-            }
+          for (const staleId of staleDocIds) {
+            const canonId = getCanonicalDocId(staleId, effectiveShopId);
+            const winning = finalSnapshot.find((m) => m.id === canonId);
+            const docKey = getScopedFirestoreDocId(effectiveShopId, canonId);
+            const guardKey = `tx:del:${staleId}`;
+            if (!winning || staleId === docKey || cleanedCloudKeys.has(guardKey)) continue;
+            cleanedCloudKeys.add(guardKey);
+            setDoc(
+              doc(db, 'transactions', docKey),
+              buildTransactionCloudPayload(winning, effectiveOwnerId, effectiveShopId)
+            )
+              .then(() => deleteDoc(doc(db, 'transactions', staleId)))
+              .catch(() => {});
           }
-          return merged;
         });
       },
       (err) => handleFirestoreError(err, OperationType.LIST, 'transactions')
@@ -1656,21 +1838,30 @@ export default function App() {
         const rawList = snap.docs.map((d) => {
           const data = d.data() as Record<string, unknown>;
           const ts = getDocTimestampMs(data);
-          const rawId = (data.id as string) || d.id.replace(new RegExp(`^${effectiveShopId}_`), '');
+          const rawId = (data.id as string) || d.id;
           const item: StaffMember = {
-            id: getCanonicalDocId(rawId),
-            shopId: effectiveShopId,
             ...(data as Omit<StaffMember, 'id'>),
+            id: getCanonicalDocId(rawId, effectiveShopId),
+            shopId: effectiveShopId,
             updatedAtMs: ts || Date.now(),
           };
           return { rawId: d.id, item };
         });
 
-        const { items: cloudItems, staleSuffixIds } = deduplicateCloudDocs(rawList);
+        const { items: idDedupedCloud, staleDocIds } = deduplicateCloudDocs(rawList, effectiveShopId);
+        const dedupedCloud = deduplicateStaffMembers(idDedupedCloud, effectiveShopId);
+        const cloudIdentityKeys = new Set(
+          dedupedCloud.map((c) => getStaffIdentityKey(c, effectiveShopId))
+        );
+
+        let finalSnapshot: StaffMember[] = dedupedCloud;
+        let pendingUploads: StaffMember[] = [];
 
         setStaffList((prev) => {
-          const { merged, toUploadToCloud } = mergeCloudAndLocal(cloudItems, prev);
-          const finalMerged =
+          const prevForShop = prev.filter((p) => !p.shopId || p.shopId === effectiveShopId);
+          const { merged, toUploadToCloud } = mergeCloudAndLocal(dedupedCloud, prevForShop);
+          const currentDeleted = new Set(loadLocal<string[]>(STORAGE_KEYS.DELETED_IDS, []));
+          const rawFinal =
             merged.length > 0
               ? merged
               : effectiveShopId === 'shop_iqbal_pharmacy'
@@ -1691,30 +1882,83 @@ export default function App() {
                     updatedAtMs: Date.now(),
                   },
                 ];
-          saveLocal(getScopedStorageKey(STORAGE_KEYS.STAFF, effectiveShopId), finalMerged);
-
-          for (const item of toUploadToCloud) {
-            const canonId = getCanonicalDocId(item.id);
-            const docKey = `${effectiveShopId}_${canonId}`;
-            setDoc(doc(db, 'staff', docKey), buildStaffCloudPayload(item, effectiveOwnerId, effectiveShopId)).catch(
-              () => {}
+          const finalMerged = deduplicateStaffMembers(rawFinal, effectiveShopId, currentDeleted);
+          finalSnapshot = finalMerged;
+          pendingUploads = toUploadToCloud.filter((item) => {
+            const k = getStaffIdentityKey(item, effectiveShopId);
+            if (!cloudIdentityKeys.has(k)) return true;
+            return finalMerged.some(
+              (f) => f.id === item.id && (item.updatedAtMs || 0) > 0
             );
-          }
-          for (const staleId of staleSuffixIds) {
-            const canonId = getCanonicalDocId(staleId);
-            const winning = finalMerged.find((m) => m.id === canonId);
-            if (winning) {
-              const docKey = `${effectiveShopId}_${canonId}`;
-              setDoc(doc(db, 'staff', docKey), buildStaffCloudPayload(winning, effectiveOwnerId, effectiveShopId))
-                .then(() => deleteDoc(doc(db, 'staff', staleId)))
-                .catch(() => {});
-            }
-          }
+          });
+          saveLocal(getScopedStorageKey(STORAGE_KEYS.STAFF, effectiveShopId), finalMerged);
+          saveLocal(STORAGE_KEYS.STAFF, finalMerged);
           return finalMerged;
         });
 
-        // Safely update active staff outside the setState updater without reverting logged-out sessions
         queueMicrotask(() => {
+          for (const item of pendingUploads) {
+            const winner = finalSnapshot.find(
+              (f) =>
+                getStaffIdentityKey(f, effectiveShopId) ===
+                getStaffIdentityKey(item, effectiveShopId)
+            );
+            if (!winner) continue;
+            const docKey = getScopedFirestoreDocId(effectiveShopId, winner.id);
+            const guardKey = `staff:up:${docKey}:${winner.updatedAtMs || 0}`;
+            if (cleanedCloudKeys.has(guardKey)) continue;
+            cleanedCloudKeys.add(guardKey);
+            setDoc(
+              doc(db, 'staff', docKey),
+              buildStaffCloudPayload(winner, effectiveOwnerId, effectiveShopId)
+            ).catch(() => {});
+          }
+
+          // Delete duplicate / prefix-stacked / collapsed staff docs in Firestore
+          const allDuplicateRawIds = new Set<string>(staleDocIds);
+          for (const entry of rawList) {
+            const idKey = getStaffIdentityKey(entry.item, effectiveShopId);
+            const winner = finalSnapshot.find(
+              (f) => getStaffIdentityKey(f, effectiveShopId) === idKey
+            );
+            if (winner) {
+              const expectedDocKey = getScopedFirestoreDocId(effectiveShopId, winner.id);
+              if (entry.rawId !== expectedDocKey) {
+                allDuplicateRawIds.add(entry.rawId);
+              }
+            }
+          }
+
+          for (const staleRawId of allDuplicateRawIds) {
+            const guardKey = `staff:del:${staleRawId}`;
+            if (cleanedCloudKeys.has(guardKey)) continue;
+            cleanedCloudKeys.add(guardKey);
+            const entry = rawList.find((r) => r.rawId === staleRawId);
+            const idKey = entry
+              ? getStaffIdentityKey(entry.item, effectiveShopId)
+              : null;
+            const winner =
+              (idKey &&
+                finalSnapshot.find(
+                  (f) => getStaffIdentityKey(f, effectiveShopId) === idKey
+                )) ||
+              finalSnapshot.find(
+                (m) => m.id === getCanonicalDocId(staleRawId, effectiveShopId)
+              );
+            if (winner) {
+              const docKey = getScopedFirestoreDocId(effectiveShopId, winner.id);
+              if (staleRawId !== docKey) {
+                setDoc(
+                  doc(db, 'staff', docKey),
+                  buildStaffCloudPayload(winner, effectiveOwnerId, effectiveShopId)
+                )
+                  .then(() => deleteDoc(doc(db, 'staff', staleRawId)))
+                  .catch(() => {});
+              }
+            }
+          }
+
+          // Safely update active staff outside the setState updater without reverting logged-out sessions
           setActiveStaff((curr) => {
             if (
               curr.id === 'staff-offline-counter' ||
@@ -1724,11 +1968,21 @@ export default function App() {
             ) {
               return curr;
             }
-            const currentStaffList = loadLocal<StaffMember[]>(
-              getScopedStorageKey(STORAGE_KEYS.STAFF, effectiveShopId),
-              INITIAL_DEMO_STAFF
+            const currentStaffList = finalSnapshot.length > 0
+              ? finalSnapshot
+              : loadLocal<StaffMember[]>(
+                  getScopedStorageKey(STORAGE_KEYS.STAFF, effectiveShopId),
+                  INITIAL_DEMO_STAFF
+                );
+            const currCanon = getCanonicalDocId(curr.id, effectiveShopId);
+            const currKey = getStaffIdentityKey(curr, effectiveShopId);
+            return (
+              currentStaffList.find((i) => i.id === currCanon) ||
+              currentStaffList.find(
+                (i) => getStaffIdentityKey(i, effectiveShopId) === currKey
+              ) ||
+              curr
             );
-            return currentStaffList.find((i) => i.id === getCanonicalDocId(curr.id)) || curr;
           });
         });
       },
@@ -1741,33 +1995,55 @@ export default function App() {
         const rawList = snap.docs.map((d) => {
           const data = d.data() as Record<string, unknown>;
           const ts = getDocTimestampMs(data);
-          const rawId = (data.id as string) || d.id.replace(new RegExp(`^${effectiveShopId}_`), '');
+          const rawId = (data.id as string) || d.id;
           const item: CustomMedicine = {
-            id: getCanonicalDocId(rawId),
-            shopId: effectiveShopId,
             ...(data as Omit<CustomMedicine, 'id'>),
+            id: getCanonicalDocId(rawId, effectiveShopId),
+            shopId: effectiveShopId,
             updatedAtMs: ts || Date.now(),
           };
           return { rawId: d.id, item };
         });
 
-        const { items: cloudItems } = deduplicateCloudDocs(rawList);
+        const { items: cloudItems, staleDocIds } = deduplicateCloudDocs(rawList, effectiveShopId);
+        let pendingUploads: CustomMedicine[] = [];
+        let finalSnapshot: CustomMedicine[] = cloudItems;
 
         setCustomMedicines((prev) => {
           const { merged, toUploadToCloud } = mergeCloudAndLocal(cloudItems, prev, {
             isCustomMeds: true,
           });
+          pendingUploads = toUploadToCloud;
+          finalSnapshot = merged;
           saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOM_MEDS, effectiveShopId), merged);
+          return merged;
+        });
 
-          for (const item of toUploadToCloud) {
-            const canonId = getCanonicalDocId(item.id);
-            const docKey = `${effectiveShopId}_${canonId}`;
+        queueMicrotask(() => {
+          for (const item of pendingUploads) {
+            const docKey = getScopedFirestoreDocId(effectiveShopId, item.id);
+            const guardKey = `cmed:up:${docKey}:${item.updatedAtMs || 0}`;
+            if (cleanedCloudKeys.has(guardKey)) continue;
+            cleanedCloudKeys.add(guardKey);
             setDoc(
               doc(db, 'custom_medicines', docKey),
-              buildCustomMedCloudPayload(item, effectiveOwnerId, effectiveShopId)
+              buildCustomMedCloudPayload({ ...item, id: getCanonicalDocId(item.id, effectiveShopId) }, effectiveOwnerId, effectiveShopId)
             ).catch(() => {});
           }
-          return merged;
+          for (const staleId of staleDocIds) {
+            const canonId = getCanonicalDocId(staleId, effectiveShopId);
+            const winning = finalSnapshot.find((m) => m.id === canonId);
+            const docKey = getScopedFirestoreDocId(effectiveShopId, canonId);
+            const guardKey = `cmed:del:${staleId}`;
+            if (!winning || staleId === docKey || cleanedCloudKeys.has(guardKey)) continue;
+            cleanedCloudKeys.add(guardKey);
+            setDoc(
+              doc(db, 'custom_medicines', docKey),
+              buildCustomMedCloudPayload(winning, effectiveOwnerId, effectiveShopId)
+            )
+              .then(() => deleteDoc(doc(db, 'custom_medicines', staleId)))
+              .catch(() => {});
+          }
         });
       },
       (err) => handleFirestoreError(err, OperationType.LIST, 'custom_medicines')
@@ -1779,31 +2055,53 @@ export default function App() {
         const rawList = snap.docs.map((d) => {
           const data = d.data() as Record<string, unknown>;
           const ts = getDocTimestampMs(data);
-          const rawId = (data.id as string) || d.id.replace(new RegExp(`^${effectiveShopId}_`), '');
+          const rawId = (data.id as string) || d.id;
           const item: PriceWatch = {
-            id: getCanonicalDocId(rawId),
-            shopId: effectiveShopId,
             ...(data as Omit<PriceWatch, 'id'>),
+            id: getCanonicalDocId(rawId, effectiveShopId),
+            shopId: effectiveShopId,
             updatedAtMs: ts || Date.now(),
           };
           return { rawId: d.id, item };
         });
 
-        const { items: cloudItems } = deduplicateCloudDocs(rawList);
+        const { items: cloudItems, staleDocIds } = deduplicateCloudDocs(rawList, effectiveShopId);
+        let pendingUploads: PriceWatch[] = [];
+        let finalSnapshot: PriceWatch[] = cloudItems;
 
         setPriceWatches((prev) => {
           const { merged, toUploadToCloud } = mergeCloudAndLocal(cloudItems, prev);
+          pendingUploads = toUploadToCloud;
+          finalSnapshot = merged;
           saveLocal(getScopedStorageKey(STORAGE_KEYS.PRICE_WATCHES, effectiveShopId), merged);
+          return merged;
+        });
 
-          for (const item of toUploadToCloud) {
-            const canonId = getCanonicalDocId(item.id);
-            const docKey = `${effectiveShopId}_${canonId}`;
+        queueMicrotask(() => {
+          for (const item of pendingUploads) {
+            const docKey = getScopedFirestoreDocId(effectiveShopId, item.id);
+            const guardKey = `watch:up:${docKey}:${item.updatedAtMs || 0}`;
+            if (cleanedCloudKeys.has(guardKey)) continue;
+            cleanedCloudKeys.add(guardKey);
             setDoc(
               doc(db, 'price_watches', docKey),
-              buildPriceWatchCloudPayload(item, effectiveOwnerId, effectiveShopId)
+              buildPriceWatchCloudPayload({ ...item, id: getCanonicalDocId(item.id, effectiveShopId) }, effectiveOwnerId, effectiveShopId)
             ).catch(() => {});
           }
-          return merged;
+          for (const staleId of staleDocIds) {
+            const canonId = getCanonicalDocId(staleId, effectiveShopId);
+            const winning = finalSnapshot.find((m) => m.id === canonId);
+            const docKey = getScopedFirestoreDocId(effectiveShopId, canonId);
+            const guardKey = `watch:del:${staleId}`;
+            if (!winning || staleId === docKey || cleanedCloudKeys.has(guardKey)) continue;
+            cleanedCloudKeys.add(guardKey);
+            setDoc(
+              doc(db, 'price_watches', docKey),
+              buildPriceWatchCloudPayload(winning, effectiveOwnerId, effectiveShopId)
+            )
+              .then(() => deleteDoc(doc(db, 'price_watches', staleId)))
+              .catch(() => {});
+          }
         });
       },
       (err) => handleFirestoreError(err, OperationType.LIST, 'price_watches')
@@ -1815,31 +2113,53 @@ export default function App() {
         const rawList = snap.docs.map((d) => {
           const data = d.data() as Record<string, unknown>;
           const ts = getDocTimestampMs(data);
-          const rawId = (data.id as string) || d.id.replace(new RegExp(`^${effectiveShopId}_`), '');
+          const rawId = (data.id as string) || d.id;
           const item: PriceAlert = {
-            id: getCanonicalDocId(rawId),
-            shopId: effectiveShopId,
             ...(data as Omit<PriceAlert, 'id'>),
+            id: getCanonicalDocId(rawId, effectiveShopId),
+            shopId: effectiveShopId,
             updatedAtMs: ts || Date.now(),
           };
           return { rawId: d.id, item };
         });
 
-        const { items: cloudItems } = deduplicateCloudDocs(rawList);
+        const { items: cloudItems, staleDocIds } = deduplicateCloudDocs(rawList, effectiveShopId);
+        let pendingUploads: PriceAlert[] = [];
+        let finalSnapshot: PriceAlert[] = cloudItems;
 
         setPriceAlerts((prev) => {
           const { merged, toUploadToCloud } = mergeCloudAndLocal(cloudItems, prev);
+          pendingUploads = toUploadToCloud;
+          finalSnapshot = merged;
           saveLocal(getScopedStorageKey(STORAGE_KEYS.PRICE_ALERTS, effectiveShopId), merged);
+          return merged;
+        });
 
-          for (const item of toUploadToCloud) {
-            const canonId = getCanonicalDocId(item.id);
-            const docKey = `${effectiveShopId}_${canonId}`;
+        queueMicrotask(() => {
+          for (const item of pendingUploads) {
+            const docKey = getScopedFirestoreDocId(effectiveShopId, item.id);
+            const guardKey = `alert:up:${docKey}:${item.updatedAtMs || 0}`;
+            if (cleanedCloudKeys.has(guardKey)) continue;
+            cleanedCloudKeys.add(guardKey);
             setDoc(
               doc(db, 'price_alerts', docKey),
-              buildPriceAlertCloudPayload(item, effectiveOwnerId, effectiveShopId)
+              buildPriceAlertCloudPayload({ ...item, id: getCanonicalDocId(item.id, effectiveShopId) }, effectiveOwnerId, effectiveShopId)
             ).catch(() => {});
           }
-          return merged;
+          for (const staleId of staleDocIds) {
+            const canonId = getCanonicalDocId(staleId, effectiveShopId);
+            const winning = finalSnapshot.find((m) => m.id === canonId);
+            const docKey = getScopedFirestoreDocId(effectiveShopId, canonId);
+            const guardKey = `alert:del:${staleId}`;
+            if (!winning || staleId === docKey || cleanedCloudKeys.has(guardKey)) continue;
+            cleanedCloudKeys.add(guardKey);
+            setDoc(
+              doc(db, 'price_alerts', docKey),
+              buildPriceAlertCloudPayload(winning, effectiveOwnerId, effectiveShopId)
+            )
+              .then(() => deleteDoc(doc(db, 'price_alerts', staleId)))
+              .catch(() => {});
+          }
         });
       },
       (err) => handleFirestoreError(err, OperationType.LIST, 'price_alerts')
@@ -2000,7 +2320,8 @@ export default function App() {
     const changedBy = getOperatorName(activeStaff);
     const newAlert: PriceAlert = {
       id: alertId,
-      ownerId: user?.uid || SHARED_PHARMACY_OWNER_ID,
+      shopId: effectiveShopId,
+      ownerId: effectiveCloudUid,
       medicineId: sanitizeString(params.medicineId, 100),
       brandName: sanitizeString(params.brandName, 120),
       genericName: sanitizeString(params.genericName, 150),
@@ -2019,17 +2340,19 @@ export default function App() {
     setPriceAlerts((prev) => {
       const next = [newAlert, ...prev];
       saveLocal(STORAGE_KEYS.PRICE_ALERTS, next);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.PRICE_ALERTS, effectiveShopId), next);
       return next;
     });
 
-    if (user) {
+    if (user || isCloudLoggedIn) {
+      const scopedAlertId = getScopedFirestoreDocId(effectiveShopId, alertId);
       try {
         await setDoc(
-          doc(db, 'price_alerts', alertId),
-          buildPriceAlertCloudPayload(newAlert, user.uid)
+          doc(db, 'price_alerts', scopedAlertId),
+          buildPriceAlertCloudPayload(newAlert, effectiveCloudUid, effectiveShopId)
         );
       } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, `price_alerts/${alertId}`);
+        handleFirestoreError(error, OperationType.CREATE, `price_alerts/${scopedAlertId}`);
       }
     }
   };
@@ -2053,152 +2376,221 @@ export default function App() {
   };
 
   // Multi-Device Full Cloud Sync: Directly fetches all authoritative collections from Firestore
-  // Multi-Device Full Cloud Sync: Directly fetches and merges all authoritative collections from Firestore
-  const syncAllDataFromFirestore = async (options?: { silent?: boolean }) => {
+  // Multi-Device Full Cloud Sync: Directly fetches and merges isolated shop collections from Firestore
+  const syncAllDataFromFirestore = async (options?: { silent?: boolean; shopIdOverride?: string }) => {
+    const targetShopId = options?.shopIdOverride || effectiveShopId;
+    const targetOwnerUid = effectiveCloudUid;
     try {
-      const [invSnap, txSnap, custSnap, staffSnap, customMedSnap, shopSnap] = await Promise.all([
-        getDocs(collection(db, 'inventory')),
-        getDocs(collection(db, 'transactions')),
-        getDocs(collection(db, 'customers')),
-        getDocs(collection(db, 'staff')),
-        getDocs(collection(db, 'custom_medicines')),
-        getDocs(collection(db, 'shops')),
+      const [invSnap, txSnap, custSnap, staffSnap, customMedSnap, shopDocSnap] = await Promise.all([
+        getDocs(query(collection(db, 'inventory'), where('shopId', '==', targetShopId))),
+        getDocs(query(collection(db, 'transactions'), where('shopId', '==', targetShopId))),
+        getDocs(query(collection(db, 'customers'), where('shopId', '==', targetShopId))),
+        getDocs(query(collection(db, 'staff'), where('shopId', '==', targetShopId))),
+        getDocs(query(collection(db, 'custom_medicines'), where('shopId', '==', targetShopId))),
+        getDoc(doc(db, 'shops', targetShopId)),
       ]);
 
       let hasCloudData = false;
+      const activeDeleted = new Set(loadLocal<string[]>(STORAGE_KEYS.DELETED_IDS, []));
 
-      // 1. Transactions: Bidirectional merge with timestamp priority so zero transactions are lost across devices
+      // 1. Transactions: Bidirectional merge with timestamp priority & canonical IDs
       const txMap = new Map<string, Transaction>();
       if (!txSnap.empty) {
         hasCloudData = true;
         for (const d of txSnap.docs) {
-          const raw = d.data() as Omit<Transaction, 'id'>;
-          const canonId = getCanonicalDocId(d.id);
-          txMap.set(canonId, {
+          const raw = d.data() as Record<string, unknown>;
+          const canonId = getCanonicalDocId((raw.id as string) || d.id, targetShopId);
+          if (activeDeleted.has(d.id) || activeDeleted.has(canonId)) continue;
+          const ts = getDocTimestampMs(raw);
+          const item: Transaction = {
+            ...(raw as Omit<Transaction, 'id'>),
             id: canonId,
-            ...raw,
-            itemsSummary: formatTransactionItemsText(raw.itemsSummary),
-          });
+            shopId: targetShopId,
+            updatedAtMs: ts || (raw.updatedAtMs as number) || Date.now(),
+            itemsSummary: formatTransactionItemsText(String(raw.itemsSummary || '')),
+          };
+          const prev = txMap.get(canonId);
+          if (!prev || (item.updatedAtMs || 0) >= (prev.updatedAtMs || 0)) {
+            txMap.set(canonId, item);
+          }
         }
       }
-      const localTxs = loadLocal<Transaction[]>(STORAGE_KEYS.TRANSACTIONS, []);
+      const localTxs = loadLocal<Transaction[]>(
+        getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, targetShopId),
+        targetShopId === effectiveShopId ? loadLocal<Transaction[]>(STORAGE_KEYS.TRANSACTIONS, []) : []
+      );
       for (const loc of localTxs) {
-        const canon = getCanonicalDocId(loc.id);
+        if (loc.shopId && loc.shopId !== targetShopId) continue;
+        const canon = getCanonicalDocId(loc.id, targetShopId);
+        if (activeDeleted.has(loc.id) || activeDeleted.has(canon)) continue;
         const existing = txMap.get(canon);
         if (!existing || (loc.updatedAtMs || 0) > (existing.updatedAtMs || 0)) {
-          txMap.set(canon, { ...loc, id: canon });
-          setDoc(doc(db, 'transactions', canon), buildTransactionCloudPayload(loc, 'shared_iqbal_pharmacy')).catch(() => {});
+          const normLoc: Transaction = { ...loc, id: canon, shopId: targetShopId };
+          txMap.set(canon, normLoc);
+          setDoc(
+            doc(db, 'transactions', getScopedFirestoreDocId(targetShopId, canon)),
+            buildTransactionCloudPayload(normLoc, targetOwnerUid, targetShopId)
+          ).catch(() => {});
         }
       }
       const mergedTxList = Array.from(txMap.values());
       mergedTxList.sort((a, b) => (b.updatedAtMs || 0) - (a.updatedAtMs || 0) || b.invoiceNo.localeCompare(a.invoiceNo));
       setTransactions(mergedTxList);
       saveLocal(STORAGE_KEYS.TRANSACTIONS, mergedTxList);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, targetShopId), mergedTxList);
 
       // 2. Inventory: Bidirectional merge
       const invMap = new Map<string, InventoryItem>();
       if (!invSnap.empty) {
         hasCloudData = true;
         for (const d of invSnap.docs) {
-          const data = d.data() as Omit<InventoryItem, 'id'>;
-          const canonId = getCanonicalDocId(d.id);
-          invMap.set(canonId, { id: canonId, ...data });
+          const data = d.data() as Record<string, unknown>;
+          const canonId = getCanonicalDocId((data.id as string) || d.id, targetShopId);
+          const ts = getDocTimestampMs(data);
+          const item: InventoryItem = {
+            ...(data as Omit<InventoryItem, 'id'>),
+            id: canonId,
+            shopId: targetShopId,
+            updatedAtMs: ts || (data.updatedAtMs as number) || Date.now(),
+          };
+          const prev = invMap.get(canonId);
+          if (!prev || (item.updatedAtMs || 0) >= (prev.updatedAtMs || 0)) {
+            invMap.set(canonId, item);
+          }
         }
       }
-      const localInv = loadLocal<InventoryItem[]>(STORAGE_KEYS.INVENTORY, []);
+      const localInv = loadLocal<InventoryItem[]>(
+        getScopedStorageKey(STORAGE_KEYS.INVENTORY, targetShopId),
+        targetShopId === effectiveShopId ? loadLocal<InventoryItem[]>(STORAGE_KEYS.INVENTORY, []) : []
+      );
       for (const loc of localInv) {
-        const canon = getCanonicalDocId(loc.id);
+        if (loc.shopId && loc.shopId !== targetShopId) continue;
+        const canon = getCanonicalDocId(loc.id, targetShopId);
         const existing = invMap.get(canon);
         if (!existing || (loc.updatedAtMs || 0) > (existing.updatedAtMs || 0)) {
-          invMap.set(canon, { ...loc, id: canon });
-          setDoc(doc(db, 'inventory', canon), buildInventoryCloudPayload(loc, 'shared_iqbal_pharmacy')).catch(() => {});
+          const normLoc: InventoryItem = { ...loc, id: canon, shopId: targetShopId };
+          invMap.set(canon, normLoc);
+          setDoc(
+            doc(db, 'inventory', getScopedFirestoreDocId(targetShopId, canon)),
+            buildInventoryCloudPayload(normLoc, targetOwnerUid, targetShopId)
+          ).catch(() => {});
         }
       }
       const mergedInvList = Array.from(invMap.values());
       setInventory(mergedInvList);
       saveLocal(STORAGE_KEYS.INVENTORY, mergedInvList);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, targetShopId), mergedInvList);
 
       // 3. Customers: Bidirectional merge
       const custMap = new Map<string, Customer>();
       if (!custSnap.empty) {
         hasCloudData = true;
         for (const d of custSnap.docs) {
-          const data = d.data() as Omit<Customer, 'id'>;
-          const canonId = getCanonicalDocId(d.id);
-          custMap.set(canonId, { id: canonId, ...data });
+          const data = d.data() as Record<string, unknown>;
+          const canonId = getCanonicalDocId((data.id as string) || d.id, targetShopId);
+          if (activeDeleted.has(d.id) || activeDeleted.has(canonId)) continue;
+          const ts = getDocTimestampMs(data);
+          const item: Customer = {
+            ...(data as Omit<Customer, 'id'>),
+            id: canonId,
+            shopId: targetShopId,
+            updatedAtMs: ts || (data.updatedAtMs as number) || Date.now(),
+          };
+          const prev = custMap.get(canonId);
+          if (!prev || (item.updatedAtMs || 0) >= (prev.updatedAtMs || 0)) {
+            custMap.set(canonId, item);
+          }
         }
       }
-      const localCust = loadLocal<Customer[]>(STORAGE_KEYS.CUSTOMERS, []);
+      const localCust = loadLocal<Customer[]>(
+        getScopedStorageKey(STORAGE_KEYS.CUSTOMERS, targetShopId),
+        targetShopId === effectiveShopId ? loadLocal<Customer[]>(STORAGE_KEYS.CUSTOMERS, []) : []
+      );
       for (const loc of localCust) {
-        const canon = getCanonicalDocId(loc.id);
+        if (loc.shopId && loc.shopId !== targetShopId) continue;
+        const canon = getCanonicalDocId(loc.id, targetShopId);
+        if (activeDeleted.has(loc.id) || activeDeleted.has(canon)) continue;
         const existing = custMap.get(canon);
         if (!existing || (loc.updatedAtMs || 0) > (existing.updatedAtMs || 0)) {
-          custMap.set(canon, { ...loc, id: canon });
-          setDoc(doc(db, 'customers', canon), buildCustomerCloudPayload(loc, 'shared_iqbal_pharmacy')).catch(() => {});
+          const normLoc: Customer = { ...loc, id: canon, shopId: targetShopId };
+          custMap.set(canon, normLoc);
+          setDoc(
+            doc(db, 'customers', getScopedFirestoreDocId(targetShopId, canon)),
+            buildCustomerCloudPayload(normLoc, targetOwnerUid, targetShopId)
+          ).catch(() => {});
         }
       }
       const mergedCustList = Array.from(custMap.values());
       setCustomers(mergedCustList);
       saveLocal(STORAGE_KEYS.CUSTOMERS, mergedCustList);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOMERS, targetShopId), mergedCustList);
 
-      // 4. Staff: Bidirectional merge & deduplication (Never allow duplicate users)
-      const staffMap = new Map<string, StaffMember>();
+      // 4. Staff: Bidirectional merge & strict identity deduplication (Never allow duplicate Owner/staff rows)
+      const collectedStaff: StaffMember[] = [];
       if (!staffSnap.empty) {
         for (const d of staffSnap.docs) {
-          const data = d.data() as Omit<StaffMember, 'id'>;
-          const canonId = getCanonicalDocId(d.id);
-          staffMap.set(canonId, { id: canonId, ...data });
+          const data = d.data() as Record<string, unknown>;
+          const canonId = getCanonicalDocId((data.id as string) || d.id, targetShopId);
+          const ts = getDocTimestampMs(data);
+          collectedStaff.push({
+            ...(data as Omit<StaffMember, 'id'>),
+            id: canonId,
+            shopId: targetShopId,
+            updatedAtMs: ts || (data.updatedAtMs as number) || Date.now(),
+          });
         }
       }
-      const localStaff = loadLocal<StaffMember[]>(STORAGE_KEYS.STAFF, []);
+      const localStaff = loadLocal<StaffMember[]>(
+        getScopedStorageKey(STORAGE_KEYS.STAFF, targetShopId),
+        targetShopId === effectiveShopId ? loadLocal<StaffMember[]>(STORAGE_KEYS.STAFF, []) : []
+      );
       for (const loc of localStaff) {
-        const canon = getCanonicalDocId(loc.id);
-        const existing = staffMap.get(canon);
-        if (!existing || (loc.updatedAtMs || 0) > (existing.updatedAtMs || 0)) {
-          staffMap.set(canon, { ...loc, id: canon });
-        }
+        if (loc.shopId && loc.shopId !== targetShopId) continue;
+        const canon = getCanonicalDocId(loc.id, targetShopId);
+        collectedStaff.push({ ...loc, id: canon, shopId: targetShopId });
       }
-      // Deduplicate by normalized 10-digit phone number or email
-      const deduplicatedStaff: StaffMember[] = [];
-      const seenStaffKeys = new Set<string>();
-      for (const s of staffMap.values()) {
-        const digits = (s.phone || '').replace(/[^0-9]/g, '');
-        const key = digits.length >= 10
-          ? digits.slice(-10)
-          : digits.length >= 6
-          ? digits
-          : s.email?.toLowerCase().trim() || s.id;
-        if (!seenStaffKeys.has(key)) {
-          seenStaffKeys.add(key);
-          deduplicatedStaff.push(s);
-        }
-      }
+      const deduplicatedStaff = deduplicateStaffMembers(collectedStaff, targetShopId, activeDeleted);
       setStaffList(deduplicatedStaff);
       saveLocal(STORAGE_KEYS.STAFF, deduplicatedStaff);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.STAFF, targetShopId), deduplicatedStaff);
 
       // 5. Custom Medicines
       if (!customMedSnap.empty) {
         const cmMap = new Map<string, CustomMedicine>();
         for (const d of customMedSnap.docs) {
-          const data = d.data() as Omit<CustomMedicine, 'id'>;
-          const canonId = getCanonicalDocId(d.id);
-          cmMap.set(canonId, { id: canonId, ...data });
+          const data = d.data() as Record<string, unknown>;
+          const canonId = getCanonicalDocId((data.id as string) || d.id, targetShopId);
+          const isCore = isCoreDatabaseMedicineId(canonId) || CATALOG_BY_ID.has(canonId);
+          if (!isCore && (activeDeleted.has(d.id) || activeDeleted.has(canonId))) continue;
+          const ts = getDocTimestampMs(data);
+          const item: CustomMedicine = {
+            ...(data as Omit<CustomMedicine, 'id'>),
+            id: canonId,
+            shopId: targetShopId,
+            updatedAtMs: ts || (data.updatedAtMs as number) || Date.now(),
+          };
+          const prev = cmMap.get(canonId);
+          if (!prev || (item.updatedAtMs || 0) >= (prev.updatedAtMs || 0)) {
+            cmMap.set(canonId, item);
+          }
         }
         const cmList = Array.from(cmMap.values());
         setCustomMedicines(cmList);
         saveLocal(STORAGE_KEYS.CUSTOM_MEDS, cmList);
+        saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOM_MEDS, targetShopId), cmList);
       }
 
-      // 6. Shop Profile
-      if (!shopSnap.empty) {
-        const bestDoc = shopSnap.docs.find((d) => d.id === SHARED_SHOP_DOC_ID) || shopSnap.docs[0];
-        const rawData = bestDoc.data() as Omit<ShopProfile, 'id'>;
+      // 6. Shop Profile (strictly scoped by targetShopId)
+      if (shopDocSnap.exists()) {
+        const rawData = shopDocSnap.data() as Omit<ShopProfile, 'id'>;
         const updatedShop: ShopProfile = {
-          id: SHARED_SHOP_DOC_ID,
           ...rawData,
+          id: targetShopId,
+          shopId: targetShopId,
         };
         setShopProfile(updatedShop);
         saveLocal(STORAGE_KEYS.SHOP, updatedShop);
+        saveLocal(getScopedStorageKey(STORAGE_KEYS.SHOP, targetShopId), updatedShop);
       }
 
       if (!options?.silent && hasCloudData) {
@@ -2281,17 +2673,19 @@ export default function App() {
 
       if (isDefaultOwnerIdent && (cleanPass === '000000' || cleanPass === 'IqbalPharmacy#2026' || cleanPass.length >= 4)) {
         const is01822 = cleanDigits.endsWith('01822487909') || cleanDigits.endsWith('1822487909') || cleanIdent.includes('01822');
+        const targetShopId = 'shop_iqbal_pharmacy';
         const sessionPhone = is01822 ? '01822-487909' : '01812-358839';
-        const sessionEmail = is01822 ? '01822487909@iqbalpharmacy.bd' : (cleanIdent.includes('@') ? cleanIdent.toLowerCase() : '01812358839@iqbalpharmacy.bd');
+        const sessionEmail = is01822 ? '01822487909@iqbalpharmacy.bd' : (cleanIdent.includes('@') ? cleanIdent.toLowerCase() : 'iqbalmahmud498@gmail.com');
         const sessionStaffId = is01822 ? 'staff-owner-2' : 'staff-owner-1';
         const sessionUid = is01822 ? 'shop_owner_01822487909' : 'shop_owner_default';
         const assignedRole: StaffMember['roleTitle'] = is01822 ? 'sub_owner' : 'owner';
-        const assignedName = is01822 ? 'ইকবাল মাহমুদ (সাব-মালিক)' : 'ইকবাল মাহমুদ (Owner)';
+        const assignedName = is01822 ? 'ইকবাল মাহমুদ (সাব-মালিক)' : 'Owner';
 
         const session: ShopCloudSession = {
           uid: sessionUid,
+          shopId: targetShopId,
           email: sessionEmail,
-          displayName: assignedName,
+          displayName: is01822 ? assignedName : 'ইকবাল মাহমুদ (Owner)',
           shopName: shopProfile.shopName || 'ইকবাল ফার্মেসী',
           phone: sessionPhone,
           operatorRole: assignedRole,
@@ -2303,6 +2697,7 @@ export default function App() {
 
         const ownerStaffMember: StaffMember = {
           id: sessionStaffId,
+          shopId: targetShopId,
           ownerId: sessionUid,
           name: assignedName,
           roleTitle: assignedRole,
@@ -2317,9 +2712,10 @@ export default function App() {
         };
 
         setStaffList((prev) => {
-          const next = prev.map((s) => (s.id === sessionStaffId ? ownerStaffMember : s));
-          if (!next.some((s) => s.id === sessionStaffId)) next.unshift(ownerStaffMember);
+          const shopPrev = targetShopId === effectiveShopId ? prev : [];
+          const next = deduplicateStaffMembers([ownerStaffMember, ...shopPrev], targetShopId);
           saveLocal(STORAGE_KEYS.STAFF, next);
+          saveLocal(getScopedStorageKey(STORAGE_KEYS.STAFF, targetShopId), next);
           return next;
         });
         setActiveStaff(ownerStaffMember);
@@ -2332,13 +2728,14 @@ export default function App() {
         setLoginErrorMessage(null);
         setShowCloudLoginModal(false);
         setCloudLoginLoading(false);
-        showToast(`স্বাগতম ${assignedName}! সফলভাবে লগইন হয়েছে।`);
+        showToast(`স্বাগতম ${session.displayName}! সফলভাবে লগইন হয়েছে।`);
 
         // Ensure credentials exist in Firestore and Global Cloud and sync all data in background
         (async () => {
           try {
             registerGlobalCloudUser({
               id: sessionStaffId,
+              shopId: targetShopId,
               staffId: sessionStaffId,
               ownerId: sessionUid,
               phone: sessionPhone,
@@ -2352,46 +2749,57 @@ export default function App() {
               updatedAtMs: Date.now(),
             }).catch(() => {});
 
-            setDoc(doc(db, 'staff', sessionStaffId), buildStaffCloudPayload(ownerStaffMember, sessionUid)).catch(() => {});
+            setDoc(
+              doc(db, 'staff', getScopedFirestoreDocId(targetShopId, sessionStaffId)),
+              buildStaffCloudPayload(ownerStaffMember, sessionUid, targetShopId)
+            ).catch(() => {});
             setDoc(doc(db, 'registered_users', is01822 ? 'user_phone_01822487909' : 'user_phone_01812358839'), {
               ...ownerStaffMember,
+              shopId: targetShopId,
               ownerName: assignedName,
               shopName: shopProfile.shopName || 'ইকবাল ফার্মেসী',
               password: cleanPass,
               updatedAtMs: Date.now(),
             }).catch(() => {});
 
-            await syncAllDataFromFirestore({ silent: true });
+            await syncAllDataFromFirestore({ silent: true, shopIdOverride: targetShopId });
             const cloudSnap = await fetchServerPharmacyState();
             if (cloudSnap.hasData && cloudSnap.state) {
               const rem = cloudSnap.state;
-              if (Array.isArray(rem.inventory) && rem.inventory.length > 0) {
-                setInventory((prev) => {
-                  const next = mergeEntityList(rem.inventory, prev, new Set(), true);
-                  saveLocal(STORAGE_KEYS.INVENTORY, next);
-                  return next;
-                });
-              }
-              if (Array.isArray(rem.transactions) && rem.transactions.length > 0) {
-                setTransactions((prev) => {
-                  const next = mergeEntityList(rem.transactions, prev, new Set());
-                  saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
-                  return next;
-                });
-              }
-              if (Array.isArray(rem.customers) && rem.customers.length > 0) {
-                setCustomers((prev) => {
-                  const next = mergeEntityList(rem.customers, prev, new Set());
-                  saveLocal(STORAGE_KEYS.CUSTOMERS, next);
-                  return next;
-                });
-              }
-              if (Array.isArray(rem.customMedicines) && rem.customMedicines.length > 0) {
-                setCustomMedicines((prev) => {
-                  const next = mergeEntityList(rem.customMedicines, prev, new Set());
-                  saveLocal(STORAGE_KEYS.CUSTOM_MEDS, next);
-                  return next;
-                });
+              const remShopId = rem.shopProfile?.shopId || rem.cloudSession?.shopId;
+              if (!remShopId || remShopId === targetShopId) {
+                if (Array.isArray(rem.inventory) && rem.inventory.length > 0) {
+                  setInventory((prev) => {
+                    const next = mergeEntityList(rem.inventory, prev, new Set(), true, targetShopId);
+                    saveLocal(STORAGE_KEYS.INVENTORY, next);
+                    saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, targetShopId), next);
+                    return next;
+                  });
+                }
+                if (Array.isArray(rem.transactions) && rem.transactions.length > 0) {
+                  setTransactions((prev) => {
+                    const next = mergeEntityList(rem.transactions, prev, new Set(), false, targetShopId);
+                    saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
+                    saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, targetShopId), next);
+                    return next;
+                  });
+                }
+                if (Array.isArray(rem.customers) && rem.customers.length > 0) {
+                  setCustomers((prev) => {
+                    const next = mergeEntityList(rem.customers, prev, new Set(), false, targetShopId);
+                    saveLocal(STORAGE_KEYS.CUSTOMERS, next);
+                    saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOMERS, targetShopId), next);
+                    return next;
+                  });
+                }
+                if (Array.isArray(rem.customMedicines) && rem.customMedicines.length > 0) {
+                  setCustomMedicines((prev) => {
+                    const next = mergeEntityList(rem.customMedicines, prev, new Set(), false, targetShopId);
+                    saveLocal(STORAGE_KEYS.CUSTOM_MEDS, next);
+                    saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOM_MEDS, targetShopId), next);
+                    return next;
+                  });
+                }
               }
             }
           } catch {}
@@ -2511,7 +2919,12 @@ export default function App() {
             (sData.roleTitle === 'owner' && (cleanIdent.toLowerCase() === 'owner' || cleanIdent === 'মালিক'));
 
           if (phoneMatches || emailMatches || idMatches) {
-            matchedStaffDoc = { ...sData, id: getCanonicalDocId(sDoc.id) };
+            const matchedShopId = (sData.shopId as string | undefined) || undefined;
+            matchedStaffDoc = {
+              ...sData,
+              id: getCanonicalDocId(sData.id || sDoc.id, matchedShopId),
+              ...(matchedShopId ? { shopId: matchedShopId } : {}),
+            };
             break;
           }
         }
@@ -2621,20 +3034,38 @@ export default function App() {
         (cleanIdent.includes('@') ? cleanIdent.toLowerCase() : `${cleanDigits || 'user'}@iqbalpharmacy.bd`);
 
       const bd11 = cleanDigits.length >= 10 ? '0' + cleanDigits.slice(-10) : cleanDigits;
-      const sessionStaffId =
+      const resolvedTargetShopId: string =
+        targetUser.shopId ||
+        computeCurrentShopId({
+          uid: effectiveUid,
+          email: effectiveEmail,
+          phone: effectivePhone,
+          displayName: effectiveName,
+          shopName: targetUser.shopName || '',
+          operatorRole: effectiveRole,
+          loggedInAt: Date.now(),
+        });
+
+      const rawStaffId =
         targetUser.staffId ||
         targetUser.id ||
         (isOwnerAccount
           ? (cleanDigits.length >= 6 ? `staff_owner_${bd11}` : 'staff_owner_default')
           : `staff_${cleanDigits}`);
+      const isMand = isMandatoryOwner({ phone: effectivePhone, email: effectiveEmail, id: rawStaffId });
+      const sessionStaffId =
+        isMand && resolvedTargetShopId === 'shop_iqbal_pharmacy'
+          ? 'staff-owner-1'
+          : getCanonicalDocId(rawStaffId, resolvedTargetShopId);
 
       const session: ShopCloudSession = {
         uid: effectiveUid,
+        shopId: resolvedTargetShopId,
         email: effectiveEmail,
         displayName: isOwnerAccount
           ? (effectiveName.includes('(Owner)') ? effectiveName : `${effectiveName} (Owner)`)
           : effectiveName,
-        shopName: targetUser.shopName || shopProfile.shopName || 'ইকবাল ফার্মেসী',
+        shopName: targetUser.shopName || (resolvedTargetShopId === effectiveShopId ? shopProfile.shopName : 'ফার্মেসী') || 'ইকবাল ফার্মেসী',
         phone: effectivePhone,
         operatorRole: effectiveRole === 'owner' ? 'owner' : 'staff',
         staffId: sessionStaffId,
@@ -2644,12 +3075,12 @@ export default function App() {
       saveShopCloudSession(session);
       setCloudSession(session);
 
-      const isMand = isMandatoryOwner({ phone: effectivePhone, email: effectiveEmail, id: sessionStaffId });
       const assignedRole: StaffMember['roleTitle'] = isMand ? 'owner' : (isOwnerAccount ? 'sub_owner' : (effectiveRole as any));
       const finalDisplayName = isMand ? 'Owner' : effectiveName;
 
       const loggedStaffMember: StaffMember = {
-        id: session.staffId || (isMand ? 'staff-owner-1' : `staff_${Date.now()}`),
+        id: sessionStaffId,
+        shopId: resolvedTargetShopId,
         ownerId: session.uid,
         name: finalDisplayName,
         roleTitle: assignedRole,
@@ -2663,15 +3094,24 @@ export default function App() {
         updatedAtMs: Date.now(),
       };
 
+      const sameShop = resolvedTargetShopId === effectiveShopId;
       setStaffList((prev) => {
-        const next = prev.map((s) => (getCanonicalDocId(s.id) === loggedStaffMember.id ? loggedStaffMember : s));
-        if (!next.some((s) => getCanonicalDocId(s.id) === loggedStaffMember.id)) {
-          next.unshift(loggedStaffMember);
-        }
+        const base = sameShop
+          ? prev.filter((p) => !p.shopId || p.shopId === resolvedTargetShopId)
+          : loadLocal<StaffMember[]>(getScopedStorageKey(STORAGE_KEYS.STAFF, resolvedTargetShopId), []);
+        const next = deduplicateStaffMembers([loggedStaffMember, ...base], resolvedTargetShopId);
         saveLocal(STORAGE_KEYS.STAFF, next);
+        saveLocal(getScopedStorageKey(STORAGE_KEYS.STAFF, resolvedTargetShopId), next);
         return next;
       });
       setActiveStaff(loggedStaffMember);
+
+      if (!sameShop) {
+        setInventory(loadLocal<InventoryItem[]>(getScopedStorageKey(STORAGE_KEYS.INVENTORY, resolvedTargetShopId), []));
+        setCustomers(loadLocal<Customer[]>(getScopedStorageKey(STORAGE_KEYS.CUSTOMERS, resolvedTargetShopId), []));
+        setTransactions(loadLocal<Transaction[]>(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, resolvedTargetShopId), []));
+        setCustomMedicines(loadLocal<CustomMedicine[]>(getScopedStorageKey(STORAGE_KEYS.CUSTOM_MEDS, resolvedTargetShopId), []));
+      }
 
       // Reset stale deleted IDs so all cloud data displays completely
       setDeletedIds([]);
@@ -2686,37 +3126,44 @@ export default function App() {
       // Pull all cloud data in background
       (async () => {
         try {
-          await syncAllDataFromFirestore({ silent: true });
+          await syncAllDataFromFirestore({ silent: true, shopIdOverride: resolvedTargetShopId });
           const cloudSnap = await fetchServerPharmacyState();
           if (cloudSnap.hasData && cloudSnap.state) {
             const rem = cloudSnap.state;
-            if (Array.isArray(rem.inventory) && rem.inventory.length > 0) {
-              setInventory((prev) => {
-                const next = mergeEntityList(rem.inventory, prev, new Set(), true);
-                saveLocal(STORAGE_KEYS.INVENTORY, next);
-                return next;
-              });
-            }
-            if (Array.isArray(rem.transactions) && rem.transactions.length > 0) {
-              setTransactions((prev) => {
-                const next = mergeEntityList(rem.transactions, prev, new Set());
-                saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
-                return next;
-              });
-            }
-            if (Array.isArray(rem.customers) && rem.customers.length > 0) {
-              setCustomers((prev) => {
-                const next = mergeEntityList(rem.customers, prev, new Set());
-                saveLocal(STORAGE_KEYS.CUSTOMERS, next);
-                return next;
-              });
-            }
-            if (Array.isArray(rem.customMedicines) && rem.customMedicines.length > 0) {
-              setCustomMedicines((prev) => {
-                const next = mergeEntityList(rem.customMedicines, prev, new Set());
-                saveLocal(STORAGE_KEYS.CUSTOM_MEDS, next);
-                return next;
-              });
+            const remShopId = rem.shopProfile?.shopId || rem.cloudSession?.shopId;
+            if (!remShopId || remShopId === resolvedTargetShopId) {
+              if (Array.isArray(rem.inventory) && rem.inventory.length > 0) {
+                setInventory((prev) => {
+                  const next = mergeEntityList(rem.inventory, sameShop ? prev : [], new Set(), true, resolvedTargetShopId);
+                  saveLocal(STORAGE_KEYS.INVENTORY, next);
+                  saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, resolvedTargetShopId), next);
+                  return next;
+                });
+              }
+              if (Array.isArray(rem.transactions) && rem.transactions.length > 0) {
+                setTransactions((prev) => {
+                  const next = mergeEntityList(rem.transactions, sameShop ? prev : [], new Set(), false, resolvedTargetShopId);
+                  saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
+                  saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, resolvedTargetShopId), next);
+                  return next;
+                });
+              }
+              if (Array.isArray(rem.customers) && rem.customers.length > 0) {
+                setCustomers((prev) => {
+                  const next = mergeEntityList(rem.customers, sameShop ? prev : [], new Set(), false, resolvedTargetShopId);
+                  saveLocal(STORAGE_KEYS.CUSTOMERS, next);
+                  saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOMERS, resolvedTargetShopId), next);
+                  return next;
+                });
+              }
+              if (Array.isArray(rem.customMedicines) && rem.customMedicines.length > 0) {
+                setCustomMedicines((prev) => {
+                  const next = mergeEntityList(rem.customMedicines, sameShop ? prev : [], new Set(), false, resolvedTargetShopId);
+                  saveLocal(STORAGE_KEYS.CUSTOM_MEDS, next);
+                  saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOM_MEDS, resolvedTargetShopId), next);
+                  return next;
+                });
+              }
             }
           }
         } catch {}
@@ -2769,17 +3216,52 @@ export default function App() {
         password: registerPassword.trim(),
       });
 
-      const updatedProfile: ShopProfile = {
-        ...shopProfile,
-        shopName: session.shopName,
-        phone: session.phone,
-        updatedAtMs: Date.now(),
-      };
+      const targetShopId = session.shopId || computeCurrentShopId(session);
+      const isExistingShopSession = targetShopId === effectiveShopId;
 
-      setShopProfile(updatedProfile);
-      saveLocal(STORAGE_KEYS.SHOP, updatedProfile);
+      const updatedProfile: ShopProfile = isExistingShopSession
+        ? {
+            ...shopProfile,
+            id: targetShopId,
+            shopId: targetShopId,
+            shopName: session.shopName,
+            phone: session.phone,
+            updatedAtMs: Date.now(),
+          }
+        : {
+            id: targetShopId,
+            shopId: targetShopId,
+            ownerId: session.uid,
+            shopName: session.shopName,
+            licenseNo: '',
+            phone: session.phone,
+            address: '',
+            branches: [
+              {
+                id: 'branch-1',
+                name: 'প্রধান শাখা',
+                address: '',
+                phone: session.phone,
+                isDefault: true,
+              },
+            ],
+            activeBranchId: 'branch-1',
+            customInvoiceSettings: {
+              invoiceTitle: session.shopName,
+              tagline: 'সুলভ মূল্যে জেনুইন ঔষধের বিশ্বস্ত প্রতিষ্ঠান',
+              address: '',
+              phone: session.phone,
+              sealType: 'paid',
+              customSealText: 'PAID · পরিশোধিত',
+            },
+            updatedAtMs: Date.now(),
+          };
+
       try {
-        await setDoc(doc(db, 'shops', SHARED_SHOP_DOC_ID), buildShopCloudPayload(updatedProfile, session.uid));
+        await setDoc(
+          doc(db, 'shops', targetShopId),
+          buildShopCloudPayload(updatedProfile, session.uid, targetShopId)
+        );
       } catch {
         // ignore
       }
@@ -2788,39 +3270,36 @@ export default function App() {
       const deterministicStaffId = phoneDigits.length >= 6
         ? `staff_owner_${bd11}`
         : `staff_owner_${cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 32)}`;
-      const staffId = existingUser ? existingUser.id : (session.staffId || deterministicStaffId);
+      const isMand = isMandatoryOwner({ phone: session.phone, email: cleanEmail, id: session.staffId || deterministicStaffId });
+      const staffId =
+        isMand && targetShopId === 'shop_iqbal_pharmacy'
+          ? 'staff-owner-1'
+          : getCanonicalDocId(session.staffId || deterministicStaffId, targetShopId);
 
-      const isMand = isMandatoryOwner({ phone: session.phone, email: cleanEmail, id: staffId });
-      const assignedRole: StaffMember['roleTitle'] = isMand ? 'owner' : 'sub_owner';
-      const assignedName = isMand ? 'Owner' : (registerOwnerName.trim() || 'সাব-মালিক');
+      const assignedRole: StaffMember['roleTitle'] = 'owner';
+      const assignedName = isMand ? 'Owner' : (registerOwnerName.trim() || 'Owner');
 
       const ownerStaff: StaffMember = {
         id: staffId,
+        shopId: targetShopId,
         ownerId: session.uid,
         name: assignedName,
         roleTitle: assignedRole,
-        isMandatoryOwner: isMand,
+        isMandatoryOwner: true,
         phone: session.phone,
         email: session.email,
         password: registerPassword.trim(),
-        shift: isMand ? 'সারাদিন (মূল তত্ত্বাবধান)' : 'সারাদিন (সহকারী তত্ত্বাবধান)',
-        counterName: isMand ? 'কাউন্টার ১ (Owner)' : 'কাউন্টার ১ (সাব-মালিক)',
+        shift: 'সারাদিন (মূল তত্ত্বাবধান)',
+        counterName: 'কাউন্টার ১ (Owner)',
         active: true,
         updatedAtMs: Date.now(),
       };
 
-      // Deduplicate: If user exists, update in-place; do not append duplicate!
-      setStaffList((prev) => {
-        const next = prev.map((s) => (getCanonicalDocId(s.id) === staffId ? ownerStaff : s));
-        if (!next.some((s) => getCanonicalDocId(s.id) === staffId)) {
-          next.unshift(ownerStaff);
-        }
-        saveLocal(STORAGE_KEYS.STAFF, next);
-        return next;
-      });
-
       try {
-        await setDoc(doc(db, 'staff', staffId), buildStaffCloudPayload(ownerStaff, session.uid));
+        await setDoc(
+          doc(db, 'staff', getScopedFirestoreDocId(targetShopId, staffId)),
+          buildStaffCloudPayload(ownerStaff, session.uid, targetShopId)
+        );
       } catch {
         // ignore
       }
@@ -2828,6 +3307,7 @@ export default function App() {
       // Register into multi-device universal global cloud database
       registerGlobalCloudUser({
         id: staffId,
+        shopId: targetShopId,
         staffId,
         ownerId: session.uid,
         name: assignedName,
@@ -2843,11 +3323,13 @@ export default function App() {
 
       const isMasterAppOwner =
         cleanEmail.toLowerCase() === 'mhakbor2001@gmail.com' ||
+        cleanEmail.toLowerCase() === 'iqbalmahmud498@gmail.com' ||
         phoneDigits === '01812358839' ||
         phoneDigits.endsWith('1812358839');
 
       const registrationPayload: ShopRegistration = {
         id: `shop_reg_${phoneDigits || Date.now()}`,
+        shopId: targetShopId,
         shopName: registerShopName.trim() || 'ফার্মেসী',
         ownerName: registerOwnerName.trim(),
         phone: registerPhone.trim(),
@@ -2875,6 +3357,8 @@ export default function App() {
       ]);
 
       if (!isMasterAppOwner) {
+        // Do NOT overwrite currently logged-in shop session or staffList while awaiting approval
+        saveShopCloudSession(cloudSession);
         setCloudLoginLoading(false);
         setCloudAuthTab('login');
         setCloudLoginEmail(session.phone || cleanEmail);
@@ -2884,6 +3368,20 @@ export default function App() {
         showToast('রেজিস্ট্রেশন সফল! অ্যাপস মালিকের অনুমোদনের পর লগইন কার্যকর হবে।');
         return;
       }
+
+      setShopProfile(updatedProfile);
+      saveLocal(STORAGE_KEYS.SHOP, updatedProfile);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.SHOP, targetShopId), updatedProfile);
+
+      setStaffList((prev) => {
+        const basePrev = isExistingShopSession
+          ? prev.filter((s) => !s.shopId || s.shopId === targetShopId)
+          : [];
+        const next = deduplicateStaffMembers([ownerStaff, ...basePrev], targetShopId);
+        saveLocal(STORAGE_KEYS.STAFF, next);
+        saveLocal(getScopedStorageKey(STORAGE_KEYS.STAFF, targetShopId), next);
+        return next;
+      });
 
       setActiveStaff(ownerStaff);
       setCloudSession(session);
@@ -2898,23 +3396,28 @@ export default function App() {
       // Pull any existing cloud data in background
       (async () => {
         try {
-          await syncAllDataFromFirestore({ silent: true });
+          await syncAllDataFromFirestore({ silent: true, shopIdOverride: targetShopId });
           const cloudSnap = await fetchServerPharmacyState();
           if (cloudSnap.hasData && cloudSnap.state) {
             const rem = cloudSnap.state;
-            if (Array.isArray(rem.inventory) && rem.inventory.length > 0) {
-              setInventory((prev) => {
-                const next = mergeEntityList(rem.inventory, prev, new Set(), true);
-                saveLocal(STORAGE_KEYS.INVENTORY, next);
-                return next;
-              });
-            }
-            if (Array.isArray(rem.transactions) && rem.transactions.length > 0) {
-              setTransactions((prev) => {
-                const next = mergeEntityList(rem.transactions, prev, new Set());
-                saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
-                return next;
-              });
+            const remShopId = rem.shopProfile?.shopId || rem.cloudSession?.shopId;
+            if (!remShopId || remShopId === targetShopId) {
+              if (Array.isArray(rem.inventory) && rem.inventory.length > 0) {
+                setInventory((prev) => {
+                  const next = mergeEntityList(rem.inventory, isExistingShopSession ? prev : [], new Set(), true, targetShopId);
+                  saveLocal(STORAGE_KEYS.INVENTORY, next);
+                  saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, targetShopId), next);
+                  return next;
+                });
+              }
+              if (Array.isArray(rem.transactions) && rem.transactions.length > 0) {
+                setTransactions((prev) => {
+                  const next = mergeEntityList(rem.transactions, isExistingShopSession ? prev : [], new Set(), false, targetShopId);
+                  saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
+                  saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, targetShopId), next);
+                  return next;
+                });
+              }
             }
           }
         } catch {}
@@ -3008,7 +3511,7 @@ export default function App() {
     );
   };
 
-  // Seed & Sync shared pharmacy data to Firestore using canonical IDs
+  // Seed & Sync isolated shop data to Firestore using scoped document IDs
   const handleSeedCloudData = async () => {
     if (!isCloudLoggedIn) {
       await handleQuickCloudLogin();
@@ -3016,56 +3519,59 @@ export default function App() {
     }
     setSeedingCloud(true);
     try {
-      const uid = activeCloudUid || SHARED_PHARMACY_OWNER_ID;
+      const uid = activeCloudUid || effectiveCloudUid;
+      const sid = effectiveShopId;
+      const dedupedStaff = deduplicateStaffMembers(staffList, sid, deletedIdsSet);
+
       if (user) {
         const batch = writeBatch(db);
 
-        const shopRef = doc(db, 'shops', SHARED_SHOP_DOC_ID);
-        batch.set(shopRef, buildShopCloudPayload(shopProfile, uid));
+        const shopRef = doc(db, 'shops', sid);
+        batch.set(shopRef, buildShopCloudPayload(shopProfile, uid, sid));
 
-        for (const st of staffList) {
-          const canonId = getCanonicalDocId(st.id);
-          batch.set(doc(db, 'staff', canonId), buildStaffCloudPayload(st, uid));
+        for (const st of dedupedStaff) {
+          const docKey = getScopedFirestoreDocId(sid, st.id);
+          batch.set(doc(db, 'staff', docKey), buildStaffCloudPayload(st, uid, sid));
         }
 
         for (const inv of inventory) {
-          const canonId = getCanonicalDocId(inv.id);
-          batch.set(doc(db, 'inventory', canonId), buildInventoryCloudPayload(inv, uid));
+          const docKey = getScopedFirestoreDocId(sid, inv.id);
+          batch.set(doc(db, 'inventory', docKey), buildInventoryCloudPayload(inv, uid, sid));
         }
 
         for (const cust of customers) {
-          const canonId = getCanonicalDocId(cust.id);
-          batch.set(doc(db, 'customers', canonId), buildCustomerCloudPayload(cust, uid));
+          const docKey = getScopedFirestoreDocId(sid, cust.id);
+          batch.set(doc(db, 'customers', docKey), buildCustomerCloudPayload(cust, uid, sid));
         }
 
         for (const tx of transactions) {
-          const canonId = getCanonicalDocId(tx.id);
-          batch.set(doc(db, 'transactions', canonId), buildTransactionCloudPayload(tx, uid));
+          const docKey = getScopedFirestoreDocId(sid, tx.id);
+          batch.set(doc(db, 'transactions', docKey), buildTransactionCloudPayload(tx, uid, sid));
         }
 
         for (const cm of customMedicines) {
-          const canonId = getCanonicalDocId(cm.id);
-          batch.set(doc(db, 'custom_medicines', canonId), buildCustomMedCloudPayload(cm, uid));
+          const docKey = getScopedFirestoreDocId(sid, cm.id);
+          batch.set(doc(db, 'custom_medicines', docKey), buildCustomMedCloudPayload(cm, uid, sid));
         }
 
         for (const w of priceWatches) {
-          const canonId = getCanonicalDocId(w.id);
-          batch.set(doc(db, 'price_watches', canonId), buildPriceWatchCloudPayload(w, uid));
+          const docKey = getScopedFirestoreDocId(sid, w.id);
+          batch.set(doc(db, 'price_watches', docKey), buildPriceWatchCloudPayload(w, uid, sid));
         }
 
         for (const a of priceAlerts) {
-          const canonId = getCanonicalDocId(a.id);
-          batch.set(doc(db, 'price_alerts', canonId), buildPriceAlertCloudPayload(a, uid));
+          const docKey = getScopedFirestoreDocId(sid, a.id);
+          batch.set(doc(db, 'price_alerts', docKey), buildPriceAlertCloudPayload(a, uid, sid));
         }
 
         await batch.commit();
       }
       const snapshot: PharmacyPersistentState = {
-        shopProfile,
+        shopProfile: { ...shopProfile, id: sid, shopId: sid },
         inventory,
         customers,
         transactions,
-        staffList,
+        staffList: dedupedStaff,
         customMedicines,
         priceWatches,
         priceAlerts,
@@ -3079,18 +3585,20 @@ export default function App() {
         pushServerPharmacyState(snapshot, 'overwrite'),
         saveIndexedDbSnapshot(snapshot),
       ]);
-      saveLocal(STORAGE_KEYS.SHOP, shopProfile);
-      saveLocal(STORAGE_KEYS.STAFF, staffList);
+      saveLocal(STORAGE_KEYS.SHOP, snapshot.shopProfile);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.SHOP, sid), snapshot.shopProfile);
+      saveLocal(STORAGE_KEYS.STAFF, dedupedStaff);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.STAFF, sid), dedupedStaff);
       saveLocal(STORAGE_KEYS.INVENTORY, inventory);
       saveLocal(STORAGE_KEYS.CUSTOMERS, customers);
       saveLocal(STORAGE_KEYS.TRANSACTIONS, transactions);
       saveLocal(STORAGE_KEYS.CUSTOM_MEDS, customMedicines);
       saveLocal(STORAGE_KEYS.PRICE_WATCHES, priceWatches);
       saveLocal(STORAGE_KEYS.PRICE_ALERTS, priceAlerts);
-      showToast('ইকবাল ফার্মেসীর সকল ডেটা ক্লাউড ও সার্ভারে স্থায়ীভাবে সংরক্ষিত হয়েছে!');
+      showToast('আপনার ফার্মেসীর সকল ডেটা ক্লাউড ও সার্ভারে স্থায়ীভাবে সংরক্ষিত হয়েছে!');
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'batch_seed');
-      showToast('ইকবাল ফার্মেসীর সকল ডেটা সফলভাবে সিঙ্ক ও সংরক্ষিত হয়েছে!');
+      showToast('আপনার ফার্মেসীর সকল ডেটা সফলভাবে সিঙ্ক ও সংরক্ষিত হয়েছে!');
     } finally {
       setSeedingCloud(false);
     }
@@ -3798,7 +4306,7 @@ export default function App() {
 
     const nowMs = Date.now();
     const existingEditedTx = params.editingTxId
-      ? transactions.find((t) => getCanonicalDocId(t.id) === getCanonicalDocId(params.editingTxId!))
+      ? transactions.find((t) => getCanonicalDocId(t.id, effectiveShopId) === getCanonicalDocId(params.editingTxId!, effectiveShopId))
       : undefined;
 
     // Check if any item's purchase price or selling price was changed in the POS cart, or if it's a custom product
@@ -3881,10 +4389,11 @@ export default function App() {
       activeStaff.roleTitle === 'owner' ? 'owner' : 'staff';
     const operatorDisplayName = getOperatorName(activeStaff);
 
-    const txId = existingEditedTx ? getCanonicalDocId(existingEditedTx.id) : `tx_sale_${nowMs}`;
+    const txId = existingEditedTx ? getCanonicalDocId(existingEditedTx.id, effectiveShopId) : `tx_sale_${nowMs}`;
     const newTx: Transaction = {
       id: txId,
-      ownerId: user?.uid || SHARED_PHARMACY_OWNER_ID,
+      shopId: effectiveShopId,
+      ownerId: effectiveCloudUid,
       txType: 'sale',
       invoiceNo,
       dateStr,
@@ -3934,7 +4443,8 @@ export default function App() {
           dosageForm: pItem.matchedMedicine?.dosageForm || pItem.formPrefix,
         });
         if (matchedOld && pItem.qty > 0) {
-          matchedOld.id = getCanonicalDocId(matchedOld.id);
+          matchedOld.id = getCanonicalDocId(matchedOld.id, effectiveShopId);
+          matchedOld.shopId = effectiveShopId;
           if (existingEditedTx.txType === 'sale') {
             matchedOld.stockQty = matchedOld.stockQty + pItem.qty;
           } else {
@@ -3961,7 +4471,8 @@ export default function App() {
       });
 
       if (matchedInv) {
-        matchedInv.id = getCanonicalDocId(matchedInv.id);
+        matchedInv.id = getCanonicalDocId(matchedInv.id, effectiveShopId);
+        matchedInv.shopId = effectiveShopId;
         matchedInv.stockQty = Math.max(0, matchedInv.stockQty - cartItem.qty);
         matchedInv.updatedAtMs = nowMs;
         if (params.syncModifiedPricesToCatalog) {
@@ -3975,7 +4486,8 @@ export default function App() {
         const baselineStock = cartItem.availableStock > 0 ? cartItem.availableStock : 100;
         const createdInv: InventoryItem = {
           id: newInvId,
-          ownerId: user?.uid || SHARED_PHARMACY_OWNER_ID,
+          shopId: effectiveShopId,
+          ownerId: effectiveCloudUid,
           medicineId: cartItem.medicineId,
           brandName: cartItem.brandName,
           genericName: cartItem.genericName,
@@ -4002,30 +4514,32 @@ export default function App() {
     unmarkDeletedId(txId);
     setTransactions((prev) => {
       const next = existingEditedTx
-        ? prev.map((t) => (getCanonicalDocId(t.id) === txId ? newTx : t))
+        ? prev.map((t) => (getCanonicalDocId(t.id, effectiveShopId) === txId ? newTx : t))
         : [newTx, ...prev];
       saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), next);
       return next;
     });
 
     setInventory(nextInventoryList);
     saveLocal(STORAGE_KEYS.INVENTORY, nextInventoryList);
+    saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveShopId), nextInventoryList);
 
     // Update Customer Ledger (reversing old invoice customer amounts if editing, then applying new)
     const updatedCustomersForCloud: Customer[] = [];
     const oldCustId =
       existingEditedTx && existingEditedTx.partyId && existingEditedTx.partyId !== 'walk-in'
-        ? getCanonicalDocId(existingEditedTx.partyId)
+        ? getCanonicalDocId(existingEditedTx.partyId, effectiveShopId)
         : null;
     const newCustId =
       params.customerId && params.customerId !== 'walk-in'
-        ? getCanonicalDocId(params.customerId)
+        ? getCanonicalDocId(params.customerId, effectiveShopId)
         : null;
 
     if (oldCustId || newCustId) {
       setCustomers((prev) => {
         const next = prev.map((c) => {
-          const canonCId = getCanonicalDocId(c.id);
+          const canonCId = getCanonicalDocId(c.id, effectiveShopId);
           if (canonCId !== oldCustId && canonCId !== newCustId) return c;
 
           let purchased = c.totalPurchased;
@@ -4047,6 +4561,7 @@ export default function App() {
           const updatedC: Customer = {
             ...c,
             id: canonCId,
+            shopId: effectiveShopId,
             totalPurchased: sanitizeNumber(purchased),
             totalPaid: sanitizeNumber(paid),
             totalDue: sanitizeNumber(due),
@@ -4056,28 +4571,30 @@ export default function App() {
           return updatedC;
         });
         saveLocal(STORAGE_KEYS.CUSTOMERS, next);
+        saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOMERS, effectiveShopId), next);
         return next;
       });
     }
 
     try {
       await setDoc(
-        doc(db, 'transactions', txId),
-        buildTransactionCloudPayload(newTx, effectiveCloudUid)
+        doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, txId)),
+        buildTransactionCloudPayload(newTx, effectiveCloudUid, effectiveShopId)
       );
 
       for (const invItem of modifiedInvMap.values()) {
-        const canonInvId = getCanonicalDocId(invItem.id);
+        const canonInvId = getCanonicalDocId(invItem.id, effectiveShopId);
         await setDoc(
-          doc(db, 'inventory', canonInvId),
-          buildInventoryCloudPayload(invItem, effectiveCloudUid)
+          doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, canonInvId)),
+          buildInventoryCloudPayload(invItem, effectiveCloudUid, effectiveShopId)
         );
       }
 
       for (const cObj of updatedCustomersForCloud) {
+        const canonCustId = getCanonicalDocId(cObj.id, effectiveShopId);
         await setDoc(
-          doc(db, 'customers', getCanonicalDocId(cObj.id)),
-          buildCustomerCloudPayload(cObj, effectiveCloudUid)
+          doc(db, 'customers', getScopedFirestoreDocId(effectiveShopId, canonCustId)),
+          buildCustomerCloudPayload(cObj, effectiveCloudUid, effectiveShopId)
         );
       }
     } catch (error) {
@@ -4123,7 +4640,7 @@ export default function App() {
 
     const nowMs = Date.now();
     const existingEditedTx = params.editingTxId
-      ? transactions.find((t) => getCanonicalDocId(t.id) === getCanonicalDocId(params.editingTxId!))
+      ? transactions.find((t) => getCanonicalDocId(t.id, effectiveShopId) === getCanonicalDocId(params.editingTxId!, effectiveShopId))
       : undefined;
 
     const subTotal = sanitizeNumber(
@@ -4173,10 +4690,11 @@ export default function App() {
       activeStaff.roleTitle === 'owner' ? 'owner' : 'staff';
     const operatorDisplayName = getOperatorName(activeStaff);
 
-    const txId = existingEditedTx ? getCanonicalDocId(existingEditedTx.id) : `tx_pur_${nowMs}`;
+    const txId = existingEditedTx ? getCanonicalDocId(existingEditedTx.id, effectiveShopId) : `tx_pur_${nowMs}`;
     const newTx: Transaction = {
       id: txId,
-      ownerId: user?.uid || SHARED_PHARMACY_OWNER_ID,
+      shopId: effectiveShopId,
+      ownerId: effectiveCloudUid,
       txType: 'purchase',
       invoiceNo,
       dateStr,
@@ -4229,7 +4747,8 @@ export default function App() {
         });
         const oldUnits = pItem.qty + (pItem.bonusQty || 0);
         if (matchedOld && oldUnits > 0) {
-          matchedOld.id = getCanonicalDocId(matchedOld.id);
+          matchedOld.id = getCanonicalDocId(matchedOld.id, effectiveShopId);
+          matchedOld.shopId = effectiveShopId;
           if (existingEditedTx.txType === 'purchase') {
             matchedOld.stockQty = Math.max(0, matchedOld.stockQty - oldUnits);
           } else {
@@ -4364,7 +4883,8 @@ export default function App() {
       const totalUnitsToAdd = purItem.qty + (purItem.bonusQty || 0);
 
       if (existingInv) {
-        existingInv.id = getCanonicalDocId(existingInv.id);
+        existingInv.id = getCanonicalDocId(existingInv.id, effectiveShopId);
+        existingInv.shopId = effectiveShopId;
         existingInv.stockQty = existingInv.stockQty + totalUnitsToAdd;
         existingInv.purchasePrice = effectiveSinglePiecePurchasePrice;
         existingInv.unitPrice = purItem.unitPrice;
@@ -4379,7 +4899,8 @@ export default function App() {
         const newInvId = `inv_${purItem.medicineId.replace(/[^a-zA-Z0-9_-]/g, '_')}_${nowMs.toString().slice(-4)}`;
         const createdInv: InventoryItem = {
           id: newInvId,
-          ownerId: user?.uid || SHARED_PHARMACY_OWNER_ID,
+          shopId: effectiveShopId,
+          ownerId: effectiveCloudUid,
           medicineId: purItem.medicineId,
           brandName: purItem.brandName,
           genericName: purItem.genericName,
@@ -4406,26 +4927,28 @@ export default function App() {
     unmarkDeletedId(txId);
     setTransactions((prev) => {
       const next = existingEditedTx
-        ? prev.map((t) => (getCanonicalDocId(t.id) === txId ? newTx : t))
+        ? prev.map((t) => (getCanonicalDocId(t.id, effectiveShopId) === txId ? newTx : t))
         : [newTx, ...prev];
       saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), next);
       return next;
     });
 
     setInventory(nextInventoryList);
     saveLocal(STORAGE_KEYS.INVENTORY, nextInventoryList);
+    saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveShopId), nextInventoryList);
 
     try {
       await setDoc(
-        doc(db, 'transactions', txId),
-        buildTransactionCloudPayload(newTx, effectiveCloudUid)
+        doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, txId)),
+        buildTransactionCloudPayload(newTx, effectiveCloudUid, effectiveShopId)
       );
 
       for (const invItem of changedInvMap.values()) {
-        const canonInvId = getCanonicalDocId(invItem.id);
+        const canonInvId = getCanonicalDocId(invItem.id, effectiveShopId);
         await setDoc(
-          doc(db, 'inventory', canonInvId),
-          buildInventoryCloudPayload(invItem, effectiveCloudUid)
+          doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, canonInvId)),
+          buildInventoryCloudPayload(invItem, effectiveCloudUid, effectiveShopId)
         );
       }
     } catch (error) {
@@ -4468,28 +4991,30 @@ export default function App() {
       paymentMethod: Transaction['paymentMethod'];
     }
   ) => {
-    const canonTxId = getCanonicalDocId(txId);
-    const existingTx = transactions.find((t) => getCanonicalDocId(t.id) === canonTxId);
+    const canonTxId = getCanonicalDocId(txId, effectiveShopId);
+    const existingTx = transactions.find((t) => getCanonicalDocId(t.id, effectiveShopId) === canonTxId);
     if (!existingTx) return;
 
     const nowMs = Date.now();
     const updatedTxObj: Transaction = {
       ...existingTx,
       id: canonTxId,
+      shopId: effectiveShopId,
       ...updated,
       updatedAtMs: nowMs,
     };
 
     setTransactions((prev) => {
-      const next = prev.map((t) => (getCanonicalDocId(t.id) === canonTxId ? updatedTxObj : t));
+      const next = prev.map((t) => (getCanonicalDocId(t.id, effectiveShopId) === canonTxId ? updatedTxObj : t));
       saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), next);
       return next;
     });
 
     try {
       await setDoc(
-        doc(db, 'transactions', canonTxId),
-        buildTransactionCloudPayload(updatedTxObj, effectiveCloudUid)
+        doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, canonTxId)),
+        buildTransactionCloudPayload(updatedTxObj, effectiveCloudUid, effectiveShopId)
       );
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `transactions/${canonTxId}`);
@@ -4505,7 +5030,7 @@ export default function App() {
     note?: string;
   }): Promise<Transaction | null> => {
     const { invoiceTx, paymentAmount, paymentMethod, note } = params;
-    const canonTxId = getCanonicalDocId(invoiceTx.id);
+    const canonTxId = getCanonicalDocId(invoiceTx.id, effectiveShopId);
     const nowMs = Date.now();
     const amt = sanitizeNumber(paymentAmount, 0, invoiceTx.dueAmount);
     if (amt <= 0) return null;
@@ -4517,6 +5042,7 @@ export default function App() {
     const updatedInvoice: Transaction = {
       ...invoiceTx,
       id: canonTxId,
+      shopId: effectiveShopId,
       paidAmount: newPaidAmount,
       dueAmount: newDueAmount,
       updatedAtMs: nowMs,
@@ -4530,7 +5056,8 @@ export default function App() {
 
     const dueTx: Transaction = {
       id: dueTxId,
-      ownerId: user?.uid || SHARED_PHARMACY_OWNER_ID,
+      shopId: effectiveShopId,
+      ownerId: effectiveCloudUid,
       txType: 'due_payment',
       invoiceNo: `DUE-${getTodayDateStr().replace(/-/g, '').slice(2)}-${Math.floor(
         100 + Math.random() * 900
@@ -4563,11 +5090,13 @@ export default function App() {
     let updatedCust: Customer | undefined;
     if (invoiceTx.partyId && invoiceTx.partyId !== 'walk-in') {
       const cust = customers.find(
-        (c) => getCanonicalDocId(c.id) === getCanonicalDocId(invoiceTx.partyId)
+        (c) => getCanonicalDocId(c.id, effectiveShopId) === getCanonicalDocId(invoiceTx.partyId, effectiveShopId)
       );
       if (cust) {
         updatedCust = {
           ...cust,
+          id: getCanonicalDocId(cust.id, effectiveShopId),
+          shopId: effectiveShopId,
           totalPaid: cust.totalPaid + amt,
           totalDue: Math.max(0, cust.totalDue - amt),
           updatedAtMs: nowMs,
@@ -4578,35 +5107,38 @@ export default function App() {
     setTransactions((prev) => {
       const next = [
         dueTx,
-        ...prev.map((t) => (getCanonicalDocId(t.id) === canonTxId ? updatedInvoice : t)),
+        ...prev.map((t) => (getCanonicalDocId(t.id, effectiveShopId) === canonTxId ? updatedInvoice : t)),
       ];
       saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), next);
       return next;
     });
 
     if (updatedCust) {
       setCustomers((prev) => {
         const next = prev.map((c) =>
-          getCanonicalDocId(c.id) === getCanonicalDocId(updatedCust!.id) ? updatedCust! : c
+          getCanonicalDocId(c.id, effectiveShopId) === getCanonicalDocId(updatedCust!.id, effectiveShopId) ? updatedCust! : c
         );
         saveLocal(STORAGE_KEYS.CUSTOMERS, next);
+        saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOMERS, effectiveShopId), next);
         return next;
       });
     }
 
     try {
       await setDoc(
-        doc(db, 'transactions', canonTxId),
-        buildTransactionCloudPayload(updatedInvoice, effectiveCloudUid)
+        doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, canonTxId)),
+        buildTransactionCloudPayload(updatedInvoice, effectiveCloudUid, effectiveShopId)
       );
       await setDoc(
-        doc(db, 'transactions', dueTxId),
-        buildTransactionCloudPayload(dueTx, effectiveCloudUid)
+        doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, dueTxId)),
+        buildTransactionCloudPayload(dueTx, effectiveCloudUid, effectiveShopId)
       );
       if (updatedCust) {
+        const canonCustId = getCanonicalDocId(updatedCust.id, effectiveShopId);
         await setDoc(
-          doc(db, 'customers', getCanonicalDocId(updatedCust.id)),
-          buildCustomerCloudPayload(updatedCust, effectiveCloudUid)
+          doc(db, 'customers', getScopedFirestoreDocId(effectiveShopId, canonCustId)),
+          buildCustomerCloudPayload(updatedCust, effectiveCloudUid, effectiveShopId)
         );
       }
     } catch (error) {
@@ -4622,14 +5154,14 @@ export default function App() {
   };
 
   const handleDeleteTransaction = async (tx: Transaction) => {
-    const canonTxId = getCanonicalDocId(tx.id);
+    const canonTxId = getCanonicalDocId(tx.id, effectiveShopId);
+    const scopedTxId = getScopedFirestoreDocId(effectiveShopId, canonTxId);
     const nowMs = Date.now();
-    markDeletedIds(
-      user ? [tx.id, canonTxId, `${canonTxId}_${user.uid.slice(0, 6)}`] : [tx.id, canonTxId]
-    );
+    markDeletedIds([tx.id, canonTxId, scopedTxId]);
     setTransactions((prev) => {
-      const next = prev.filter((t) => getCanonicalDocId(t.id) !== canonTxId);
+      const next = prev.filter((t) => getCanonicalDocId(t.id, effectiveShopId) !== canonTxId);
       saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), next);
       return next;
     });
 
@@ -4647,7 +5179,8 @@ export default function App() {
           dosageForm: pItem.matchedMedicine?.dosageForm || pItem.formPrefix,
         });
         if (matched && pItem.qty > 0) {
-          matched.id = getCanonicalDocId(matched.id);
+          matched.id = getCanonicalDocId(matched.id, effectiveShopId);
+          matched.shopId = effectiveShopId;
           if (tx.txType === 'sale') {
             matched.stockQty = matched.stockQty + pItem.qty;
           } else {
@@ -4661,11 +5194,12 @@ export default function App() {
       if (modifiedInv.length > 0) {
         setInventory(nextInv);
         saveLocal(STORAGE_KEYS.INVENTORY, nextInv);
+        saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveShopId), nextInv);
         for (const invItem of modifiedInv) {
           try {
             await setDoc(
-              doc(db, 'inventory', getCanonicalDocId(invItem.id)),
-              buildInventoryCloudPayload(invItem, effectiveCloudUid)
+              doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, invItem.id)),
+              buildInventoryCloudPayload(invItem, effectiveCloudUid, effectiveShopId)
             );
           } catch {
             // ignore
@@ -4674,14 +5208,9 @@ export default function App() {
       }
     }
 
-    try {
-      await deleteDoc(doc(db, 'transactions', canonTxId));
-    } catch {
-      // ignore
-    }
-    if (tx.id !== canonTxId) {
+    for (const delId of Array.from(new Set([scopedTxId, canonTxId, tx.id]))) {
       try {
-        await deleteDoc(doc(db, 'transactions', tx.id));
+        await deleteDoc(doc(db, 'transactions', delId));
       } catch {
         // ignore
       }
@@ -4718,7 +5247,8 @@ export default function App() {
 
     const newTx: Transaction = {
       id: txId,
-      ownerId: user?.uid || SHARED_PHARMACY_OWNER_ID,
+      shopId: effectiveShopId,
+      ownerId: effectiveCloudUid,
       txType: 'purchase',
       invoiceNo: sanitizeString(params.invoiceNo, 60, 'PUR-01'),
       dateStr: getTodayDateStr(),
@@ -4748,7 +5278,7 @@ export default function App() {
       strength: params.strength,
       dosageForm: params.dosageForm,
     });
-    const newInvId = existingInv ? getCanonicalDocId(existingInv.id) : `inv_${nowMs}`;
+    const newInvId = existingInv ? getCanonicalDocId(existingInv.id, effectiveShopId) : `inv_${nowMs}`;
 
     const baseMed = fullCatalog.find((m) => m.id === params.medicineId);
     if (baseMed && Math.abs(baseMed.unitPrice - params.unitPrice) > 0.001) {
@@ -4771,6 +5301,7 @@ export default function App() {
     setTransactions((prev) => {
       const next = [newTx, ...prev];
       saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), next);
       return next;
     });
 
@@ -4778,6 +5309,7 @@ export default function App() {
       ? {
           ...existingInv,
           id: newInvId,
+          shopId: effectiveShopId,
           stockQty: existingInv.stockQty + params.qty,
           purchasePrice: params.purchasePrice,
           unitPrice: params.unitPrice,
@@ -4788,7 +5320,8 @@ export default function App() {
         }
       : {
           id: newInvId,
-          ownerId: user?.uid || SHARED_PHARMACY_OWNER_ID,
+          shopId: effectiveShopId,
+          ownerId: effectiveCloudUid,
           medicineId: params.medicineId,
           brandName: params.brandName,
           genericName: params.genericName,
@@ -4810,28 +5343,30 @@ export default function App() {
     if (existingInv) {
       setInventory((prev) => {
         const next = prev.map((i) =>
-          getCanonicalDocId(i.id) === newInvId ? targetInvObj : i
+          getCanonicalDocId(i.id, effectiveShopId) === newInvId ? targetInvObj : i
         );
         saveLocal(STORAGE_KEYS.INVENTORY, next);
+        saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveShopId), next);
         return next;
       });
     } else {
       setInventory((prev) => {
         const next = [targetInvObj, ...prev];
         saveLocal(STORAGE_KEYS.INVENTORY, next);
+        saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveShopId), next);
         return next;
       });
     }
 
-    if (user) {
+    if (user || isCloudLoggedIn) {
       try {
         await setDoc(
-          doc(db, 'transactions', txId),
-          buildTransactionCloudPayload(newTx, user.uid)
+          doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, txId)),
+          buildTransactionCloudPayload(newTx, effectiveCloudUid, effectiveShopId)
         );
         await setDoc(
-          doc(db, 'inventory', newInvId),
-          buildInventoryCloudPayload(targetInvObj, user.uid)
+          doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, newInvId)),
+          buildInventoryCloudPayload(targetInvObj, effectiveCloudUid, effectiveShopId)
         );
       } catch (error) {
         handleFirestoreError(error, OperationType.WRITE, 'transactions');
@@ -4849,7 +5384,7 @@ export default function App() {
   ) => {
     const nowMs = Date.now();
     const matchedExisting = existingId
-      ? inventory.find((i) => getCanonicalDocId(i.id) === getCanonicalDocId(existingId))
+      ? inventory.find((i) => getCanonicalDocId(i.id, effectiveShopId) === getCanonicalDocId(existingId, effectiveShopId))
       : inventory.find(
           (i) =>
             i.medicineId === itemData.medicineId ||
@@ -4858,7 +5393,7 @@ export default function App() {
               i.strength.toLowerCase() === itemData.strength.toLowerCase())
         );
 
-    const targetId = getCanonicalDocId(existingId || matchedExisting?.id || `inv_${nowMs}`);
+    const targetId = getCanonicalDocId(existingId || matchedExisting?.id || `inv_${nowMs}`, effectiveShopId);
     const isUpdatingExisting = Boolean(existingId || matchedExisting);
 
     if (matchedExisting && Math.abs(matchedExisting.unitPrice - itemData.unitPrice) > 0.001) {
@@ -4884,7 +5419,8 @@ export default function App() {
 
     const savedInvObj: InventoryItem = {
       id: targetId,
-      ownerId: user?.uid || SHARED_PHARMACY_OWNER_ID,
+      shopId: effectiveShopId,
+      ownerId: effectiveCloudUid,
       ...itemData,
       stockQty: nextStockQty,
       updatedAtMs: nowMs,
@@ -4893,27 +5429,30 @@ export default function App() {
     if (isUpdatingExisting) {
       setInventory((prev) => {
         const next = prev.map((i) =>
-          getCanonicalDocId(i.id) === targetId ? savedInvObj : i
+          getCanonicalDocId(i.id, effectiveShopId) === targetId ? savedInvObj : i
         );
         saveLocal(STORAGE_KEYS.INVENTORY, next);
+        saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveShopId), next);
         return next;
       });
     } else {
       setInventory((prev) => {
         const next = [savedInvObj, ...prev];
         saveLocal(STORAGE_KEYS.INVENTORY, next);
+        saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveShopId), next);
         return next;
       });
     }
 
-    if (user) {
+    if (user || isCloudLoggedIn) {
+      const scopedInvId = getScopedFirestoreDocId(effectiveShopId, targetId);
       try {
         await setDoc(
-          doc(db, 'inventory', targetId),
-          buildInventoryCloudPayload(savedInvObj, user.uid)
+          doc(db, 'inventory', scopedInvId),
+          buildInventoryCloudPayload(savedInvObj, effectiveCloudUid, effectiveShopId)
         );
       } catch (error) {
-        handleFirestoreError(error, OperationType.WRITE, `inventory/${targetId}`);
+        handleFirestoreError(error, OperationType.WRITE, `inventory/${scopedInvId}`);
       }
     }
 
@@ -4985,31 +5524,34 @@ export default function App() {
 
   const handleQuickRestock = async (item: InventoryItem, addQty: number) => {
     const nowMs = Date.now();
-    const canonId = getCanonicalDocId(item.id);
+    const canonId = getCanonicalDocId(item.id, effectiveShopId);
     const nextQty = sanitizeNumber(item.stockQty + addQty, 0, 10000000);
     const updatedItem: InventoryItem = {
       ...item,
       id: canonId,
+      shopId: effectiveShopId,
       stockQty: nextQty,
       updatedAtMs: nowMs,
     };
 
     setInventory((prev) => {
-      const exists = prev.some((i) => getCanonicalDocId(i.id) === canonId);
+      const exists = prev.some((i) => getCanonicalDocId(i.id, effectiveShopId) === canonId);
       const next = exists
-        ? prev.map((i) => (getCanonicalDocId(i.id) === canonId ? updatedItem : i))
+        ? prev.map((i) => (getCanonicalDocId(i.id, effectiveShopId) === canonId ? updatedItem : i))
         : [updatedItem, ...prev];
       saveLocal(STORAGE_KEYS.INVENTORY, next);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveShopId), next);
       return next;
     });
-    if (user) {
+    if (user || isCloudLoggedIn) {
+      const scopedInvId = getScopedFirestoreDocId(effectiveShopId, canonId);
       try {
         await setDoc(
-          doc(db, 'inventory', canonId),
-          buildInventoryCloudPayload(updatedItem, user.uid)
+          doc(db, 'inventory', scopedInvId),
+          buildInventoryCloudPayload(updatedItem, effectiveCloudUid, effectiveShopId)
         );
       } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, `inventory/${canonId}`);
+        handleFirestoreError(error, OperationType.UPDATE, `inventory/${scopedInvId}`);
       }
     }
     showToast(`${item.brandName}-এর স্টকে +${addQty} পিস যুক্ত হয়েছে!`);
@@ -5032,7 +5574,8 @@ export default function App() {
 
     const newTx: Transaction = {
       id: txId,
-      ownerId: user?.uid || SHARED_PHARMACY_OWNER_ID,
+      shopId: effectiveShopId,
+      ownerId: effectiveCloudUid,
       txType: 'sale',
       invoiceNo,
       partyId: 'walk-in',
@@ -5053,22 +5596,26 @@ export default function App() {
       updatedAtMs: nowMs,
     };
 
-    let nextInvList = [...inventory];
+    let nextInvList = inventory.map((inv) => ({ ...inv }));
     const matchedInv = findMatchingInventoryRecord(nextInvList, {
       brandName: params.brandName,
       strength: params.strength,
       dosageForm: params.dosageForm,
     });
 
+    let touchedInv: InventoryItem;
     if (matchedInv) {
-      matchedInv.id = getCanonicalDocId(matchedInv.id);
+      matchedInv.id = getCanonicalDocId(matchedInv.id, effectiveShopId);
+      matchedInv.shopId = effectiveShopId;
       matchedInv.stockQty = Math.max(0, matchedInv.stockQty - params.qty);
       matchedInv.updatedAtMs = nowMs;
+      touchedInv = matchedInv;
     } else {
       const newInvId = `inv_${nowMs.toString().slice(-6)}`;
       const createdInv: InventoryItem = {
         id: newInvId,
-        ownerId: user?.uid || SHARED_PHARMACY_OWNER_ID,
+        shopId: effectiveShopId,
+        ownerId: effectiveCloudUid,
         medicineId: `med_${nowMs.toString().slice(-6)}`,
         brandName: params.brandName,
         genericName: params.genericName || 'General',
@@ -5087,20 +5634,30 @@ export default function App() {
         updatedAtMs: nowMs,
       };
       nextInvList.unshift(createdInv);
+      touchedInv = createdInv;
     }
 
     setInventory(nextInvList);
     saveLocal(STORAGE_KEYS.INVENTORY, nextInvList);
+    saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveShopId), nextInvList);
 
     setTransactions((prev) => {
       const next = [newTx, ...prev];
       saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), next);
       return next;
     });
 
-    if (user) {
+    if (user || isCloudLoggedIn) {
       try {
-        await setDoc(doc(db, 'transactions', txId), buildTransactionCloudPayload(newTx, user.uid));
+        await setDoc(
+          doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, txId)),
+          buildTransactionCloudPayload(newTx, effectiveCloudUid, effectiveShopId)
+        );
+        await setDoc(
+          doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, touchedInv.id)),
+          buildInventoryCloudPayload(touchedInv, effectiveCloudUid, effectiveShopId)
+        );
       } catch (err) {
         console.warn('Cloud sync transaction warning:', err);
       }
@@ -5130,7 +5687,8 @@ export default function App() {
 
     const newTx: Transaction = {
       id: txId,
-      ownerId: user?.uid || SHARED_PHARMACY_OWNER_ID,
+      shopId: effectiveShopId,
+      ownerId: effectiveCloudUid,
       txType: 'purchase',
       invoiceNo,
       partyId: 'supplier-direct',
@@ -5151,15 +5709,17 @@ export default function App() {
       updatedAtMs: nowMs,
     };
 
-    let nextInvList = [...inventory];
+    let nextInvList = inventory.map((inv) => ({ ...inv }));
     const matchedInv = findMatchingInventoryRecord(nextInvList, {
       brandName: params.brandName,
       strength: params.strength,
       dosageForm: params.dosageForm,
     });
 
+    let touchedPurInv: InventoryItem;
     if (matchedInv) {
-      matchedInv.id = getCanonicalDocId(matchedInv.id);
+      matchedInv.id = getCanonicalDocId(matchedInv.id, effectiveShopId);
+      matchedInv.shopId = effectiveShopId;
       matchedInv.stockQty = matchedInv.stockQty + params.qty;
       if (params.purchasePrice > 0 && params.qty > 0) {
         matchedInv.purchasePrice = Number((params.purchasePrice / params.qty).toFixed(2));
@@ -5171,6 +5731,7 @@ export default function App() {
       if (params.batchNo) matchedInv.batchNo = params.batchNo;
       if (params.expiryDate) matchedInv.expiryDate = params.expiryDate;
       matchedInv.updatedAtMs = nowMs;
+      touchedPurInv = matchedInv;
     } else {
       const newInvId = `inv_${nowMs.toString().slice(-6)}`;
       const unitPrice =
@@ -5178,7 +5739,8 @@ export default function App() {
         Number(((params.purchasePrice / (params.qty || 1)) * 1.15).toFixed(2));
       const createdInv: InventoryItem = {
         id: newInvId,
-        ownerId: user?.uid || SHARED_PHARMACY_OWNER_ID,
+        shopId: effectiveShopId,
+        ownerId: effectiveCloudUid,
         medicineId: `med_${nowMs.toString().slice(-6)}`,
         brandName: params.brandName,
         genericName: params.genericName || 'General',
@@ -5200,20 +5762,30 @@ export default function App() {
         updatedAtMs: nowMs,
       };
       nextInvList.unshift(createdInv);
+      touchedPurInv = createdInv;
     }
 
     setInventory(nextInvList);
     saveLocal(STORAGE_KEYS.INVENTORY, nextInvList);
+    saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveShopId), nextInvList);
 
     setTransactions((prev) => {
       const next = [newTx, ...prev];
       saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), next);
       return next;
     });
 
-    if (user) {
+    if (user || isCloudLoggedIn) {
       try {
-        await setDoc(doc(db, 'transactions', txId), buildTransactionCloudPayload(newTx, user.uid));
+        await setDoc(
+          doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, txId)),
+          buildTransactionCloudPayload(newTx, effectiveCloudUid, effectiveShopId)
+        );
+        await setDoc(
+          doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, touchedPurInv.id)),
+          buildInventoryCloudPayload(touchedPurInv, effectiveCloudUid, effectiveShopId)
+        );
       } catch (err) {
         console.warn('Cloud sync transaction warning:', err);
       }
@@ -5230,7 +5802,7 @@ export default function App() {
     newStockQty: number;
   }) => {
     const nowMs = Date.now();
-    let nextInvList = [...inventory];
+    let nextInvList = inventory.map((inv) => ({ ...inv }));
     const matchedInv = findMatchingInventoryRecord(nextInvList, {
       brandName: params.brandName,
       strength: params.strength,
@@ -5238,17 +5810,26 @@ export default function App() {
     });
 
     if (matchedInv) {
-      matchedInv.id = getCanonicalDocId(matchedInv.id);
+      matchedInv.id = getCanonicalDocId(matchedInv.id, effectiveShopId);
+      matchedInv.shopId = effectiveShopId;
       matchedInv.stockQty = Math.max(0, params.newStockQty);
       matchedInv.updatedAtMs = nowMs;
       setInventory(nextInvList);
       saveLocal(STORAGE_KEYS.INVENTORY, nextInvList);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveShopId), nextInvList);
+      if (user || isCloudLoggedIn) {
+        setDoc(
+          doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, matchedInv.id)),
+          buildInventoryCloudPayload(matchedInv, effectiveCloudUid, effectiveShopId)
+        ).catch(() => {});
+      }
       showToast(`📦 ${params.brandName} এর স্টক আপডেট হয়েছে: বর্তমান মজুদ ${params.newStockQty} পিস`);
     } else {
       const newInvId = `inv_${nowMs.toString().slice(-6)}`;
       const createdInv: InventoryItem = {
         id: newInvId,
-        ownerId: user?.uid || SHARED_PHARMACY_OWNER_ID,
+        shopId: effectiveShopId,
+        ownerId: effectiveCloudUid,
         medicineId: `med_${nowMs.toString().slice(-6)}`,
         brandName: params.brandName,
         genericName: 'General',
@@ -5269,13 +5850,21 @@ export default function App() {
       nextInvList.unshift(createdInv);
       setInventory(nextInvList);
       saveLocal(STORAGE_KEYS.INVENTORY, nextInvList);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveShopId), nextInvList);
+      if (user || isCloudLoggedIn) {
+        setDoc(
+          doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, newInvId)),
+          buildInventoryCloudPayload(createdInv, effectiveCloudUid, effectiveShopId)
+        ).catch(() => {});
+      }
       showToast(`📦 ${params.brandName} নতুন ওষুধ হিসেবে স্টকে যুক্ত হয়েছে: বর্তমান মজুদ ${params.newStockQty} পিস`);
     }
   };
 
   const handleDeleteInventoryItem = async (id: string) => {
-    const canonId = getCanonicalDocId(id);
-    const targetItem = inventory.find((i) => getCanonicalDocId(i.id) === canonId);
+    const canonId = getCanonicalDocId(id, effectiveShopId);
+    const scopedId = getScopedFirestoreDocId(effectiveShopId, canonId);
+    const targetItem = inventory.find((i) => getCanonicalDocId(i.id, effectiveShopId) === canonId);
     if (targetItem) {
       const isCore =
         canonId.startsWith('inv-seed-') ||
@@ -5293,24 +5882,18 @@ export default function App() {
       }
     }
 
-    markDeletedIds(
-      user ? [id, canonId, `${canonId}_${user.uid.slice(0, 6)}`] : [id, canonId]
-    );
+    markDeletedIds([id, canonId, scopedId]);
     setInventory((prev) => {
-      const next = prev.filter((i) => getCanonicalDocId(i.id) !== canonId);
+      const next = prev.filter((i) => getCanonicalDocId(i.id, effectiveShopId) !== canonId);
       saveLocal(STORAGE_KEYS.INVENTORY, next);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveShopId), next);
       return next;
     });
-    try {
-      await deleteDoc(doc(db, 'inventory', canonId));
-    } catch {
-      // ignore if local demo item was not in Firestore yet
-    }
-    if (id !== canonId) {
+    for (const delId of Array.from(new Set([scopedId, canonId, id]))) {
       try {
-        await deleteDoc(doc(db, 'inventory', id));
+        await deleteDoc(doc(db, 'inventory', delId));
       } catch {
-        // ignore
+        // ignore if not in Firestore
       }
     }
     showToast('কাস্টম স্টক আইটেম মুছে ফেলা হয়েছে');
@@ -5329,12 +5912,13 @@ export default function App() {
     existingId?: string
   ) => {
     const nowMs = Date.now();
-    const custId = getCanonicalDocId(existingId || `cust_${nowMs}`);
+    const custId = getCanonicalDocId(existingId || `cust_${nowMs}`, effectiveShopId);
     unmarkDeletedId(custId);
 
     const newCust: Customer = {
       id: custId,
-      ownerId: user?.uid || SHARED_PHARMACY_OWNER_ID,
+      shopId: effectiveShopId,
+      ownerId: effectiveCloudUid,
       name: sanitizeString(data.name, 120),
       phone: sanitizeString(data.phone, 30),
       address: sanitizeString(data.address, 250),
@@ -5346,47 +5930,45 @@ export default function App() {
 
     if (existingId) {
       setCustomers((prev) => {
-        const next = prev.map((c) => (getCanonicalDocId(c.id) === custId ? newCust : c));
+        const next = prev.map((c) => (getCanonicalDocId(c.id, effectiveShopId) === custId ? newCust : c));
         saveLocal(STORAGE_KEYS.CUSTOMERS, next);
+        saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOMERS, effectiveShopId), next);
         return next;
       });
     } else {
       setCustomers((prev) => {
         const next = [newCust, ...prev];
         saveLocal(STORAGE_KEYS.CUSTOMERS, next);
+        saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOMERS, effectiveShopId), next);
         return next;
       });
     }
 
+    const scopedCustId = getScopedFirestoreDocId(effectiveShopId, custId);
     try {
       await setDoc(
-        doc(db, 'customers', custId),
-        buildCustomerCloudPayload(newCust, effectiveCloudUid)
+        doc(db, 'customers', scopedCustId),
+        buildCustomerCloudPayload(newCust, effectiveCloudUid, effectiveShopId)
       );
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `customers/${custId}`);
+      handleFirestoreError(error, OperationType.WRITE, `customers/${scopedCustId}`);
     }
     showToast(`${data.name}-এর কাস্টমার লেজার সংরক্ষিত হয়েছে!`);
   };
 
   const handleDeleteCustomer = async (id: string) => {
-    const canonId = getCanonicalDocId(id);
-    markDeletedIds(
-      user ? [id, canonId, `${canonId}_${user.uid.slice(0, 6)}`] : [id, canonId]
-    );
+    const canonId = getCanonicalDocId(id, effectiveShopId);
+    const scopedId = getScopedFirestoreDocId(effectiveShopId, canonId);
+    markDeletedIds([id, canonId, scopedId]);
     setCustomers((prev) => {
-      const next = prev.filter((c) => getCanonicalDocId(c.id) !== canonId);
+      const next = prev.filter((c) => getCanonicalDocId(c.id, effectiveShopId) !== canonId);
       saveLocal(STORAGE_KEYS.CUSTOMERS, next);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOMERS, effectiveShopId), next);
       return next;
     });
-    try {
-      await deleteDoc(doc(db, 'customers', canonId));
-    } catch {
-      // ignore if local demo customer was not in Firestore yet
-    }
-    if (id !== canonId) {
+    for (const delId of Array.from(new Set([scopedId, canonId, id]))) {
       try {
-        await deleteDoc(doc(db, 'customers', id));
+        await deleteDoc(doc(db, 'customers', delId));
       } catch {
         // ignore
       }
@@ -5401,7 +5983,7 @@ export default function App() {
     note: string;
   }) => {
     const nowMs = Date.now();
-    const canonCustId = getCanonicalDocId(params.customer.id);
+    const canonCustId = getCanonicalDocId(params.customer.id, effectiveShopId);
     const amt = sanitizeNumber(params.amount, 0, params.customer.totalDue);
     const txId = `tx_due_${nowMs}`;
     const staffRoleVal: 'owner' | 'staff' =
@@ -5410,7 +5992,8 @@ export default function App() {
 
     const dueTx: Transaction = {
       id: txId,
-      ownerId: user?.uid || SHARED_PHARMACY_OWNER_ID,
+      shopId: effectiveShopId,
+      ownerId: effectiveCloudUid,
       txType: 'due_payment',
       invoiceNo: `DUE-${getTodayDateStr().replace(/-/g, '').slice(2)}-${Math.floor(
         100 + Math.random() * 900
@@ -5436,6 +6019,7 @@ export default function App() {
     const updatedCustObj: Customer = {
       ...params.customer,
       id: canonCustId,
+      shopId: effectiveShopId,
       totalPaid: params.customer.totalPaid + amt,
       totalDue: Math.max(0, params.customer.totalDue - amt),
       updatedAtMs: nowMs,
@@ -5445,24 +6029,26 @@ export default function App() {
     setTransactions((prev) => {
       const next = [dueTx, ...prev];
       saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), next);
       return next;
     });
     setCustomers((prev) => {
       const next = prev.map((c) =>
-        getCanonicalDocId(c.id) === canonCustId ? updatedCustObj : c
+        getCanonicalDocId(c.id, effectiveShopId) === canonCustId ? updatedCustObj : c
       );
       saveLocal(STORAGE_KEYS.CUSTOMERS, next);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOMERS, effectiveShopId), next);
       return next;
     });
 
     try {
       await setDoc(
-        doc(db, 'transactions', txId),
-        buildTransactionCloudPayload(dueTx, effectiveCloudUid)
+        doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, txId)),
+        buildTransactionCloudPayload(dueTx, effectiveCloudUid, effectiveShopId)
       );
       await setDoc(
-        doc(db, 'customers', canonCustId),
-        buildCustomerCloudPayload(updatedCustObj, effectiveCloudUid)
+        doc(db, 'customers', getScopedFirestoreDocId(effectiveShopId, canonCustId)),
+        buildCustomerCloudPayload(updatedCustObj, effectiveCloudUid, effectiveShopId)
       );
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'customers_due_payment');
@@ -5493,7 +6079,7 @@ export default function App() {
         ? existingMed
         : matchedCatalogVariant || existingMed;
 
-    const medId = getCanonicalDocId(targetMed ? targetMed.id : `cmed_${nowMs}`);
+    const medId = getCanonicalDocId(targetMed ? targetMed.id : `cmed_${nowMs}`, effectiveShopId);
     unmarkDeletedId(medId);
 
     const resolvedPurchasePrice = sanitizeNumber(
@@ -5518,7 +6104,8 @@ export default function App() {
 
     const newMed: CustomMedicine = {
       id: medId,
-      ownerId: user?.uid || SHARED_PHARMACY_OWNER_ID,
+      shopId: effectiveShopId,
+      ownerId: effectiveCloudUid,
       brandName: sanitizeString(medData.brandName, 120),
       genericName: sanitizeString(medData.genericName, 150),
       companyName: sanitizeString(medData.companyName, 120),
@@ -5534,11 +6121,12 @@ export default function App() {
     };
 
     setCustomMedicines((prev) => {
-      const exists = prev.some((m) => getCanonicalDocId(m.id) === medId);
+      const exists = prev.some((m) => getCanonicalDocId(m.id, effectiveShopId) === medId);
       const next = exists
-        ? prev.map((m) => (getCanonicalDocId(m.id) === medId ? newMed : m))
+        ? prev.map((m) => (getCanonicalDocId(m.id, effectiveShopId) === medId ? newMed : m))
         : [newMed, ...prev];
       saveLocal(STORAGE_KEYS.CUSTOM_MEDS, next);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOM_MEDS, effectiveShopId), next);
       return next;
     });
 
@@ -5553,7 +6141,8 @@ export default function App() {
         ) {
           const updatedInv: InventoryItem = {
             ...inv,
-            id: getCanonicalDocId(inv.id),
+            id: getCanonicalDocId(inv.id, effectiveShopId),
+            shopId: effectiveShopId,
             purchasePrice: resolvedPurchasePrice,
             unitPrice: medData.unitPrice,
             stripPrice: medData.stripPrice,
@@ -5565,6 +6154,7 @@ export default function App() {
         return inv;
       });
       saveLocal(STORAGE_KEYS.INVENTORY, next);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveShopId), next);
       return next;
     });
 
@@ -5587,21 +6177,23 @@ export default function App() {
       return next;
     });
 
+    const scopedMedId = getScopedFirestoreDocId(effectiveShopId, medId);
     try {
       await setDoc(
-        doc(db, 'custom_medicines', medId),
-        buildCustomMedCloudPayload(newMed, effectiveCloudUid)
+        doc(db, 'custom_medicines', scopedMedId),
+        buildCustomMedCloudPayload(newMed, effectiveCloudUid, effectiveShopId)
       );
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `custom_medicines/${medId}`);
+      handleFirestoreError(error, OperationType.WRITE, `custom_medicines/${scopedMedId}`);
     }
 
     if (matchedInvItemForCloud) {
       const invItem = matchedInvItemForCloud as InventoryItem;
+      const canonInvId = getCanonicalDocId(invItem.id, effectiveShopId);
       try {
         await setDoc(
-          doc(db, 'inventory', getCanonicalDocId(invItem.id)),
-          buildInventoryCloudPayload(invItem, effectiveCloudUid)
+          doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, canonInvId)),
+          buildInventoryCloudPayload(invItem, effectiveCloudUid, effectiveShopId)
         );
       } catch {
         // ignore
@@ -5615,7 +6207,8 @@ export default function App() {
   };
 
   const handleDeleteCustomMedicine = async (medId: string) => {
-    const canonId = getCanonicalDocId(medId);
+    const canonId = getCanonicalDocId(medId, effectiveShopId);
+    const scopedId = getScopedFirestoreDocId(effectiveShopId, canonId);
     if (isCoreDatabaseMedicineId(canonId) || CATALOG_BY_ID.has(canonId)) {
       showToast(
         'ডাটাবেস এ থাকা মূল প্রোডাক্ট ডিলিট করা যাবে না! তবে ক্রয় মূল্য ও বিক্রয় মূল্য পরিবর্তন করা যাবে।'
@@ -5623,18 +6216,19 @@ export default function App() {
       return;
     }
 
-    markDeletedIds(
-      user ? [medId, canonId, `${canonId}_${user.uid.slice(0, 6)}`] : [medId, canonId]
-    );
+    markDeletedIds([medId, canonId, scopedId]);
     setCustomMedicines((prev) => {
-      const next = prev.filter((m) => getCanonicalDocId(m.id) !== canonId);
+      const next = prev.filter((m) => getCanonicalDocId(m.id, effectiveShopId) !== canonId);
       saveLocal(STORAGE_KEYS.CUSTOM_MEDS, next);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOM_MEDS, effectiveShopId), next);
       return next;
     });
-    try {
-      await deleteDoc(doc(db, 'custom_medicines', canonId));
-    } catch {
-      // ignore if medicine was built-in or not in Firestore
+    for (const delId of Array.from(new Set([scopedId, canonId, medId]))) {
+      try {
+        await deleteDoc(doc(db, 'custom_medicines', delId));
+      } catch {
+        // ignore if medicine was built-in or not in Firestore
+      }
     }
     showToast('কাস্টম ওষুধটি তালিকা থেকে মুছে ফেলা হয়েছে');
   };
@@ -5648,22 +6242,22 @@ export default function App() {
     );
 
     if (existing) {
-      const canonId = getCanonicalDocId(existing.id);
-      markDeletedIds(
-        user
-          ? [existing.id, canonId, `${canonId}_${user.uid.slice(0, 6)}`]
-          : [existing.id, canonId]
-      );
+      const canonId = getCanonicalDocId(existing.id, effectiveShopId);
+      const scopedId = getScopedFirestoreDocId(effectiveShopId, canonId);
+      markDeletedIds([existing.id, canonId, scopedId]);
       setPriceWatches((prev) => {
-        const next = prev.filter((w) => getCanonicalDocId(w.id) !== canonId);
+        const next = prev.filter((w) => getCanonicalDocId(w.id, effectiveShopId) !== canonId);
         saveLocal(STORAGE_KEYS.PRICE_WATCHES, next);
+        saveLocal(getScopedStorageKey(STORAGE_KEYS.PRICE_WATCHES, effectiveShopId), next);
         return next;
       });
-      if (user) {
-        try {
-          await deleteDoc(doc(db, 'price_watches', canonId));
-        } catch {
-          // ignore if local demo watch was not in Firestore yet
+      if (user || isCloudLoggedIn) {
+        for (const delId of Array.from(new Set([scopedId, canonId, existing.id]))) {
+          try {
+            await deleteDoc(doc(db, 'price_watches', delId));
+          } catch {
+            // ignore
+          }
         }
       }
       showToast(`${med.brandName} মূল্য ট্র্যাকিং তালিকা থেকে সরানো হয়েছে`);
@@ -5675,7 +6269,8 @@ export default function App() {
     unmarkDeletedId(watchId);
     const newWatch: PriceWatch = {
       id: watchId,
-      ownerId: user?.uid || SHARED_PHARMACY_OWNER_ID,
+      shopId: effectiveShopId,
+      ownerId: effectiveCloudUid,
       medicineId: sanitizeString(med.id, 100),
       brandName: sanitizeString(med.brandName, 120),
       genericName: sanitizeString(med.genericName, 150),
@@ -5691,60 +6286,68 @@ export default function App() {
     setPriceWatches((prev) => {
       const next = [newWatch, ...prev];
       saveLocal(STORAGE_KEYS.PRICE_WATCHES, next);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.PRICE_WATCHES, effectiveShopId), next);
       return next;
     });
+    const scopedWatchId = getScopedFirestoreDocId(effectiveShopId, watchId);
     try {
       await setDoc(
-        doc(db, 'price_watches', watchId),
-        buildPriceWatchCloudPayload(newWatch, effectiveCloudUid)
+        doc(db, 'price_watches', scopedWatchId),
+        buildPriceWatchCloudPayload(newWatch, effectiveCloudUid, effectiveShopId)
       );
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, `price_watches/${watchId}`);
+      handleFirestoreError(error, OperationType.CREATE, `price_watches/${scopedWatchId}`);
     }
     showToast(`${med.brandName} মূল্য নিরীক্ষণ ও অ্যালার্ট তালিকায় যুক্ত হয়েছে!`);
   };
 
   const handleMarkAlertRead = async (alertId: string) => {
-    const canonId = getCanonicalDocId(alertId);
+    const canonId = getCanonicalDocId(alertId, effectiveShopId);
     const nowMs = Date.now();
-    const targetAlert = priceAlerts.find((a) => getCanonicalDocId(a.id) === canonId);
+    const targetAlert = priceAlerts.find((a) => getCanonicalDocId(a.id, effectiveShopId) === canonId);
     const updatedAlert: PriceAlert | null = targetAlert
-      ? { ...targetAlert, id: canonId, isRead: true, updatedAtMs: nowMs }
+      ? { ...targetAlert, id: canonId, shopId: effectiveShopId, isRead: true, updatedAtMs: nowMs }
       : null;
 
     setPriceAlerts((prev) => {
       const next = prev.map((a) =>
-        getCanonicalDocId(a.id) === canonId ? { ...a, id: canonId, isRead: true, updatedAtMs: nowMs } : a
+        getCanonicalDocId(a.id, effectiveShopId) === canonId
+          ? { ...a, id: canonId, shopId: effectiveShopId, isRead: true, updatedAtMs: nowMs }
+          : a
       );
       saveLocal(STORAGE_KEYS.PRICE_ALERTS, next);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.PRICE_ALERTS, effectiveShopId), next);
       return next;
     });
     if (updatedAlert) {
+      const scopedAlertId = getScopedFirestoreDocId(effectiveShopId, canonId);
       try {
         await setDoc(
-          doc(db, 'price_alerts', canonId),
-          buildPriceAlertCloudPayload(updatedAlert, effectiveCloudUid)
+          doc(db, 'price_alerts', scopedAlertId),
+          buildPriceAlertCloudPayload(updatedAlert, effectiveCloudUid, effectiveShopId)
         );
       } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, `price_alerts/${canonId}`);
+        handleFirestoreError(error, OperationType.UPDATE, `price_alerts/${scopedAlertId}`);
       }
     }
   };
 
   const handleDeletePriceAlert = async (alertId: string) => {
-    const canonId = getCanonicalDocId(alertId);
-    markDeletedIds(
-      user ? [alertId, canonId, `${canonId}_${user.uid.slice(0, 6)}`] : [alertId, canonId]
-    );
+    const canonId = getCanonicalDocId(alertId, effectiveShopId);
+    const scopedId = getScopedFirestoreDocId(effectiveShopId, canonId);
+    markDeletedIds([alertId, canonId, scopedId]);
     setPriceAlerts((prev) => {
-      const next = prev.filter((a) => getCanonicalDocId(a.id) !== canonId);
+      const next = prev.filter((a) => getCanonicalDocId(a.id, effectiveShopId) !== canonId);
       saveLocal(STORAGE_KEYS.PRICE_ALERTS, next);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.PRICE_ALERTS, effectiveShopId), next);
       return next;
     });
-    try {
-      await deleteDoc(doc(db, 'price_alerts', canonId));
-    } catch {
-      // ignore if local demo alert was not in Firestore yet
+    for (const delId of Array.from(new Set([scopedId, canonId, alertId]))) {
+      try {
+        await deleteDoc(doc(db, 'price_alerts', delId));
+      } catch {
+        // ignore
+      }
     }
     showToast('মূল্য অ্যালার্ট বিজ্ঞপ্তি মুছে ফেলা হয়েছে');
   };
@@ -5754,23 +6357,26 @@ export default function App() {
     data: Omit<ShopProfile, 'id' | 'ownerId' | 'createdAt' | 'updatedAt'>
   ) => {
     const nowMs = Date.now();
+    const targetShopId = effectiveShopId;
     const nextShop: ShopProfile = {
       ...shopProfile,
-      id: SHARED_SHOP_DOC_ID,
-      ownerId: user?.uid || SHARED_PHARMACY_OWNER_ID,
+      id: targetShopId,
+      shopId: targetShopId,
+      ownerId: effectiveCloudUid,
       ...data,
       updatedAtMs: nowMs,
     };
     setShopProfile(nextShop);
     saveLocal(STORAGE_KEYS.SHOP, nextShop);
+    saveLocal(getScopedStorageKey(STORAGE_KEYS.SHOP, targetShopId), nextShop);
 
     try {
       await setDoc(
-        doc(db, 'shops', SHARED_SHOP_DOC_ID),
-        buildShopCloudPayload(nextShop, effectiveCloudUid)
+        doc(db, 'shops', targetShopId),
+        buildShopCloudPayload(nextShop, effectiveCloudUid, targetShopId)
       );
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `shops/${SHARED_SHOP_DOC_ID}`);
+      handleFirestoreError(error, OperationType.WRITE, `shops/${targetShopId}`);
     }
     showToast('দোকানের একাউন্ট তথ্য সংরক্ষিত হয়েছে!');
   };
@@ -5821,17 +6427,21 @@ export default function App() {
   };
 
   const handleUpdateNotice = async (notice: ShopNotice | null) => {
+    const targetShopId = effectiveShopId;
     const updatedShop: ShopProfile = {
       ...shopProfile,
+      id: targetShopId,
+      shopId: targetShopId,
       notice: notice || undefined,
       updatedAtMs: Date.now(),
     };
     setShopProfile(updatedShop);
     saveLocal(STORAGE_KEYS.SHOP, updatedShop);
+    saveLocal(getScopedStorageKey(STORAGE_KEYS.SHOP, targetShopId), updatedShop);
     try {
       await setDoc(
-        doc(db, 'shops', SHARED_SHOP_DOC_ID),
-        buildShopCloudPayload(updatedShop, effectiveCloudUid)
+        doc(db, 'shops', targetShopId),
+        buildShopCloudPayload(updatedShop, effectiveCloudUid, targetShopId)
       );
     } catch {
       // ignore
@@ -5843,9 +6453,11 @@ export default function App() {
     existingId?: string
   ) => {
     const nowMs = Date.now();
+    const targetShopId = effectiveShopId;
     const cleanDigits = (data.phone || '').replace(/[^0-9]/g, '');
     const duplicateStaff = !existingId
       ? staffList.find((s) => {
+          if (s.shopId && s.shopId !== targetShopId) return false;
           const sDigits = (s.phone || '').replace(/[^0-9]/g, '');
           return (
             (cleanDigits.length >= 6 && (sDigits === cleanDigits || (cleanDigits.length >= 10 && sDigits.endsWith(cleanDigits.slice(-10))))) ||
@@ -5855,10 +6467,14 @@ export default function App() {
       : undefined;
 
     const targetStaffId = existingId || duplicateStaff?.id || (cleanDigits.length >= 6 ? `staff_${cleanDigits.length >= 10 ? '0' + cleanDigits.slice(-10) : cleanDigits}` : `staff_${nowMs}`);
-    const stId = getCanonicalDocId(targetStaffId);
+    const isTargetMandatory = isMandatoryOwner({ id: targetStaffId, phone: data.phone, email: data.email });
+    const rawCanonId = getCanonicalDocId(targetStaffId, targetShopId);
+    const stId =
+      isTargetMandatory && targetShopId === 'shop_iqbal_pharmacy'
+        ? 'staff-owner-1'
+        : rawCanonId;
     unmarkDeletedId(stId);
 
-    const isTargetMandatory = isMandatoryOwner({ id: stId, phone: data.phone, email: data.email });
     let assignedRole: StaffMember['roleTitle'] = data.roleTitle;
     if (isTargetMandatory) {
       assignedRole = 'owner';
@@ -5869,7 +6485,8 @@ export default function App() {
 
     const newStaff: StaffMember = {
       id: stId,
-      ownerId: user?.uid || SHARED_PHARMACY_OWNER_ID,
+      shopId: targetShopId,
+      ownerId: effectiveCloudUid,
       name: enforcedName,
       roleTitle: assignedRole,
       isMandatoryOwner: isTargetMandatory,
@@ -5883,19 +6500,21 @@ export default function App() {
     };
 
     setStaffList((prev) => {
-      const next = prev.map((s) => (getCanonicalDocId(s.id) === stId ? newStaff : s));
-      if (!next.some((s) => getCanonicalDocId(s.id) === stId)) {
-        next.push(newStaff);
-      }
+      const next = deduplicateStaffMembers(
+        [newStaff, ...prev.filter((s) => !s.shopId || s.shopId === targetShopId)],
+        targetShopId
+      );
       saveLocal(STORAGE_KEYS.STAFF, next);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.STAFF, targetShopId), next);
       return next;
     });
-    if (getCanonicalDocId(activeStaff.id) === stId) setActiveStaff(newStaff);
+    if (getCanonicalDocId(activeStaff.id, targetShopId) === stId) setActiveStaff(newStaff);
 
+    const scopedStaffId = getScopedFirestoreDocId(targetShopId, stId);
     try {
       await setDoc(
-        doc(db, 'staff', stId),
-        buildStaffCloudPayload(newStaff, effectiveCloudUid)
+        doc(db, 'staff', scopedStaffId),
+        buildStaffCloudPayload(newStaff, effectiveCloudUid, targetShopId)
       );
 
       // Index in registered_users so any other device discovers this staff member immediately
@@ -5903,6 +6522,7 @@ export default function App() {
       if (phoneDigits) {
         const userDocPayload = {
           ownerId: stId,
+          shopId: targetShopId,
           staffId: stId,
           ownerName: enforcedName,
           name: enforcedName,
@@ -5924,6 +6544,7 @@ export default function App() {
         const safeEmailKey = data.email.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_');
         const userDocPayload = {
           ownerId: stId,
+          shopId: targetShopId,
           staffId: stId,
           ownerName: enforcedName,
           name: enforcedName,
@@ -5939,39 +6560,35 @@ export default function App() {
         setDoc(doc(db, 'registered_users', `user_email_${safeEmailKey}`), userDocPayload).catch(() => {});
       }
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `staff/${stId}`);
+      handleFirestoreError(error, OperationType.WRITE, `staff/${scopedStaffId}`);
     }
     showToast(`${enforcedName} প্রোফাইল সংরক্ষিত হয়েছে!`);
   };
 
   const handleDeleteStaffMember = async (id: string) => {
-    const canonId = getCanonicalDocId(id);
-    const targetStaff = staffList.find((s) => getCanonicalDocId(s.id) === canonId || s.id === id);
+    const targetShopId = effectiveShopId;
+    const canonId = getCanonicalDocId(id, targetShopId);
+    const scopedId = getScopedFirestoreDocId(targetShopId, canonId);
+    const targetStaff = staffList.find((s) => getCanonicalDocId(s.id, targetShopId) === canonId || s.id === id);
     if (targetStaff && isMandatoryOwner(targetStaff)) {
       showToast('প্রধান মালিক (Mandatory Owner) স্থায়ী এবং ডিলিট করা সম্ভব নয়!');
       return;
     }
-    markDeletedIds(
-      user ? [id, canonId, `${canonId}_${user.uid.slice(0, 6)}`] : [id, canonId]
-    );
+    markDeletedIds([id, canonId, scopedId]);
     setStaffList((prev) => {
-      const remaining = prev.filter((s) => getCanonicalDocId(s.id) !== canonId);
+      const remaining = prev.filter((s) => getCanonicalDocId(s.id, targetShopId) !== canonId);
       saveLocal(STORAGE_KEYS.STAFF, remaining);
-      if (getCanonicalDocId(activeStaff.id) === canonId && remaining.length > 0) {
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.STAFF, targetShopId), remaining);
+      if (getCanonicalDocId(activeStaff.id, targetShopId) === canonId && remaining.length > 0) {
         setActiveStaff(remaining[0]);
       }
       return remaining;
     });
-    try {
-      await deleteDoc(doc(db, 'staff', canonId));
-    } catch {
-      // ignore if local demo staff was not in Firestore yet
-    }
-    if (id !== canonId) {
+    for (const delId of Array.from(new Set([scopedId, canonId, id]))) {
       try {
-        await deleteDoc(doc(db, 'staff', id));
+        await deleteDoc(doc(db, 'staff', delId));
       } catch {
-        // ignore
+        // ignore if local demo staff was not in Firestore yet
       }
     }
     showToast('স্টাফ প্রোফাইল স্থায়ীভাবে ডিলিট করা হয়েছে');

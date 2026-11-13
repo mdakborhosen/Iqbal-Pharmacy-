@@ -30,6 +30,7 @@ export interface PharmacyPersistentState {
 
 export interface GlobalCloudUser {
   id: string;
+  shopId?: string;
   staffId?: string;
   ownerId?: string;
   phone: string;
@@ -171,6 +172,7 @@ export async function registerGlobalCloudUser(newUser: GlobalCloudUser): Promise
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        shopId: newUser.shopId,
         phone: newUser.phone,
         email: newUser.email,
         password: newUser.password,

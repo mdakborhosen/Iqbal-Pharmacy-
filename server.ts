@@ -10,10 +10,73 @@ const DB_BACKUP_FILE_PATH = path.resolve(process.cwd(), '.pharmacy-persistent-db
 
 function getCanonicalId(rawId: unknown): string {
   if (!rawId || typeof rawId !== 'string') return String(rawId || '');
-  return rawId.replace(
+  const stripped = rawId
+    .trim()
+    .replace(/^(?:shop_[a-zA-Z0-9_-]+?_)+(?=(?:inv|cust|tx|staff|watch|alert|cmed|med|custom)[_-])/, '');
+  return stripped.replace(
     /^(inv-[a-z0-9-]+|cust-\d+|tx-(?:sale|pur|due)-\d+|staff-[a-z0-9-]+|watch-[a-z0-9-]+|alert-demo-\d+)(?:_[a-zA-Z0-9_-]{6})+$/,
     '$1'
   );
+}
+
+function isMandatoryOwnerServer(st: any): boolean {
+  if (!st || typeof st !== 'object') return false;
+  if (st.isMandatoryOwner) return true;
+  if (st.id === 'staff-owner-1' || st.id === 'staff_owner_default') return true;
+  const digits = String(st.phone || '').replace(/[^0-9]/g, '');
+  if (digits.endsWith('01812358839') || digits.endsWith('1812358839')) return true;
+  const email = String(st.email || '').toLowerCase();
+  return (
+    email === 'iqbalmahmud498@gmail.com' ||
+    email === '01812358839@iqbalpharmacy.bd' ||
+    email === 'mhakbor2001@gmail.com'
+  );
+}
+
+function deduplicateStaffArray(staffList: any[]): any[] {
+  if (!Array.isArray(staffList)) return [];
+  const byIdentity = new Map<string, any>();
+  for (const raw of staffList) {
+    if (!raw || !raw.id) continue;
+    const canonId = getCanonicalId(raw.id);
+    const isMand = isMandatoryOwnerServer({ ...raw, id: canonId });
+    const shopPrefix = raw.shopId || 'shop_iqbal_pharmacy';
+    const digits = String(raw.phone || '').replace(/[^0-9]/g, '');
+    const normPhone = digits.length >= 10 ? digits.slice(-10) : digits;
+    const email = String(raw.email || '').trim().toLowerCase();
+    const idKey = isMand
+      ? `${shopPrefix}::__MANDATORY_OWNER__`
+      : normPhone.length >= 6
+      ? `${shopPrefix}::phone:${normPhone}`
+      : email
+      ? `${shopPrefix}::email:${email}`
+      : `${shopPrefix}::id:${canonId}`;
+
+    const norm = {
+      ...raw,
+      id: isMand && shopPrefix === 'shop_iqbal_pharmacy' ? 'staff-owner-1' : canonId,
+      isMandatoryOwner: isMand,
+      roleTitle: isMand ? 'owner' : raw.roleTitle === 'owner' ? 'sub_owner' : raw.roleTitle,
+      name: isMand ? 'Owner' : raw.name,
+    };
+
+    const existing = byIdentity.get(idKey);
+    if (!existing) {
+      byIdentity.set(idKey, norm);
+    } else {
+      const nTs = typeof norm.updatedAtMs === 'number' ? norm.updatedAtMs : 0;
+      const eTs = typeof existing.updatedAtMs === 'number' ? existing.updatedAtMs : 0;
+      if (nTs >= eTs) {
+        byIdentity.set(idKey, {
+          ...norm,
+          phone: norm.phone || existing.phone,
+          email: norm.email || existing.email,
+          password: norm.password || existing.password,
+        });
+      }
+    }
+  }
+  return Array.from(byIdentity.values());
 }
 
 function readPersistentDb(): {
@@ -208,6 +271,7 @@ async function startServer() {
 
       const isMasterOwner =
         cleanIdent.toLowerCase() === 'mhakbor2001@gmail.com' ||
+        cleanIdent.toLowerCase() === 'iqbalmahmud498@gmail.com' ||
         cleanDigits.endsWith('01812358839') ||
         cleanDigits.endsWith('1812358839') ||
         cleanDigits.endsWith('01822487909') ||
@@ -219,7 +283,12 @@ async function startServer() {
         const is01822 = cleanDigits.endsWith('01822487909') || cleanDigits.endsWith('1822487909');
         const masterSession = {
           uid: is01822 ? 'shop_owner_01822487909' : 'shop_owner_default',
-          email: is01822 ? '01822487909@iqbalpharmacy.bd' : '01812358839@iqbalpharmacy.bd',
+          shopId: 'shop_iqbal_pharmacy',
+          email: is01822
+            ? '01822487909@iqbalpharmacy.bd'
+            : cleanIdent.toLowerCase() === 'iqbalmahmud498@gmail.com'
+            ? 'iqbalmahmud498@gmail.com'
+            : '01812358839@iqbalpharmacy.bd',
           displayName: 'ইকবাল মাহমুদ (Owner)',
           shopName: 'ইকবাল ফার্মেসী',
           phone: is01822 ? '01822-487909' : '01812-358839',
@@ -293,8 +362,20 @@ async function startServer() {
       res.json({ hasData: false, updatedAtMs: 0, state: null });
       return;
     }
-    // Never leak client-side authentication sessions via shared server state
-    const cleanState = { ...record.state, cloudSession: null };
+    const rawState = record.state;
+    const deletedSet = new Set<string>(Array.isArray(rawState.deletedIds) ? rawState.deletedIds : []);
+    // Never leak client-side authentication sessions via shared server state, and always clean/deduplicate entities
+    const cleanState = {
+      ...rawState,
+      inventory: mergeEntityArray([], rawState.inventory, deletedSet, { isInventory: true }),
+      customers: mergeEntityArray([], rawState.customers, deletedSet),
+      transactions: mergeEntityArray([], rawState.transactions, deletedSet),
+      staffList: deduplicateStaffArray(mergeEntityArray([], rawState.staffList, deletedSet)),
+      customMedicines: mergeEntityArray([], rawState.customMedicines, deletedSet),
+      priceWatches: mergeEntityArray([], rawState.priceWatches, deletedSet),
+      priceAlerts: mergeEntityArray([], rawState.priceAlerts, deletedSet),
+      cloudSession: null,
+    };
     res.json({
       hasData: true,
       updatedAtMs: record.updatedAtMs || Date.now(),
@@ -315,23 +396,29 @@ async function startServer() {
       }
 
       const existingRecord = readPersistentDb();
+      const existingRegisteredUsers = Array.isArray(existingRecord?.registeredUsers)
+        ? existingRecord.registeredUsers
+        : [];
       const nowMs = Date.now();
 
       if (mode === 'overwrite' || !existingRecord || !existingRecord.state) {
-        const cleanDeleted = Array.isArray(incomingState.deletedIds)
-          ? Array.from(new Set(incomingState.deletedIds)).filter((id) => !unmarkedIds.has(id))
+        const cleanDeleted: string[] = Array.isArray(incomingState.deletedIds)
+          ? Array.from(new Set<string>(incomingState.deletedIds.map((id: unknown) => String(id)))).filter(
+              (id) => !unmarkedIds.has(id)
+            )
           : [];
+        const deletedSet = new Set<string>(cleanDeleted);
         const nextState = {
           shopProfile: incomingState.shopProfile || null,
-          inventory: Array.isArray(incomingState.inventory) ? incomingState.inventory : [],
-          customers: Array.isArray(incomingState.customers) ? incomingState.customers : [],
-          transactions: Array.isArray(incomingState.transactions) ? incomingState.transactions : [],
-          staffList: Array.isArray(incomingState.staffList) ? incomingState.staffList : [],
-          customMedicines: Array.isArray(incomingState.customMedicines)
-            ? incomingState.customMedicines
-            : [],
-          priceWatches: Array.isArray(incomingState.priceWatches) ? incomingState.priceWatches : [],
-          priceAlerts: Array.isArray(incomingState.priceAlerts) ? incomingState.priceAlerts : [],
+          inventory: mergeEntityArray([], incomingState.inventory, deletedSet, { isInventory: true }),
+          customers: mergeEntityArray([], incomingState.customers, deletedSet),
+          transactions: mergeEntityArray([], incomingState.transactions, deletedSet),
+          staffList: deduplicateStaffArray(
+            mergeEntityArray([], incomingState.staffList, deletedSet)
+          ),
+          customMedicines: mergeEntityArray([], incomingState.customMedicines, deletedSet),
+          priceWatches: mergeEntityArray([], incomingState.priceWatches, deletedSet),
+          priceAlerts: mergeEntityArray([], incomingState.priceAlerts, deletedSet),
           deletedIds: cleanDeleted,
           posCart: Array.isArray(incomingState.posCart) ? incomingState.posCart : [],
           purchaseCart: Array.isArray(incomingState.purchaseCart) ? incomingState.purchaseCart : [],
@@ -339,7 +426,7 @@ async function startServer() {
           updatedAtMs: nowMs,
         };
 
-        const payload = { updatedAtMs: nowMs, state: nextState };
+        const payload = { updatedAtMs: nowMs, registeredUsers: existingRegisteredUsers, state: nextState };
         writePersistentDb(payload);
         res.json({ ok: true, updatedAtMs: nowMs, state: nextState });
         return;
@@ -386,10 +473,12 @@ async function startServer() {
           mergedDeletedSet
         ),
         transactions: mergedTransactions,
-        staffList: mergeEntityArray(
-          serverState.staffList,
-          incomingState.staffList,
-          mergedDeletedSet
+        staffList: deduplicateStaffArray(
+          mergeEntityArray(
+            serverState.staffList,
+            incomingState.staffList,
+            mergedDeletedSet
+          )
         ),
         customMedicines: mergeEntityArray(
           serverState.customMedicines,
@@ -421,7 +510,7 @@ async function startServer() {
         updatedAtMs: nowMs,
       };
 
-      const payload = { updatedAtMs: nowMs, state: mergedState };
+      const payload = { updatedAtMs: nowMs, registeredUsers: existingRegisteredUsers, state: mergedState };
       writePersistentDb(payload);
       res.json({ ok: true, updatedAtMs: nowMs, state: mergedState });
     } catch (err) {
