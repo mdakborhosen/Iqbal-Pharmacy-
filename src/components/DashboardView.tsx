@@ -23,7 +23,12 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { doc, onSnapshot, setDoc, deleteDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import {
+  db,
+  fireAndRaceFirestoreWrite,
+  fireAndRaceFirestoreWrites,
+  OperationType,
+} from '../firebase';
 import { DEFAULT_CHAMBER_NOTICES, ChamberNoticePreset } from '../data/demoSeedData';
 import {
   Customer,
@@ -131,10 +136,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       updatedBy: 'Admin',
     };
     try {
-      await setDoc(doc(db, 'shop_notices', 'live_announcement'), updatedNotice);
-      if (onUpdateNotice) {
-        await onUpdateNotice(updatedNotice);
-      }
+      await Promise.all([
+        fireAndRaceFirestoreWrite(
+          setDoc(doc(db, 'shop_notices', 'live_announcement'), updatedNotice),
+          OperationType.WRITE,
+          'shop_notices/live_announcement'
+        ),
+        onUpdateNotice ? Promise.resolve(onUpdateNotice(updatedNotice)) : Promise.resolve(),
+      ]);
       setNoticeFeedback(
         noticeActive
           ? 'নোটিশটি সফলভাবে সংরক্ষিত ও ওয়েবসাইটে লাইভ প্রকাশ করা হয়েছে!'
@@ -142,7 +151,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       );
     } catch {
       if (onUpdateNotice) {
-        await onUpdateNotice(updatedNotice);
+        await Promise.resolve(onUpdateNotice(updatedNotice)).catch(() => {});
       }
       setNoticeFeedback('নোটিশ সংরক্ষিত হয়েছে!');
     } finally {
@@ -162,14 +171,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       updatedBy: 'Admin (Default List)',
     };
     try {
-      await setDoc(doc(db, 'shop_notices', 'live_announcement'), updatedNotice);
-      if (onUpdateNotice) {
-        await onUpdateNotice(updatedNotice);
-      }
+      await Promise.all([
+        fireAndRaceFirestoreWrite(
+          setDoc(doc(db, 'shop_notices', 'live_announcement'), updatedNotice),
+          OperationType.WRITE,
+          'shop_notices/live_announcement'
+        ),
+        onUpdateNotice ? Promise.resolve(onUpdateNotice(updatedNotice)) : Promise.resolve(),
+      ]);
       setNoticeFeedback('নির্বাচিত নোটিশটি তাৎক্ষণিকভাবে ওয়েবসাইটে প্রকাশ ও চালু করা হয়েছে!');
     } catch {
       if (onUpdateNotice) {
-        await onUpdateNotice(updatedNotice);
+        await Promise.resolve(onUpdateNotice(updatedNotice)).catch(() => {});
       }
       setNoticeFeedback('নোটিশটি চালু করা হয়েছে!');
     } finally {
@@ -187,21 +200,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       updatedBy: 'Admin',
     };
     try {
-      await setDoc(doc(db, 'shop_notices', 'live_announcement'), emptyNotice);
-      try {
-        await deleteDoc(doc(db, 'shop_notices', 'live_announcement'));
-      } catch {
-        // ignore
-      }
-      if (onUpdateNotice) {
-        await onUpdateNotice(null);
-      }
+      await Promise.all([
+        fireAndRaceFirestoreWrites([
+          {
+            promise: setDoc(doc(db, 'shop_notices', 'live_announcement'), emptyNotice),
+            operationType: OperationType.WRITE,
+            path: 'shop_notices/live_announcement',
+          },
+          {
+            promise: deleteDoc(doc(db, 'shop_notices', 'live_announcement')),
+            operationType: OperationType.DELETE,
+            path: 'shop_notices/live_announcement',
+          },
+        ]),
+        onUpdateNotice ? Promise.resolve(onUpdateNotice(null)) : Promise.resolve(),
+      ]);
       setNoticeText('');
       setNoticeActive(false);
       setNoticeFeedback('নোটিশটি বাদ দেওয়া হয়েছে! ওয়েবসাইটে এখন আর নোটিশ দেখাবে না।');
     } catch {
       if (onUpdateNotice) {
-        await onUpdateNotice(null);
+        await Promise.resolve(onUpdateNotice(null)).catch(() => {});
       }
       setNoticeText('');
       setNoticeActive(false);

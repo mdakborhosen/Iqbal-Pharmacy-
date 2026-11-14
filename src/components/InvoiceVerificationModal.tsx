@@ -27,7 +27,7 @@ import {
 import { Transaction } from '../types';
 import { parseTransactionItemsDetailed, formatCleanMoney } from '../data/bdMedicines';
 import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, withAsyncTimeout } from '../firebase';
 
 interface InvoiceVerificationModalProps {
   isOpen: boolean;
@@ -137,35 +137,43 @@ export const InvoiceVerificationModal: React.FC<InvoiceVerificationModalProps> =
 
       let allFound: Transaction[] = [...localMatches];
 
-      // 2. Query Firestore if online
+      // 2. Query Firestore in parallel with strict timeout if online
       try {
-        // Query by invoiceNo exact
         const invQ = query(collection(db, 'transactions'), where('invoiceNo', '==', q));
-        const invSnap = await getDocs(invQ);
-        invSnap.forEach((d) => {
-          const item = { id: d.id, ...(d.data() as Omit<Transaction, 'id'>) };
-          if (!allFound.some((x) => x.invoiceNo === item.invoiceNo)) {
-            allFound.push(item);
-          }
-        });
+        const patQueryPromise =
+          q.startsWith('PAT-') || q.startsWith('pat-') || q.length > 2
+            ? withAsyncTimeout(
+                getDocs(query(collection(db, 'transactions'), where('partyId', '==', q))),
+                3000,
+                null
+              ).catch(() => null)
+            : Promise.resolve(null);
 
-        // Also query public_invoices if present
-        try {
-          const pubDoc = await getDoc(doc(db, 'public_invoices', q.replace(/\//g, '_')));
-          if (pubDoc.exists()) {
-            const item = { id: pubDoc.id, ...(pubDoc.data() as Omit<Transaction, 'id'>) };
+        const [invSnap, pubDoc, patSnap] = await Promise.all([
+          withAsyncTimeout(getDocs(invQ), 3000, null).catch(() => null),
+          withAsyncTimeout(getDoc(doc(db, 'public_invoices', q.replace(/\//g, '_'))), 3000, null).catch(
+            () => null
+          ),
+          patQueryPromise,
+        ]);
+
+        if (invSnap) {
+          invSnap.forEach((d) => {
+            const item = { id: d.id, ...(d.data() as Omit<Transaction, 'id'>) };
             if (!allFound.some((x) => x.invoiceNo === item.invoiceNo)) {
               allFound.push(item);
             }
-          }
-        } catch {
-          // ignore
+          });
         }
 
-        // Query by partyId (patient ID)
-        if (q.startsWith('PAT-') || q.startsWith('pat-') || q.length > 2) {
-          const patQ = query(collection(db, 'transactions'), where('partyId', '==', q));
-          const patSnap = await getDocs(patQ);
+        if (pubDoc && pubDoc.exists()) {
+          const item = { id: pubDoc.id, ...(pubDoc.data() as Omit<Transaction, 'id'>) };
+          if (!allFound.some((x) => x.invoiceNo === item.invoiceNo)) {
+            allFound.push(item);
+          }
+        }
+
+        if (patSnap) {
           patSnap.forEach((d) => {
             const item = { id: d.id, ...(d.data() as Omit<Transaction, 'id'>) };
             if (!allFound.some((x) => x.invoiceNo === item.invoiceNo)) {

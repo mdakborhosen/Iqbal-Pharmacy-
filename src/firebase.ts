@@ -171,9 +171,95 @@ export function handleFirestoreError(
   console.warn('Firestore Sync Notice: ', JSON.stringify(errInfo));
 }
 
+export function withAsyncTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  fallback: T
+): Promise<T> {
+  const effectiveMs =
+    typeof navigator !== 'undefined' && navigator.onLine === false
+      ? Math.min(timeoutMs, 200)
+      : timeoutMs;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise.catch(() => fallback),
+    new Promise<T>((resolve) => {
+      timer = setTimeout(() => resolve(fallback), effectiveMs);
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+export function fireAndRaceFirestoreWrite(
+  writePromise: Promise<unknown>,
+  operationType: OperationType,
+  path: string | null,
+  timeoutMs = 1200
+): Promise<void> {
+  const effectiveMs =
+    typeof navigator !== 'undefined' && navigator.onLine === false
+      ? 50
+      : timeoutMs;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const guarded = writePromise.catch((err) => {
+    handleFirestoreError(err, operationType, path);
+  });
+  return Promise.race([
+    guarded.then(() => undefined),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(() => resolve(), effectiveMs);
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+export function fireAndRaceFirestoreWrites(
+  writes: Array<{ promise: Promise<unknown>; operationType: OperationType; path: string | null }>,
+  timeoutMs = 1200
+): Promise<void> {
+  if (writes.length === 0) return Promise.resolve();
+  const effectiveMs =
+    typeof navigator !== 'undefined' && navigator.onLine === false
+      ? 50
+      : timeoutMs;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const all = Promise.allSettled(
+    writes.map((w) =>
+      w.promise.catch((err) => {
+        handleFirestoreError(err, w.operationType, w.path);
+      })
+    )
+  );
+  return Promise.race([
+    all.then(() => undefined),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(() => resolve(), effectiveMs);
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+function getAuthApiBase(): string {
+  if (typeof window === 'undefined') return '';
+  const hostname = window.location.hostname;
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname.endsWith('.run.app')) {
+    return '';
+  }
+  return 'https://ais-pre-gftser6y7eip7eqqokrgd4-145385287677.asia-southeast1.run.app';
+}
+
+function fetchAuthWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 2500): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(id));
+}
+
 async function testConnection() {
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
+    await withAsyncTimeout(getDocFromServer(doc(db, 'test', 'connection')), 3000, null);
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
       console.warn('Operating in offline-first cache mode.');
@@ -209,20 +295,12 @@ export async function signInShopCloudAccount(params?: {
   if (cleanPassword) {
     // If an existing session is in auth with different user, sign out first
     if (auth.currentUser && auth.currentUser.email !== cleanEmail) {
-      try {
-        await signOut(auth);
-      } catch {
-        // ignore
-      }
+      await withAsyncTimeout(signOut(auth), 1200, undefined);
     }
 
     // Ensure anonymous Firebase connection if needed so Firestore allows reading registered_users
     if (!auth.currentUser) {
-      try {
-        await signInAnonymously(auth);
-      } catch {
-        // ignore
-      }
+      await withAsyncTimeout(signInAnonymously(auth), 1800, null);
     }
 
     // 1. Detect whether the login input is a phone number or an email
@@ -241,13 +319,13 @@ export async function signInShopCloudAccount(params?: {
       role?: string;
     } | null = null;
 
-    // Check direct server multi-device database
+    // Check direct server multi-device database with strict timeout
     try {
-      const srvRes = await fetch('/api/auth/login', {
+      const srvRes = await fetchAuthWithTimeout(`${getAuthApiBase()}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ident: rawInput, password: cleanPassword }),
-      });
+      }, 2500);
       if (srvRes.ok) {
         const srvData = await srvRes.json();
         if (srvData?.user) {
@@ -261,8 +339,8 @@ export async function signInShopCloudAccount(params?: {
       if (e instanceof Error && e.message.includes('ভুল পাসওয়ার্ড')) throw e;
     }
 
-    // Check by Phone (supporting 11-digit 01..., 13-digit 8801..., or 10-digit 1...)
-    if (targetPhoneDigits) {
+    // Check by Phone (parallel with timeout)
+    if (!matchedCloudUser && targetPhoneDigits) {
       const candidates = [
         targetPhoneDigits,
         targetPhoneDigits.length >= 10 ? '0' + targetPhoneDigits.slice(-10) : '',
@@ -270,74 +348,71 @@ export async function signInShopCloudAccount(params?: {
         targetPhoneDigits.length >= 10 ? targetPhoneDigits.slice(-10) : '',
       ].filter(Boolean);
 
-      for (const pCandidate of candidates) {
-        if (matchedCloudUser) break;
-        try {
-          const snap = await getDoc(doc(db, 'registered_users', `user_phone_${pCandidate}`));
-          if (snap.exists()) {
-            matchedCloudUser = snap.data() as typeof matchedCloudUser;
-            break;
-          }
-        } catch {
-          // ignore network or offline error
+      const snaps = await Promise.all(
+        candidates.map((pCandidate) =>
+          withAsyncTimeout(getDoc(doc(db, 'registered_users', `user_phone_${pCandidate}`)), 2000, null)
+        )
+      );
+      for (const snap of snaps) {
+        if (snap && snap.exists()) {
+          matchedCloudUser = snap.data() as typeof matchedCloudUser;
+          break;
         }
       }
     }
 
-    // Check by Email
+    // Check by Email (parallel with timeout)
     if (!matchedCloudUser && cleanEmail && !isInputPhone) {
-      try {
-        const safeEmailKey = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_');
-        let snap = await getDoc(doc(db, 'registered_users', `user_email_${safeEmailKey}`));
-        if (!snap.exists()) {
-          snap = await getDoc(doc(db, 'registered_users', cleanEmail));
-        }
-        if (snap.exists()) {
+      const safeEmailKey = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const snaps = await Promise.all([
+        withAsyncTimeout(getDoc(doc(db, 'registered_users', `user_email_${safeEmailKey}`)), 2000, null),
+        withAsyncTimeout(getDoc(doc(db, 'registered_users', cleanEmail)), 2000, null),
+      ]);
+      for (const snap of snaps) {
+        if (snap && snap.exists()) {
           matchedCloudUser = snap.data() as typeof matchedCloudUser;
+          break;
         }
-      } catch {
-        // ignore
       }
     }
 
-    // Check by Custom User ID / Username (e.g. user_id_...)
+    // Check by Custom User ID / Username (parallel with timeout)
     if (!matchedCloudUser && rawInput) {
-      try {
-        const cleanKey = rawInput.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_');
-        let snap = await getDoc(doc(db, 'registered_users', `user_id_${cleanKey}`));
-        if (!snap.exists()) {
-          snap = await getDoc(doc(db, 'registered_users', cleanKey));
-        }
-        if (snap.exists()) {
+      const cleanKey = rawInput.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_');
+      const snaps = await Promise.all([
+        withAsyncTimeout(getDoc(doc(db, 'registered_users', `user_id_${cleanKey}`)), 2000, null),
+        withAsyncTimeout(getDoc(doc(db, 'registered_users', cleanKey)), 2000, null),
+      ]);
+      for (const snap of snaps) {
+        if (snap && snap.exists()) {
           matchedCloudUser = snap.data() as typeof matchedCloudUser;
+          break;
         }
-      } catch {
-        // ignore
       }
     }
 
-    // Check in shared shop profile for registered owner accounts (both doc IDs)
+    // Check in shared shop profile for registered owner accounts (parallel with timeout)
     if (!matchedCloudUser) {
-      for (const shopDocId of ['shared_iqbal_pharmacy_v1', 'shop_iqbal_pharmacy']) {
-        try {
-          const shopSnap = await getDoc(doc(db, 'shops', shopDocId));
-          if (shopSnap.exists()) {
-            const sData = shopSnap.data() as Record<string, unknown>;
-            const ownersMap = (sData?.registeredOwners || {}) as Record<string, typeof matchedCloudUser>;
-            for (const key of Object.keys(ownersMap)) {
-              const acc = ownersMap[key];
-              if (!acc) continue;
-              const accPhoneDigits = (acc.phone || '').replace(/[^0-9]/g, '');
-              const matchPhone = targetPhoneDigits && (accPhoneDigits.endsWith(targetPhoneDigits.slice(-10)) || targetPhoneDigits.endsWith(accPhoneDigits.slice(-10)));
-              const matchEmail = acc.email && acc.email.toLowerCase() === cleanEmail.toLowerCase();
-              if (matchPhone || matchEmail) {
-                matchedCloudUser = acc;
-                break;
-              }
+      const shopSnaps = await Promise.all(
+        ['shared_iqbal_pharmacy_v1', 'shop_iqbal_pharmacy'].map((shopDocId) =>
+          withAsyncTimeout(getDoc(doc(db, 'shops', shopDocId)), 2000, null)
+        )
+      );
+      for (const shopSnap of shopSnaps) {
+        if (shopSnap && shopSnap.exists()) {
+          const sData = shopSnap.data() as Record<string, unknown>;
+          const ownersMap = (sData?.registeredOwners || {}) as Record<string, typeof matchedCloudUser>;
+          for (const key of Object.keys(ownersMap)) {
+            const acc = ownersMap[key];
+            if (!acc) continue;
+            const accPhoneDigits = (acc.phone || '').replace(/[^0-9]/g, '');
+            const matchPhone = targetPhoneDigits && (accPhoneDigits.endsWith(targetPhoneDigits.slice(-10)) || targetPhoneDigits.endsWith(accPhoneDigits.slice(-10)));
+            const matchEmail = acc.email && acc.email.toLowerCase() === cleanEmail.toLowerCase();
+            if (matchPhone || matchEmail) {
+              matchedCloudUser = acc;
+              break;
             }
           }
-        } catch {
-          // ignore
         }
         if (matchedCloudUser) break;
       }
@@ -407,10 +482,13 @@ export async function signInShopCloudAccount(params?: {
       }
     }
 
-    // 4. Try Firebase Auth with email & password if online and not rejected
+    // 4. Try Firebase Auth with email & password if online and not rejected (with strict timeout)
     if (!firebaseUid) {
       try {
-        const cred = await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
+        const cred = await Promise.race([
+          signInWithEmailAndPassword(auth, cleanEmail, cleanPassword),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('auth-timeout')), 2500)),
+        ]);
         firebaseUid = cred.user.uid;
         resolvedEmail = cred.user.email || cleanEmail;
       } catch (err: unknown) {
@@ -434,11 +512,7 @@ export async function signInShopCloudAccount(params?: {
 
   // Ensure Firebase client is authenticated so Firestore rules allow reads/writes
   if (!auth.currentUser) {
-    try {
-      await signInAnonymously(auth);
-    } catch {
-      // ignore
-    }
+    await withAsyncTimeout(signInAnonymously(auth), 1800, null);
   }
 
   const resolvedDigits = phone.replace(/[^0-9]/g, '');
@@ -475,6 +549,7 @@ export async function registerNewShopOwnerAccount(params: {
   email: string;
   phone: string;
   password: string;
+  autoSaveSession?: boolean;
 }): Promise<ShopCloudSession> {
   const rawEmail = (params.email || '').trim();
   const phone = (params.phone || '').trim();
@@ -508,15 +583,15 @@ export async function registerNewShopOwnerAccount(params: {
     : `shop_owner_${safeEmailKey.slice(0, 32)}`;
 
   if (cleanPhoneDigits) {
-    try {
-      const snap = await getDoc(doc(db, 'registered_users', `user_phone_${cleanPhoneDigits}`));
-      if (snap.exists()) {
-        const ex = snap.data();
-        existingOwnerId = ex?.ownerId || '';
-        existingStaffId = ex?.staffId || '';
-      }
-    } catch {
-      // ignore
+    const snap = await withAsyncTimeout(
+      getDoc(doc(db, 'registered_users', `user_phone_${cleanPhoneDigits}`)),
+      1200,
+      null
+    );
+    if (snap && snap.exists()) {
+      const ex = snap.data();
+      existingOwnerId = ex?.ownerId || '';
+      existingStaffId = ex?.staffId || '';
     }
   }
 
@@ -528,7 +603,7 @@ export async function registerNewShopOwnerAccount(params: {
     try {
       const cred = await Promise.race([
         createUserWithEmailAndPassword(auth, cleanEmail, cleanPassword),
-        timeoutPromise(3000),
+        timeoutPromise(typeof navigator !== 'undefined' && navigator.onLine === false ? 100 : 1800),
       ]);
       firebaseUid = cred.user.uid;
       updateProfile(cred.user, { displayName }).catch(() => {});
@@ -538,7 +613,7 @@ export async function registerNewShopOwnerAccount(params: {
         try {
           const cred = await Promise.race([
             signInWithEmailAndPassword(auth, cleanEmail, cleanPassword),
-            timeoutPromise(3000),
+            timeoutPromise(typeof navigator !== 'undefined' && navigator.onLine === false ? 100 : 1500),
           ]);
           firebaseUid = cred.user.uid;
         } catch {
@@ -554,13 +629,9 @@ export async function registerNewShopOwnerAccount(params: {
 
   // Ensure Firebase client is signed in anonymously if email provider is disabled or domain not yet whitelisted
   if (!auth.currentUser) {
-    try {
-      await Promise.race([signInAnonymously(auth), timeoutPromise(2000)]).catch(() => {});
-      if (!firebaseUid && auth.currentUser) {
-        firebaseUid = auth.currentUser.uid;
-      }
-    } catch {
-      // ignore
+    await withAsyncTimeout(signInAnonymously(auth), 1200, null);
+    if (!firebaseUid && auth.currentUser) {
+      firebaseUid = auth.currentUser.uid;
     }
   }
 
@@ -635,14 +706,11 @@ export async function registerNewShopOwnerAccount(params: {
     }
     writePromises.push(setDoc(doc(db, 'staff', scopedStaffDocId), staffDocData, { merge: true }));
 
-    await Promise.race([
-      Promise.allSettled(writePromises),
-      timeoutPromise(3000),
-    ]);
+    await withAsyncTimeout(Promise.allSettled(writePromises), 1000, null);
 
     // Also persist directly to server multi-device database so any other device logs in instantly
     try {
-      fetch('/api/auth/register', {
+      fetchAuthWithTimeout(`${getAuthApiBase()}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -654,7 +722,7 @@ export async function registerNewShopOwnerAccount(params: {
           shopId: targetShopId,
           role: 'owner',
         }),
-      }).catch(() => {});
+      }, 2500).catch(() => {});
     } catch {}
   } catch (cloudErr) {
     console.warn('Failed to save to registered_users collection:', cloudErr);
@@ -705,34 +773,38 @@ export async function registerNewShopOwnerAccount(params: {
     loggedInAt: Date.now(),
   };
 
-  saveShopCloudSession(session);
+  const shouldSaveSession = params.autoSaveSession !== false;
+  if (shouldSaveSession) {
+    saveShopCloudSession(session);
+  } else {
+    // Do not keep an unapproved user signed into Firebase Auth when caller stays logged out
+    await withAsyncTimeout(signOut(auth), 1000, undefined).catch(() => {});
+  }
   return session;
 }
 
-export async function signInWithGoogle(fallbackEmail = 'mhakbor2001@gmail.com'): Promise<ShopCloudSession> {
+export async function signInWithGoogle(): Promise<ShopCloudSession> {
   try {
     const res = await signInWithPopup(auth, googleProvider);
+    const email = (res.user.email || '').toLowerCase();
+    const isMasterEmail =
+      email === 'mhakbor2001@gmail.com' ||
+      email === 'iqbalmahmud498@gmail.com';
+    const safeKey = email.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 32);
     const session: ShopCloudSession = {
       uid: res.user.uid,
-      email: res.user.email || fallbackEmail,
-      displayName: res.user.displayName || 'ইকবাল মাহমুদ (Owner)',
-      shopName: 'ইকবাল ফার্মেসী',
-      phone: '01812-358839',
+      shopId: isMasterEmail ? 'shop_iqbal_pharmacy' : `shop_${safeKey}`,
+      email,
+      displayName: res.user.displayName || (isMasterEmail ? 'ইকবাল মাহমুদ (Owner)' : 'দোকান মালিক (Owner)'),
+      shopName: isMasterEmail ? 'ইকবাল ফার্মেসী' : 'ফার্মেসী',
+      phone: isMasterEmail ? '01812-358839' : '',
       operatorRole: 'owner',
       loggedInAt: Date.now(),
     };
     saveShopCloudSession(session);
     return session;
   } catch {
-    // If popup is blocked by browser/iframe or domain is not whitelisted in Firebase OAuth,
-    // seamlessly complete login using Shop Cloud Account so the user is never stuck
-    return signInShopCloudAccount({
-      email: fallbackEmail,
-      displayName: 'ইকবাল মাহমুদ (Owner)',
-      shopName: 'ইকবাল ফার্মেসী',
-      phone: '01812-358839',
-      operatorRole: 'owner',
-    });
+    throw new Error('Google লগইন সম্পন্ন হয়নি। অনুগ্রহ করে মোবাইল নম্বর/ইমেইল ও পাসওয়ার্ড দিয়ে লগইন করুন।');
   }
 }
 
@@ -744,11 +816,7 @@ export async function logOutUser() {
   } catch {
     // ignore
   }
-  try {
-    await signOut(auth);
-  } catch {
-    // ignore signout error
-  }
+  await withAsyncTimeout(signOut(auth), 1500, undefined);
 }
 
 export function sanitizeString(val: string, maxLen: number, fallback = 'N/A'): string {

@@ -102,6 +102,8 @@ import {
   auth,
   db,
   EXPLICIT_LOGOUT_KEY,
+  fireAndRaceFirestoreWrite,
+  fireAndRaceFirestoreWrites,
   handleFirestoreError,
   loadSavedShopCloudSession,
   LOGGED_OUT_FLAG_KEY,
@@ -113,6 +115,7 @@ import {
   saveShopCloudSession,
   SHOP_CLOUD_SESSION_KEY,
   ShopCloudSession,
+  withAsyncTimeout,
   signInShopCloudAccount,
   signInWithGoogle,
 } from './firebase';
@@ -764,8 +767,8 @@ export default function App() {
   const [loginErrorMessage, setLoginErrorMessage] = useState<string | null>(null);
 
   // New Owner Registration State
-  const [registerShopName, setRegisterShopName] = useState('ইকবাল ফার্মেসী');
-  const [registerOwnerName, setRegisterOwnerName] = useState('ইকবাল মাহমুদ');
+  const [registerShopName, setRegisterShopName] = useState('');
+  const [registerOwnerName, setRegisterOwnerName] = useState('');
   const [registerEmail, setRegisterEmail] = useState('');
   const [registerPhone, setRegisterPhone] = useState('');
   const [registerPassword, setRegisterPassword] = useState('');
@@ -1501,7 +1504,7 @@ export default function App() {
         setAuthReady(true);
         if (currUser) {
           try {
-            await signOut(auth);
+            await withAsyncTimeout(signOut(auth), 1500, undefined);
           } catch {
             // ignore
           }
@@ -2443,14 +2446,15 @@ export default function App() {
 
     if (user || isCloudLoggedIn) {
       const scopedAlertId = getScopedFirestoreDocId(effectiveShopId, alertId);
-      try {
-        await setDoc(
+      await fireAndRaceFirestoreWrite(
+        setDoc(
           doc(db, 'price_alerts', scopedAlertId),
           buildPriceAlertCloudPayload(newAlert, effectiveCloudUid, effectiveShopId)
-        );
-      } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, `price_alerts/${scopedAlertId}`);
-      }
+        ),
+        OperationType.CREATE,
+        `price_alerts/${scopedAlertId}`,
+        1000
+      );
     }
   };
 
@@ -2479,12 +2483,12 @@ export default function App() {
     const targetOwnerUid = effectiveCloudUid;
     try {
       const [invSnap, txSnap, custSnap, staffSnap, customMedSnap, shopDocSnap] = await Promise.all([
-        getDocs(query(collection(db, 'inventory'), where('shopId', '==', targetShopId))),
-        getDocs(query(collection(db, 'transactions'), where('shopId', '==', targetShopId))),
-        getDocs(query(collection(db, 'customers'), where('shopId', '==', targetShopId))),
-        getDocs(query(collection(db, 'staff'), where('shopId', '==', targetShopId))),
-        getDocs(query(collection(db, 'custom_medicines'), where('shopId', '==', targetShopId))),
-        getDoc(doc(db, 'shops', targetShopId)),
+        withAsyncTimeout(getDocs(query(collection(db, 'inventory'), where('shopId', '==', targetShopId))), 4000, null),
+        withAsyncTimeout(getDocs(query(collection(db, 'transactions'), where('shopId', '==', targetShopId))), 4000, null),
+        withAsyncTimeout(getDocs(query(collection(db, 'customers'), where('shopId', '==', targetShopId))), 4000, null),
+        withAsyncTimeout(getDocs(query(collection(db, 'staff'), where('shopId', '==', targetShopId))), 4000, null),
+        withAsyncTimeout(getDocs(query(collection(db, 'custom_medicines'), where('shopId', '==', targetShopId))), 4000, null),
+        withAsyncTimeout(getDoc(doc(db, 'shops', targetShopId)), 4000, null),
       ]);
 
       let hasCloudData = false;
@@ -2492,7 +2496,7 @@ export default function App() {
 
       // 1. Transactions: Bidirectional merge with timestamp priority & canonical IDs
       const txMap = new Map<string, Transaction>();
-      if (!txSnap.empty) {
+      if (txSnap && !txSnap.empty) {
         hasCloudData = true;
         for (const d of txSnap.docs) {
           const raw = d.data() as Record<string, unknown>;
@@ -2538,7 +2542,7 @@ export default function App() {
 
       // 2. Inventory: Bidirectional merge
       const invMap = new Map<string, InventoryItem>();
-      if (!invSnap.empty) {
+      if (invSnap && !invSnap.empty) {
         hasCloudData = true;
         for (const d of invSnap.docs) {
           const data = d.data() as Record<string, unknown>;
@@ -2580,7 +2584,7 @@ export default function App() {
 
       // 3. Customers: Bidirectional merge
       const custMap = new Map<string, Customer>();
-      if (!custSnap.empty) {
+      if (custSnap && !custSnap.empty) {
         hasCloudData = true;
         for (const d of custSnap.docs) {
           const data = d.data() as Record<string, unknown>;
@@ -2624,7 +2628,7 @@ export default function App() {
 
       // 4. Staff: Bidirectional merge & strict identity deduplication (Never allow duplicate Owner/staff rows)
       const collectedStaff: StaffMember[] = [];
-      if (!staffSnap.empty) {
+      if (staffSnap && !staffSnap.empty) {
         for (const d of staffSnap.docs) {
           const data = d.data() as Record<string, unknown>;
           const canonId = getCanonicalDocId((data.id as string) || d.id, targetShopId);
@@ -2652,7 +2656,7 @@ export default function App() {
       saveLocal(getScopedStorageKey(STORAGE_KEYS.STAFF, targetShopId), deduplicatedStaff);
 
       // 5. Custom Medicines
-      if (!customMedSnap.empty) {
+      if (customMedSnap && !customMedSnap.empty) {
         const cmMap = new Map<string, CustomMedicine>();
         for (const d of customMedSnap.docs) {
           const data = d.data() as Record<string, unknown>;
@@ -2678,7 +2682,7 @@ export default function App() {
       }
 
       // 6. Shop Profile (strictly scoped by targetShopId)
-      if (shopDocSnap.exists()) {
+      if (shopDocSnap && shopDocSnap.exists()) {
         const rawData = shopDocSnap.data() as Omit<ShopProfile, 'id'>;
         const updatedShop: ShopProfile = {
           ...rawData,
@@ -2737,22 +2741,7 @@ export default function App() {
         return;
       }
 
-      try {
-        localStorage.removeItem(LOGGED_OUT_FLAG_KEY);
-        sessionStorage.removeItem(EXPLICIT_LOGOUT_KEY);
-      } catch {
-        // ignore
-      }
-
-      // Ensure Firebase client connection is ready for Firestore security rules
-      if (!auth.currentUser) {
-        try {
-          await signInAnonymously(auth);
-        } catch {
-          // ignore
-        }
-      }
-
+      // Do NOT clear logout flags until authentication & approval are confirmed
       // 1. Direct Master Owner Credentials Check: 01812358839 & 01822487909 with 000000 or IqbalPharmacy#2026
       const isDefaultOwnerIdent =
         cleanIdent.toLowerCase() === 'mhakbor2001@gmail.com' ||
@@ -3019,22 +3008,22 @@ export default function App() {
           cleanIdent.toLowerCase(),
         ].filter(Boolean) as string[];
 
-        for (const key of searchDocKeys) {
-          try {
-            const snap = await getDoc(doc(db, 'registered_users', key));
-            if (snap.exists()) {
-              matchedCloudUser = snap.data();
-              break;
-            }
-          } catch {
-            // ignore
+        const keySnaps = await Promise.all(
+          searchDocKeys.map((key) =>
+            withAsyncTimeout(getDoc(doc(db, 'registered_users', key)), 2000, null)
+          )
+        );
+        for (const snap of keySnaps) {
+          if (snap && snap.exists()) {
+            matchedCloudUser = snap.data();
+            break;
           }
         }
       }
 
       if (!matchedCloudUser) {
-        try {
-          const regSnap = await getDocs(collection(db, 'registered_users'));
+        const regSnap = await withAsyncTimeout(getDocs(collection(db, 'registered_users')), 2500, null);
+        if (regSnap) {
           for (const uDoc of regSnap.docs) {
             const uData = uDoc.data();
             const uPhoneDigits = (uData.phone || '').replace(/[^0-9]/g, '');
@@ -3057,15 +3046,13 @@ export default function App() {
               break;
             }
           }
-        } catch {
-          // ignore
         }
       }
 
       // 3. Multi-device live lookup in Firestore 'staff' collection
       let matchedStaffDoc: StaffMember | null = null;
-      try {
-        const staffSnap = await getDocs(collection(db, 'staff'));
+      const staffSnap = await withAsyncTimeout(getDocs(collection(db, 'staff')), 2500, null);
+      if (staffSnap) {
         for (const sDoc of staffSnap.docs) {
           const sData = sDoc.data() as StaffMember;
           const sPhoneDigits = (sData.phone || '').replace(/[^0-9]/g, '');
@@ -3091,8 +3078,6 @@ export default function App() {
             break;
           }
         }
-      } catch {
-        // ignore
       }
 
       // 4. Offline local registry fallback
@@ -3371,18 +3356,27 @@ export default function App() {
     }
     setCloudLoginLoading(true);
     try {
-      try {
-        localStorage.removeItem(LOGGED_OUT_FLAG_KEY);
-        sessionStorage.removeItem(EXPLICIT_LOGOUT_KEY);
-      } catch {
-        // ignore
-      }
       const rawEmail = registerEmail.trim();
       const phoneDigits = registerPhone.replace(/[^0-9]/g, '');
       const isValidEmailFormat = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail);
       const cleanEmail = isValidEmailFormat
         ? rawEmail.toLowerCase()
         : `${phoneDigits || 'owner'}@iqbalpharmacy.bd`;
+
+      const isMasterAppOwner =
+        cleanEmail.toLowerCase() === 'mhakbor2001@gmail.com' ||
+        cleanEmail.toLowerCase() === 'iqbalmahmud498@gmail.com' ||
+        phoneDigits === '01812358839' ||
+        phoneDigits.endsWith('1812358839');
+
+      if (isMasterAppOwner) {
+        try {
+          localStorage.removeItem(LOGGED_OUT_FLAG_KEY);
+          sessionStorage.removeItem(EXPLICIT_LOGOUT_KEY);
+        } catch {
+          // ignore
+        }
+      }
 
       // Prevent duplicate users: Check if an owner/staff account with this phone or email already exists
       const existingUser = staffList.find((s) => {
@@ -3399,6 +3393,7 @@ export default function App() {
         email: cleanEmail,
         phone: registerPhone.trim(),
         password: registerPassword.trim(),
+        autoSaveSession: isMasterAppOwner,
       });
 
       const targetShopId = session.shopId || computeCurrentShopId(session);
@@ -3442,15 +3437,6 @@ export default function App() {
             updatedAtMs: Date.now(),
           };
 
-      try {
-        await setDoc(
-          doc(db, 'shops', targetShopId),
-          buildShopCloudPayload(updatedProfile, session.uid, targetShopId)
-        );
-      } catch {
-        // ignore
-      }
-
       const bd11 = phoneDigits.length >= 10 ? '0' + phoneDigits.slice(-10) : phoneDigits;
       const deterministicStaffId = phoneDigits.length >= 6
         ? `staff_owner_${bd11}`
@@ -3480,14 +3466,25 @@ export default function App() {
         updatedAtMs: Date.now(),
       };
 
-      try {
-        await setDoc(
-          doc(db, 'staff', getScopedFirestoreDocId(targetShopId, staffId)),
-          buildStaffCloudPayload(ownerStaff, session.uid, targetShopId)
-        );
-      } catch {
-        // ignore
-      }
+      const scopedStaffDocKey = getScopedFirestoreDocId(targetShopId, staffId);
+      await fireAndRaceFirestoreWrites([
+        {
+          promise: setDoc(
+            doc(db, 'shops', targetShopId),
+            buildShopCloudPayload(updatedProfile, session.uid, targetShopId)
+          ),
+          operationType: OperationType.WRITE,
+          path: `shops/${targetShopId}`,
+        },
+        {
+          promise: setDoc(
+            doc(db, 'staff', scopedStaffDocKey),
+            buildStaffCloudPayload(ownerStaff, session.uid, targetShopId)
+          ),
+          operationType: OperationType.WRITE,
+          path: `staff/${scopedStaffDocKey}`,
+        },
+      ], 1200);
 
       // Register into multi-device universal global cloud database
       registerGlobalCloudUser({
@@ -3505,12 +3502,6 @@ export default function App() {
         roleTitle: assignedRole,
         updatedAtMs: Date.now(),
       }).catch(() => {});
-
-      const isMasterAppOwner =
-        cleanEmail.toLowerCase() === 'mhakbor2001@gmail.com' ||
-        cleanEmail.toLowerCase() === 'iqbalmahmud498@gmail.com' ||
-        phoneDigits === '01812358839' ||
-        phoneDigits.endsWith('1812358839');
 
       const registrationPayload: ShopRegistration = {
         id: `shop_reg_${phoneDigits || Date.now()}`,
@@ -3617,21 +3608,18 @@ export default function App() {
 
   const handleGoogleCloudLogin = async () => {
     setCloudLoginLoading(true);
+    setLoginErrorMessage(null);
     try {
-      try {
-        localStorage.removeItem(LOGGED_OUT_FLAG_KEY);
-        sessionStorage.removeItem(EXPLICIT_LOGOUT_KEY);
-      } catch {
-        // ignore
-      }
-      const session = await signInWithGoogle(
-        cloudLoginEmail.trim() || 'mhakbor2001@gmail.com'
-      );
+      const session = await signInWithGoogle();
       setCloudSession(session);
       setShowCloudLoginModal(false);
       showToast(
         `দোকান ক্লাউড লগইন সফল হয়েছে! (${session.shopName} — ${session.email})`
       );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Google লগইন সম্পন্ন হয়নি।';
+      setLoginErrorMessage(msg);
+      showToast(msg);
     } finally {
       setCloudLoginLoading(false);
     }
@@ -3674,7 +3662,7 @@ export default function App() {
       console.warn('Firebase signout warning:', err);
     }
 
-    // Clear all active shop & user lists from UI state immediately on logout
+    // Clear all active shop & user lists and lock UI state immediately on logout
     setStaffList([]);
     setActiveStaff(GUEST_OFFLINE_STAFF);
     setShopProfile(GUEST_SHOP_PROFILE);
@@ -3689,11 +3677,22 @@ export default function App() {
     setShopRegistrations([]);
     setEditingInvoiceTx(null);
     setDeletedIds([]);
+    setShowScannerModal(false);
+    setMobileMenuOpen(false);
+    setShowCloudLoginModal(false);
+    setLoginErrorMessage(null);
+    setCloudAuthTab('login');
+    setCloudLoginPassword('');
+    setRegisterShopName('');
+    setRegisterOwnerName('');
+    setRegisterEmail('');
+    setRegisterPhone('');
+    setRegisterPassword('');
 
     showToast(
       lang === 'bn'
-        ? 'ফায়ারস্টোর ডাটাবেস ও একাউন্ট থেকে সফলভাবে লগআউট সম্পন্ন হয়েছে।'
-        : 'Successfully logged out from Firestore account.'
+        ? 'সফলভাবে লগআউট হয়েছে। এডমিন প্যানেলের সমস্ত ফিচার এখন বন্ধ রয়েছে।'
+        : 'Successfully logged out. All admin features are now locked.'
     );
   };
 
@@ -3750,7 +3749,12 @@ export default function App() {
           batch.set(doc(db, 'price_alerts', docKey), buildPriceAlertCloudPayload(a, uid, sid));
         }
 
-        await batch.commit();
+        await fireAndRaceFirestoreWrite(
+          batch.commit(),
+          OperationType.WRITE,
+          'batch_seed',
+          2500
+        );
       }
       const snapshot: PharmacyPersistentState = {
         shopProfile: { ...shopProfile, id: sid, shopId: sid },
@@ -4497,6 +4501,7 @@ export default function App() {
 
     // Check if any item's purchase price or selling price was changed in the POS cart, or if it's a custom product
     if (params.syncModifiedPricesToCatalog) {
+      const catalogUpdates: Promise<void>[] = [];
       for (const item of posCart) {
         const catMed = fullCatalog.find((m) => m.id === item.medicineId);
         const unitChanged =
@@ -4507,37 +4512,44 @@ export default function App() {
           item.purchasePrice !== undefined &&
           Math.abs(item.purchasePrice - item.originalPurchasePrice) > 0.001;
         if (catMed && (unitChanged || purChanged)) {
-          await handleSaveMedicineCatalog(
-            {
-              brandName: item.brandName || catMed.brandName,
-              genericName: item.genericName || catMed.genericName,
-              companyName: item.companyName || catMed.companyName,
-              strength: item.strength || catMed.strength,
-              dosageForm: item.dosageForm || catMed.dosageForm,
-              packSize: catMed.packSize,
-              purchasePrice: item.purchasePrice,
-              unitPrice: item.unitPrice,
-              stripPrice: Number((item.unitPrice * (catMed.unitsPerStrip || 10)).toFixed(2)),
-              therapeuticClass: catMed.therapeuticClass,
-              indication: catMed.indication,
-            },
-            catMed
+          catalogUpdates.push(
+            handleSaveMedicineCatalog(
+              {
+                brandName: item.brandName || catMed.brandName,
+                genericName: item.genericName || catMed.genericName,
+                companyName: item.companyName || catMed.companyName,
+                strength: item.strength || catMed.strength,
+                dosageForm: item.dosageForm || catMed.dosageForm,
+                packSize: catMed.packSize,
+                purchasePrice: item.purchasePrice,
+                unitPrice: item.unitPrice,
+                stripPrice: Number((item.unitPrice * (catMed.unitsPerStrip || 10)).toFixed(2)),
+                therapeuticClass: catMed.therapeuticClass,
+                indication: catMed.indication,
+              },
+              catMed
+            )
           );
         } else if (!catMed && item.brandName.trim()) {
-          await handleSaveMedicineCatalog({
-            brandName: item.brandName.trim(),
-            genericName: (item.genericName || item.brandName).trim(),
-            companyName: (item.companyName || 'Custom / General').trim(),
-            strength: (item.strength || 'Standard').trim(),
-            dosageForm: (item.dosageForm || 'Tablet').trim(),
-            packSize: '10 × 10 (100 pcs)',
-            purchasePrice: item.purchasePrice,
-            unitPrice: item.unitPrice,
-            stripPrice: Number((item.unitPrice * 10).toFixed(2)),
-            therapeuticClass: 'Custom Product',
-            indication: 'কাস্টম প্রডাক্ট / সাধারণ ব্যবহার্য',
-          });
+          catalogUpdates.push(
+            handleSaveMedicineCatalog({
+              brandName: item.brandName.trim(),
+              genericName: (item.genericName || item.brandName).trim(),
+              companyName: (item.companyName || 'Custom / General').trim(),
+              strength: (item.strength || 'Standard').trim(),
+              dosageForm: (item.dosageForm || 'Tablet').trim(),
+              packSize: '10 × 10 (100 pcs)',
+              purchasePrice: item.purchasePrice,
+              unitPrice: item.unitPrice,
+              stripPrice: Number((item.unitPrice * 10).toFixed(2)),
+              therapeuticClass: 'Custom Product',
+              indication: 'কাস্টম প্রডাক্ট / সাধারণ ব্যবহার্য',
+            })
+          );
         }
+      }
+      if (catalogUpdates.length > 0) {
+        await Promise.allSettled(catalogUpdates);
       }
     }
 
@@ -4762,29 +4774,40 @@ export default function App() {
       });
     }
 
-    try {
-      await setDoc(
-        doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, txId)),
-        buildTransactionCloudPayload(newTx, effectiveCloudUid, effectiveShopId)
-      );
-
-      for (const invItem of modifiedInvMap.values()) {
-        const canonInvId = getCanonicalDocId(invItem.id, effectiveShopId);
-        await setDoc(
-          doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, canonInvId)),
-          buildInventoryCloudPayload(invItem, effectiveCloudUid, effectiveShopId)
-        );
-      }
-
-      for (const cObj of updatedCustomersForCloud) {
-        const canonCustId = getCanonicalDocId(cObj.id, effectiveShopId);
-        await setDoc(
-          doc(db, 'customers', getScopedFirestoreDocId(effectiveShopId, canonCustId)),
-          buildCustomerCloudPayload(cObj, effectiveCloudUid, effectiveShopId)
-        );
-      }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'transactions');
+    if (user || isCloudLoggedIn) {
+      const saleWrites: Array<{ promise: Promise<unknown>; operationType: OperationType; path: string | null }> = [
+        {
+          promise: setDoc(
+            doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, txId)),
+            buildTransactionCloudPayload(newTx, effectiveCloudUid, effectiveShopId)
+          ),
+          operationType: OperationType.WRITE,
+          path: `transactions/${txId}`,
+        },
+        ...Array.from(modifiedInvMap.values()).map((invItem) => {
+          const canonInvId = getCanonicalDocId(invItem.id, effectiveShopId);
+          return {
+            promise: setDoc(
+              doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, canonInvId)),
+              buildInventoryCloudPayload(invItem, effectiveCloudUid, effectiveShopId)
+            ),
+            operationType: OperationType.WRITE,
+            path: `inventory/${canonInvId}`,
+          };
+        }),
+        ...updatedCustomersForCloud.map((cObj) => {
+          const canonCustId = getCanonicalDocId(cObj.id, effectiveShopId);
+          return {
+            promise: setDoc(
+              doc(db, 'customers', getScopedFirestoreDocId(effectiveShopId, canonCustId)),
+              buildCustomerCloudPayload(cObj, effectiveCloudUid, effectiveShopId)
+            ),
+            operationType: OperationType.WRITE,
+            path: `customers/${canonCustId}`,
+          };
+        }),
+      ];
+      await fireAndRaceFirestoreWrites(saleWrites, 1200);
     }
 
     setPosCart([]);
@@ -4946,6 +4969,7 @@ export default function App() {
       }
     }
 
+    const purchaseCatalogSyncPromises: Promise<void>[] = [];
     for (const purItem of validPurchaseCart) {
       // Formula: Tp + Vat = Product Price. (মোট মূল্য + মোট ভ্যাট) ÷ প্রোডাক্ট সংখ্যা = সিঙ্গেল পিসের ক্রয় মূল্য
       const effPackRate =
@@ -5012,19 +5036,21 @@ export default function App() {
             : effectiveSinglePiecePurchasePrice > 0
             ? Number((effectiveSinglePiecePurchasePrice * 1.15).toFixed(2))
             : 5;
-        await handleSaveMedicineCatalog({
-          brandName: purItem.brandName.trim(),
-          genericName: (purItem.genericName || purItem.brandName).trim(),
-          companyName: (params.supplierCompany || purItem.companyName || 'Custom / General').trim(),
-          strength: (purItem.strength || 'Standard').trim(),
-          dosageForm: (purItem.dosageForm || 'Tablet').trim(),
-          packSize: purItem.packDetailFormula || purItem.packSize || '10 × 10 (100 pcs)',
-          purchasePrice: effectiveSinglePiecePurchasePrice,
-          unitPrice: fallbackRetail,
-          stripPrice: Number((fallbackRetail * 10).toFixed(2)),
-          therapeuticClass: 'Custom Product',
-          indication: 'কাস্টম প্রডাক্ট / সাধারণ ব্যবহার্য',
-        });
+        purchaseCatalogSyncPromises.push(
+          handleSaveMedicineCatalog({
+            brandName: purItem.brandName.trim(),
+            genericName: (purItem.genericName || purItem.brandName).trim(),
+            companyName: (params.supplierCompany || purItem.companyName || 'Custom / General').trim(),
+            strength: (purItem.strength || 'Standard').trim(),
+            dosageForm: (purItem.dosageForm || 'Tablet').trim(),
+            packSize: purItem.packDetailFormula || purItem.packSize || '10 × 10 (100 pcs)',
+            purchasePrice: effectiveSinglePiecePurchasePrice,
+            unitPrice: fallbackRetail,
+            stripPrice: Number((fallbackRetail * 10).toFixed(2)),
+            therapeuticClass: 'Custom Product',
+            indication: 'কাস্টম প্রডাক্ট / সাধারণ ব্যবহার্য',
+          })
+        );
       } else if (params.syncModifiedPricesToCatalog && baseMed) {
         const oldPur =
           typeof baseMed.purchasePrice === 'number' && baseMed.purchasePrice > 0
@@ -5034,21 +5060,23 @@ export default function App() {
           Math.abs(baseMed.unitPrice - purItem.unitPrice) > 0.001 ||
           Math.abs(oldPur - effectiveSinglePiecePurchasePrice) > 0.001
         ) {
-          await handleSaveMedicineCatalog(
-            {
-              brandName: purItem.brandName || baseMed.brandName,
-              genericName: purItem.genericName || baseMed.genericName,
-              companyName: params.supplierCompany || baseMed.companyName,
-              strength: purItem.strength || baseMed.strength,
-              dosageForm: purItem.dosageForm || baseMed.dosageForm,
-              packSize: baseMed.packSize,
-              purchasePrice: effectiveSinglePiecePurchasePrice,
-              unitPrice: purItem.unitPrice,
-              stripPrice: Number((purItem.unitPrice * (baseMed.unitsPerStrip || 10)).toFixed(2)),
-              therapeuticClass: baseMed.therapeuticClass,
-              indication: baseMed.indication,
-            },
-            baseMed
+          purchaseCatalogSyncPromises.push(
+            handleSaveMedicineCatalog(
+              {
+                brandName: purItem.brandName || baseMed.brandName,
+                genericName: purItem.genericName || baseMed.genericName,
+                companyName: params.supplierCompany || baseMed.companyName,
+                strength: purItem.strength || baseMed.strength,
+                dosageForm: purItem.dosageForm || baseMed.dosageForm,
+                packSize: baseMed.packSize,
+                purchasePrice: effectiveSinglePiecePurchasePrice,
+                unitPrice: purItem.unitPrice,
+                stripPrice: Number((purItem.unitPrice * (baseMed.unitsPerStrip || 10)).toFixed(2)),
+                therapeuticClass: baseMed.therapeuticClass,
+                indication: baseMed.indication,
+              },
+              baseMed
+            )
           );
         }
       }
@@ -5110,6 +5138,10 @@ export default function App() {
       }
     }
 
+    if (purchaseCatalogSyncPromises.length > 0) {
+      await Promise.allSettled(purchaseCatalogSyncPromises);
+    }
+
     unmarkDeletedId(txId);
     setTransactions((prev) => {
       const next = existingEditedTx
@@ -5124,21 +5156,29 @@ export default function App() {
     saveLocal(STORAGE_KEYS.INVENTORY, nextInventoryList);
     saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveShopId), nextInventoryList);
 
-    try {
-      await setDoc(
-        doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, txId)),
-        buildTransactionCloudPayload(newTx, effectiveCloudUid, effectiveShopId)
-      );
-
-      for (const invItem of changedInvMap.values()) {
-        const canonInvId = getCanonicalDocId(invItem.id, effectiveShopId);
-        await setDoc(
-          doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, canonInvId)),
-          buildInventoryCloudPayload(invItem, effectiveCloudUid, effectiveShopId)
-        );
-      }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'transactions');
+    if (user || isCloudLoggedIn) {
+      const purchaseWrites: Array<{ promise: Promise<unknown>; operationType: OperationType; path: string | null }> = [
+        {
+          promise: setDoc(
+            doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, txId)),
+            buildTransactionCloudPayload(newTx, effectiveCloudUid, effectiveShopId)
+          ),
+          operationType: OperationType.WRITE,
+          path: `transactions/${txId}`,
+        },
+        ...Array.from(changedInvMap.values()).map((invItem) => {
+          const canonInvId = getCanonicalDocId(invItem.id, effectiveShopId);
+          return {
+            promise: setDoc(
+              doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, canonInvId)),
+              buildInventoryCloudPayload(invItem, effectiveCloudUid, effectiveShopId)
+            ),
+            operationType: OperationType.WRITE,
+            path: `inventory/${canonInvId}`,
+          };
+        }),
+      ];
+      await fireAndRaceFirestoreWrites(purchaseWrites, 1200);
     }
 
     setPurchaseCart([]);
@@ -5197,13 +5237,16 @@ export default function App() {
       return next;
     });
 
-    try {
-      await setDoc(
-        doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, canonTxId)),
-        buildTransactionCloudPayload(updatedTxObj, effectiveCloudUid, effectiveShopId)
+    if (user || isCloudLoggedIn) {
+      await fireAndRaceFirestoreWrite(
+        setDoc(
+          doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, canonTxId)),
+          buildTransactionCloudPayload(updatedTxObj, effectiveCloudUid, effectiveShopId)
+        ),
+        OperationType.UPDATE,
+        `transactions/${canonTxId}`,
+        1200
       );
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `transactions/${canonTxId}`);
     }
     showToast(`ভাউচার (${existingTx.invoiceNo}) সফলভাবে এডিট করা হয়েছে!`);
   };
@@ -5311,24 +5354,37 @@ export default function App() {
       });
     }
 
-    try {
-      await setDoc(
-        doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, canonTxId)),
-        buildTransactionCloudPayload(updatedInvoice, effectiveCloudUid, effectiveShopId)
-      );
-      await setDoc(
-        doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, dueTxId)),
-        buildTransactionCloudPayload(dueTx, effectiveCloudUid, effectiveShopId)
-      );
+    if (user || isCloudLoggedIn) {
+      const dueWrites: Array<{ promise: Promise<unknown>; operationType: OperationType; path: string | null }> = [
+        {
+          promise: setDoc(
+            doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, canonTxId)),
+            buildTransactionCloudPayload(updatedInvoice, effectiveCloudUid, effectiveShopId)
+          ),
+          operationType: OperationType.WRITE,
+          path: `transactions/${canonTxId}`,
+        },
+        {
+          promise: setDoc(
+            doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, dueTxId)),
+            buildTransactionCloudPayload(dueTx, effectiveCloudUid, effectiveShopId)
+          ),
+          operationType: OperationType.WRITE,
+          path: `transactions/${dueTxId}`,
+        },
+      ];
       if (updatedCust) {
         const canonCustId = getCanonicalDocId(updatedCust.id, effectiveShopId);
-        await setDoc(
-          doc(db, 'customers', getScopedFirestoreDocId(effectiveShopId, canonCustId)),
-          buildCustomerCloudPayload(updatedCust, effectiveCloudUid, effectiveShopId)
-        );
+        dueWrites.push({
+          promise: setDoc(
+            doc(db, 'customers', getScopedFirestoreDocId(effectiveShopId, canonCustId)),
+            buildCustomerCloudPayload(updatedCust, effectiveCloudUid, effectiveShopId)
+          ),
+          operationType: OperationType.WRITE,
+          path: `customers/${canonCustId}`,
+        });
       }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'pay_invoice_due');
+      await fireAndRaceFirestoreWrites(dueWrites, 1200);
     }
 
     showToast(
@@ -5377,29 +5433,43 @@ export default function App() {
         }
       }
 
+      const deleteWrites: Array<{ promise: Promise<unknown>; operationType: OperationType; path: string | null }> = [];
       if (modifiedInv.length > 0) {
         setInventory(nextInv);
         saveLocal(STORAGE_KEYS.INVENTORY, nextInv);
         saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveShopId), nextInv);
-        for (const invItem of modifiedInv) {
-          try {
-            await setDoc(
-              doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, invItem.id)),
-              buildInventoryCloudPayload(invItem, effectiveCloudUid, effectiveShopId)
-            );
-          } catch {
-            // ignore
+        if (user || isCloudLoggedIn) {
+          for (const invItem of modifiedInv) {
+            deleteWrites.push({
+              promise: setDoc(
+                doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, invItem.id)),
+                buildInventoryCloudPayload(invItem, effectiveCloudUid, effectiveShopId)
+              ),
+              operationType: OperationType.UPDATE,
+              path: `inventory/${invItem.id}`,
+            });
           }
         }
       }
-    }
-
-    for (const delId of Array.from(new Set([scopedTxId, canonTxId, tx.id]))) {
-      try {
-        await deleteDoc(doc(db, 'transactions', delId));
-      } catch {
-        // ignore
+      if (user || isCloudLoggedIn) {
+        for (const delId of Array.from(new Set([scopedTxId, canonTxId, tx.id]))) {
+          deleteWrites.push({
+            promise: deleteDoc(doc(db, 'transactions', delId)),
+            operationType: OperationType.DELETE,
+            path: `transactions/${delId}`,
+          });
+        }
+        await fireAndRaceFirestoreWrites(deleteWrites, 1200);
       }
+    } else if (user || isCloudLoggedIn) {
+      await fireAndRaceFirestoreWrites(
+        Array.from(new Set([scopedTxId, canonTxId, tx.id])).map((delId) => ({
+          promise: deleteDoc(doc(db, 'transactions', delId)),
+          operationType: OperationType.DELETE,
+          path: `transactions/${delId}`,
+        })),
+        1200
+      );
     }
     showToast(`লেনদেন (${tx.invoiceNo}) ডিলিট করা হয়েছে এবং স্টক সমন্বয় হয়েছে`);
   };
@@ -5545,18 +5615,27 @@ export default function App() {
     }
 
     if (user || isCloudLoggedIn) {
-      try {
-        await setDoc(
-          doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, txId)),
-          buildTransactionCloudPayload(newTx, effectiveCloudUid, effectiveShopId)
-        );
-        await setDoc(
-          doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, newInvId)),
-          buildInventoryCloudPayload(targetInvObj, effectiveCloudUid, effectiveShopId)
-        );
-      } catch (error) {
-        handleFirestoreError(error, OperationType.WRITE, 'transactions');
-      }
+      await fireAndRaceFirestoreWrites(
+        [
+          {
+            promise: setDoc(
+              doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, txId)),
+              buildTransactionCloudPayload(newTx, effectiveCloudUid, effectiveShopId)
+            ),
+            operationType: OperationType.WRITE,
+            path: `transactions/${txId}`,
+          },
+          {
+            promise: setDoc(
+              doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, newInvId)),
+              buildInventoryCloudPayload(targetInvObj, effectiveCloudUid, effectiveShopId)
+            ),
+            operationType: OperationType.WRITE,
+            path: `inventory/${newInvId}`,
+          },
+        ],
+        1200
+      );
     }
 
     showToast(`${params.brandName} (+${params.qty} পিস) ক্রয় ইনভয়েস ও স্টকে যুক্ত হয়েছে!`);
@@ -5632,14 +5711,15 @@ export default function App() {
 
     if (user || isCloudLoggedIn) {
       const scopedInvId = getScopedFirestoreDocId(effectiveShopId, targetId);
-      try {
-        await setDoc(
+      await fireAndRaceFirestoreWrite(
+        setDoc(
           doc(db, 'inventory', scopedInvId),
           buildInventoryCloudPayload(savedInvObj, effectiveCloudUid, effectiveShopId)
-        );
-      } catch (error) {
-        handleFirestoreError(error, OperationType.WRITE, `inventory/${scopedInvId}`);
-      }
+        ),
+        OperationType.WRITE,
+        `inventory/${scopedInvId}`,
+        1200
+      );
     }
 
     // Also sync updated purchasePrice and unitPrice to the Medicine Catalog so prices stay synchronized everywhere
@@ -5731,14 +5811,15 @@ export default function App() {
     });
     if (user || isCloudLoggedIn) {
       const scopedInvId = getScopedFirestoreDocId(effectiveShopId, canonId);
-      try {
-        await setDoc(
+      await fireAndRaceFirestoreWrite(
+        setDoc(
           doc(db, 'inventory', scopedInvId),
           buildInventoryCloudPayload(updatedItem, effectiveCloudUid, effectiveShopId)
-        );
-      } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, `inventory/${scopedInvId}`);
-      }
+        ),
+        OperationType.UPDATE,
+        `inventory/${scopedInvId}`,
+        1200
+      );
     }
     showToast(`${item.brandName}-এর স্টকে +${addQty} পিস যুক্ত হয়েছে!`);
   };
@@ -5835,18 +5916,27 @@ export default function App() {
     });
 
     if (user || isCloudLoggedIn) {
-      try {
-        await setDoc(
-          doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, txId)),
-          buildTransactionCloudPayload(newTx, effectiveCloudUid, effectiveShopId)
-        );
-        await setDoc(
-          doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, touchedInv.id)),
-          buildInventoryCloudPayload(touchedInv, effectiveCloudUid, effectiveShopId)
-        );
-      } catch (err) {
-        console.warn('Cloud sync transaction warning:', err);
-      }
+      await fireAndRaceFirestoreWrites(
+        [
+          {
+            promise: setDoc(
+              doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, txId)),
+              buildTransactionCloudPayload(newTx, effectiveCloudUid, effectiveShopId)
+            ),
+            operationType: OperationType.WRITE,
+            path: `transactions/${txId}`,
+          },
+          {
+            promise: setDoc(
+              doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, touchedInv.id)),
+              buildInventoryCloudPayload(touchedInv, effectiveCloudUid, effectiveShopId)
+            ),
+            operationType: OperationType.WRITE,
+            path: `inventory/${touchedInv.id}`,
+          },
+        ],
+        1200
+      );
     }
 
     showToast(`⚡ সরাসরি বিক্রি সম্পন্ন: ${params.brandName} (${params.qty} পিস) ৳${totalAmount} ক্যাশ জমা হয়েছে ও স্টক আপডেট হয়েছে!`);
@@ -5963,18 +6053,27 @@ export default function App() {
     });
 
     if (user || isCloudLoggedIn) {
-      try {
-        await setDoc(
-          doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, txId)),
-          buildTransactionCloudPayload(newTx, effectiveCloudUid, effectiveShopId)
-        );
-        await setDoc(
-          doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, touchedPurInv.id)),
-          buildInventoryCloudPayload(touchedPurInv, effectiveCloudUid, effectiveShopId)
-        );
-      } catch (err) {
-        console.warn('Cloud sync transaction warning:', err);
-      }
+      await fireAndRaceFirestoreWrites(
+        [
+          {
+            promise: setDoc(
+              doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, txId)),
+              buildTransactionCloudPayload(newTx, effectiveCloudUid, effectiveShopId)
+            ),
+            operationType: OperationType.WRITE,
+            path: `transactions/${txId}`,
+          },
+          {
+            promise: setDoc(
+              doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, touchedPurInv.id)),
+              buildInventoryCloudPayload(touchedPurInv, effectiveCloudUid, effectiveShopId)
+            ),
+            operationType: OperationType.WRITE,
+            path: `inventory/${touchedPurInv.id}`,
+          },
+        ],
+        1200
+      );
     }
 
     showToast(`📥 সরাসরি স্টক ইন সম্পন্ন: ${params.brandName} (+${params.qty} পিস) স্টকে যোগ হয়েছে!`);
@@ -6075,12 +6174,15 @@ export default function App() {
       saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveShopId), next);
       return next;
     });
-    for (const delId of Array.from(new Set([scopedId, canonId, id]))) {
-      try {
-        await deleteDoc(doc(db, 'inventory', delId));
-      } catch {
-        // ignore if not in Firestore
-      }
+    if (user || isCloudLoggedIn) {
+      await fireAndRaceFirestoreWrites(
+        Array.from(new Set([scopedId, canonId, id])).map((delId) => ({
+          promise: deleteDoc(doc(db, 'inventory', delId)),
+          operationType: OperationType.DELETE,
+          path: `inventory/${delId}`,
+        })),
+        1200
+      );
     }
     showToast('কাস্টম স্টক আইটেম মুছে ফেলা হয়েছে');
   };
@@ -6130,14 +6232,17 @@ export default function App() {
       });
     }
 
-    const scopedCustId = getScopedFirestoreDocId(effectiveShopId, custId);
-    try {
-      await setDoc(
-        doc(db, 'customers', scopedCustId),
-        buildCustomerCloudPayload(newCust, effectiveCloudUid, effectiveShopId)
+    if (user || isCloudLoggedIn) {
+      const scopedCustId = getScopedFirestoreDocId(effectiveShopId, custId);
+      await fireAndRaceFirestoreWrite(
+        setDoc(
+          doc(db, 'customers', scopedCustId),
+          buildCustomerCloudPayload(newCust, effectiveCloudUid, effectiveShopId)
+        ),
+        OperationType.WRITE,
+        `customers/${scopedCustId}`,
+        1200
       );
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `customers/${scopedCustId}`);
     }
     showToast(`${data.name}-এর কাস্টমার লেজার সংরক্ষিত হয়েছে!`);
   };
@@ -6152,12 +6257,15 @@ export default function App() {
       saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOMERS, effectiveShopId), next);
       return next;
     });
-    for (const delId of Array.from(new Set([scopedId, canonId, id]))) {
-      try {
-        await deleteDoc(doc(db, 'customers', delId));
-      } catch {
-        // ignore
-      }
+    if (user || isCloudLoggedIn) {
+      await fireAndRaceFirestoreWrites(
+        Array.from(new Set([scopedId, canonId, id])).map((delId) => ({
+          promise: deleteDoc(doc(db, 'customers', delId)),
+          operationType: OperationType.DELETE,
+          path: `customers/${delId}`,
+        })),
+        1200
+      );
     }
     showToast('কাস্টমার লেজার স্থায়ীভাবে মুছে ফেলা হয়েছে');
   };
@@ -6227,17 +6335,28 @@ export default function App() {
       return next;
     });
 
-    try {
-      await setDoc(
-        doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, txId)),
-        buildTransactionCloudPayload(dueTx, effectiveCloudUid, effectiveShopId)
+    if (user || isCloudLoggedIn) {
+      await fireAndRaceFirestoreWrites(
+        [
+          {
+            promise: setDoc(
+              doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, txId)),
+              buildTransactionCloudPayload(dueTx, effectiveCloudUid, effectiveShopId)
+            ),
+            operationType: OperationType.WRITE,
+            path: `transactions/${txId}`,
+          },
+          {
+            promise: setDoc(
+              doc(db, 'customers', getScopedFirestoreDocId(effectiveShopId, canonCustId)),
+              buildCustomerCloudPayload(updatedCustObj, effectiveCloudUid, effectiveShopId)
+            ),
+            operationType: OperationType.WRITE,
+            path: `customers/${canonCustId}`,
+          },
+        ],
+        1200
       );
-      await setDoc(
-        doc(db, 'customers', getScopedFirestoreDocId(effectiveShopId, canonCustId)),
-        buildCustomerCloudPayload(updatedCustObj, effectiveCloudUid, effectiveShopId)
-      );
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'customers_due_payment');
     }
     showToast(`৳${amt.toFixed(2)} বকেয়া আদায় লেজারে সংরক্ষিত হয়েছে!`);
   };
@@ -6363,27 +6482,31 @@ export default function App() {
       return next;
     });
 
-    const scopedMedId = getScopedFirestoreDocId(effectiveShopId, medId);
-    try {
-      await setDoc(
-        doc(db, 'custom_medicines', scopedMedId),
-        buildCustomMedCloudPayload(newMed, effectiveCloudUid, effectiveShopId)
-      );
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `custom_medicines/${scopedMedId}`);
-    }
-
-    if (matchedInvItemForCloud) {
-      const invItem = matchedInvItemForCloud as InventoryItem;
-      const canonInvId = getCanonicalDocId(invItem.id, effectiveShopId);
-      try {
-        await setDoc(
-          doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, canonInvId)),
-          buildInventoryCloudPayload(invItem, effectiveCloudUid, effectiveShopId)
-        );
-      } catch {
-        // ignore
+    if (user || isCloudLoggedIn) {
+      const scopedMedId = getScopedFirestoreDocId(effectiveShopId, medId);
+      const medWrites: Array<{ promise: Promise<unknown>; operationType: OperationType; path: string | null }> = [
+        {
+          promise: setDoc(
+            doc(db, 'custom_medicines', scopedMedId),
+            buildCustomMedCloudPayload(newMed, effectiveCloudUid, effectiveShopId)
+          ),
+          operationType: OperationType.WRITE,
+          path: `custom_medicines/${scopedMedId}`,
+        },
+      ];
+      if (matchedInvItemForCloud) {
+        const invItem = matchedInvItemForCloud as InventoryItem;
+        const canonInvId = getCanonicalDocId(invItem.id, effectiveShopId);
+        medWrites.push({
+          promise: setDoc(
+            doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, canonInvId)),
+            buildInventoryCloudPayload(invItem, effectiveCloudUid, effectiveShopId)
+          ),
+          operationType: OperationType.WRITE,
+          path: `inventory/${canonInvId}`,
+        });
       }
+      await fireAndRaceFirestoreWrites(medWrites, 1200);
     }
     showToast(
       targetMed
@@ -6409,12 +6532,15 @@ export default function App() {
       saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOM_MEDS, effectiveShopId), next);
       return next;
     });
-    for (const delId of Array.from(new Set([scopedId, canonId, medId]))) {
-      try {
-        await deleteDoc(doc(db, 'custom_medicines', delId));
-      } catch {
-        // ignore if medicine was built-in or not in Firestore
-      }
+    if (user || isCloudLoggedIn) {
+      await fireAndRaceFirestoreWrites(
+        Array.from(new Set([scopedId, canonId, medId])).map((delId) => ({
+          promise: deleteDoc(doc(db, 'custom_medicines', delId)),
+          operationType: OperationType.DELETE,
+          path: `custom_medicines/${delId}`,
+        })),
+        1200
+      );
     }
     showToast('কাস্টম ওষুধটি তালিকা থেকে মুছে ফেলা হয়েছে');
   };
@@ -6438,13 +6564,14 @@ export default function App() {
         return next;
       });
       if (user || isCloudLoggedIn) {
-        for (const delId of Array.from(new Set([scopedId, canonId, existing.id]))) {
-          try {
-            await deleteDoc(doc(db, 'price_watches', delId));
-          } catch {
-            // ignore
-          }
-        }
+        await fireAndRaceFirestoreWrites(
+          Array.from(new Set([scopedId, canonId, existing.id])).map((delId) => ({
+            promise: deleteDoc(doc(db, 'price_watches', delId)),
+            operationType: OperationType.DELETE,
+            path: `price_watches/${delId}`,
+          })),
+          1200
+        );
       }
       showToast(`${med.brandName} মূল্য ট্র্যাকিং তালিকা থেকে সরানো হয়েছে`);
       return;
@@ -6475,14 +6602,17 @@ export default function App() {
       saveLocal(getScopedStorageKey(STORAGE_KEYS.PRICE_WATCHES, effectiveShopId), next);
       return next;
     });
-    const scopedWatchId = getScopedFirestoreDocId(effectiveShopId, watchId);
-    try {
-      await setDoc(
-        doc(db, 'price_watches', scopedWatchId),
-        buildPriceWatchCloudPayload(newWatch, effectiveCloudUid, effectiveShopId)
+    if (user || isCloudLoggedIn) {
+      const scopedWatchId = getScopedFirestoreDocId(effectiveShopId, watchId);
+      await fireAndRaceFirestoreWrite(
+        setDoc(
+          doc(db, 'price_watches', scopedWatchId),
+          buildPriceWatchCloudPayload(newWatch, effectiveCloudUid, effectiveShopId)
+        ),
+        OperationType.CREATE,
+        `price_watches/${scopedWatchId}`,
+        1200
       );
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, `price_watches/${scopedWatchId}`);
     }
     showToast(`${med.brandName} মূল্য নিরীক্ষণ ও অ্যালার্ট তালিকায় যুক্ত হয়েছে!`);
   };
@@ -6505,16 +6635,17 @@ export default function App() {
       saveLocal(getScopedStorageKey(STORAGE_KEYS.PRICE_ALERTS, effectiveShopId), next);
       return next;
     });
-    if (updatedAlert) {
+    if (updatedAlert && (user || isCloudLoggedIn)) {
       const scopedAlertId = getScopedFirestoreDocId(effectiveShopId, canonId);
-      try {
-        await setDoc(
+      await fireAndRaceFirestoreWrite(
+        setDoc(
           doc(db, 'price_alerts', scopedAlertId),
           buildPriceAlertCloudPayload(updatedAlert, effectiveCloudUid, effectiveShopId)
-        );
-      } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, `price_alerts/${scopedAlertId}`);
-      }
+        ),
+        OperationType.UPDATE,
+        `price_alerts/${scopedAlertId}`,
+        1000
+      );
     }
   };
 
@@ -6528,12 +6659,15 @@ export default function App() {
       saveLocal(getScopedStorageKey(STORAGE_KEYS.PRICE_ALERTS, effectiveShopId), next);
       return next;
     });
-    for (const delId of Array.from(new Set([scopedId, canonId, alertId]))) {
-      try {
-        await deleteDoc(doc(db, 'price_alerts', delId));
-      } catch {
-        // ignore
-      }
+    if (user || isCloudLoggedIn) {
+      await fireAndRaceFirestoreWrites(
+        Array.from(new Set([scopedId, canonId, alertId])).map((delId) => ({
+          promise: deleteDoc(doc(db, 'price_alerts', delId)),
+          operationType: OperationType.DELETE,
+          path: `price_alerts/${delId}`,
+        })),
+        1000
+      );
     }
     showToast('মূল্য অ্যালার্ট বিজ্ঞপ্তি মুছে ফেলা হয়েছে');
   };
@@ -6556,21 +6690,31 @@ export default function App() {
     saveLocal(STORAGE_KEYS.SHOP, nextShop);
     saveLocal(getScopedStorageKey(STORAGE_KEYS.SHOP, targetShopId), nextShop);
 
-    try {
-      await setDoc(
-        doc(db, 'shops', targetShopId),
-        buildShopCloudPayload(nextShop, effectiveCloudUid, targetShopId)
+    if (user || isCloudLoggedIn) {
+      await fireAndRaceFirestoreWrite(
+        setDoc(
+          doc(db, 'shops', targetShopId),
+          buildShopCloudPayload(nextShop, effectiveCloudUid, targetShopId)
+        ),
+        OperationType.WRITE,
+        `shops/${targetShopId}`,
+        1200
       );
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `shops/${targetShopId}`);
     }
     showToast('দোকানের একাউন্ট তথ্য সংরক্ষিত হয়েছে!');
   };
 
   const handleApproveShopRegistration = async (regId: string) => {
-    try {
-      const nowMs = Date.now();
-      await setDoc(
+    const nowMs = Date.now();
+    setShopRegistrations((prev) =>
+      prev.map((r) =>
+        r.id === regId
+          ? { ...r, status: 'approved', isApproved: true, approvedAtMs: nowMs, approvedBy: 'mhakbor2001@gmail.com' }
+          : r
+      )
+    );
+    await fireAndRaceFirestoreWrite(
+      setDoc(
         doc(db, 'shop_registrations', regId),
         {
           status: 'approved',
@@ -6579,37 +6723,32 @@ export default function App() {
           approvedBy: 'mhakbor2001@gmail.com',
         },
         { merge: true }
-      );
-      setShopRegistrations((prev) =>
-        prev.map((r) =>
-          r.id === regId
-            ? { ...r, status: 'approved', isApproved: true, approvedAtMs: nowMs, approvedBy: 'mhakbor2001@gmail.com' }
-            : r
-        )
-      );
-      showToast('শপ একাউন্টটি সফলভাবে অনুমোদন দেওয়া হয়েছে!');
-    } catch {
-      showToast('অনুমোদনে ত্রুটি হয়েছে');
-    }
+      ),
+      OperationType.UPDATE,
+      `shop_registrations/${regId}`,
+      1200
+    );
+    showToast('শপ একাউন্টটি সফলভাবে অনুমোদন দেওয়া হয়েছে!');
   };
 
   const handleRejectShopRegistration = async (regId: string) => {
-    try {
-      await setDoc(
+    setShopRegistrations((prev) =>
+      prev.map((r) => (r.id === regId ? { ...r, status: 'rejected', isApproved: false } : r))
+    );
+    await fireAndRaceFirestoreWrite(
+      setDoc(
         doc(db, 'shop_registrations', regId),
         {
           status: 'rejected',
           isApproved: false,
         },
         { merge: true }
-      );
-      setShopRegistrations((prev) =>
-        prev.map((r) => (r.id === regId ? { ...r, status: 'rejected', isApproved: false } : r))
-      );
-      showToast('শপ একাউন্টটি স্থগিত করা হয়েছে');
-    } catch {
-      showToast('স্থগিতে ত্রুটি হয়েছে');
-    }
+      ),
+      OperationType.UPDATE,
+      `shop_registrations/${regId}`,
+      1200
+    );
+    showToast('শপ একাউন্টটি স্থগিত করা হয়েছে');
   };
 
   const handleUpdateNotice = async (notice: ShopNotice | null) => {
@@ -6624,13 +6763,16 @@ export default function App() {
     setShopProfile(updatedShop);
     saveLocal(STORAGE_KEYS.SHOP, updatedShop);
     saveLocal(getScopedStorageKey(STORAGE_KEYS.SHOP, targetShopId), updatedShop);
-    try {
-      await setDoc(
-        doc(db, 'shops', targetShopId),
-        buildShopCloudPayload(updatedShop, effectiveCloudUid, targetShopId)
+    if (user || isCloudLoggedIn) {
+      await fireAndRaceFirestoreWrite(
+        setDoc(
+          doc(db, 'shops', targetShopId),
+          buildShopCloudPayload(updatedShop, effectiveCloudUid, targetShopId)
+        ),
+        OperationType.UPDATE,
+        `shops/${targetShopId}`,
+        1000
       );
-    } catch {
-      // ignore
     }
   };
 
@@ -6696,12 +6838,18 @@ export default function App() {
     });
     if (getCanonicalDocId(activeStaff.id, targetShopId) === stId) setActiveStaff(newStaff);
 
-    const scopedStaffId = getScopedFirestoreDocId(targetShopId, stId);
-    try {
-      await setDoc(
-        doc(db, 'staff', scopedStaffId),
-        buildStaffCloudPayload(newStaff, effectiveCloudUid, targetShopId)
-      );
+    if (user || isCloudLoggedIn) {
+      const scopedStaffId = getScopedFirestoreDocId(targetShopId, stId);
+      const staffWrites: Array<{ promise: Promise<unknown>; operationType: OperationType; path: string | null }> = [
+        {
+          promise: setDoc(
+            doc(db, 'staff', scopedStaffId),
+            buildStaffCloudPayload(newStaff, effectiveCloudUid, targetShopId)
+          ),
+          operationType: OperationType.WRITE,
+          path: `staff/${scopedStaffId}`,
+        },
+      ];
 
       // Index in registered_users so any other device discovers this staff member immediately
       const phoneDigits = (data.phone || '').replace(/[^0-9]/g, '');
@@ -6745,8 +6893,7 @@ export default function App() {
         };
         setDoc(doc(db, 'registered_users', `user_email_${safeEmailKey}`), userDocPayload).catch(() => {});
       }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `staff/${scopedStaffId}`);
+      await fireAndRaceFirestoreWrites(staffWrites, 1200);
     }
     showToast(`${enforcedName} প্রোফাইল সংরক্ষিত হয়েছে!`);
   };
@@ -6770,12 +6917,15 @@ export default function App() {
       }
       return remaining;
     });
-    for (const delId of Array.from(new Set([scopedId, canonId, id]))) {
-      try {
-        await deleteDoc(doc(db, 'staff', delId));
-      } catch {
-        // ignore if local demo staff was not in Firestore yet
-      }
+    if (user || isCloudLoggedIn) {
+      await fireAndRaceFirestoreWrites(
+        Array.from(new Set([scopedId, canonId, id])).map((delId) => ({
+          promise: deleteDoc(doc(db, 'staff', delId)),
+          operationType: OperationType.DELETE,
+          path: `staff/${delId}`,
+        })),
+        1200
+      );
     }
     showToast('স্টাফ প্রোফাইল স্থায়ীভাবে ডিলিট করা হয়েছে');
   };
@@ -6834,6 +6984,343 @@ export default function App() {
         transactions={transactions}
         shopProfile={isCloudLoggedIn ? shopProfile : DEFAULT_SHOP_PROFILE}
       />
+    );
+  }
+
+  // Strict Admin Auth Gate: While logged out, ALL /admin features stay completely closed and ONLY Login / Create Shop Account appears
+  if (!isCloudLoggedIn) {
+    return (
+      <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col">
+        {/* Minimal Locked Top Bar (No POS, No Carts, No Settings, No Admin Modules) */}
+        <header className="sticky top-0 z-30 bg-white border-b border-slate-200 px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-teal-700 text-white flex items-center justify-center shrink-0 shadow-xs">
+              <Lock className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm sm:text-base font-bold text-slate-900 truncate">
+                {lang === 'bn' ? 'ফার্মেসী এডমিন প্যানেল' : 'Pharmacy Admin Panel'}
+              </div>
+              <div className="text-[11px] font-medium text-rose-700 truncate">
+                {lang === 'bn' ? 'লগআউট অবস্থা · সকল ফিচার সুরক্ষিত' : 'Logged Out · All Features Locked'}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <span
+              className={`hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold border ${
+                isOnline
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                  : 'bg-amber-50 text-amber-800 border-amber-200'
+              }`}
+            >
+              {isOnline ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
+              <span>{isOnline ? (lang === 'bn' ? 'অনলাইন' : 'Online') : (lang === 'bn' ? 'অফলাইন' : 'Offline')}</span>
+            </span>
+
+            <button
+              type="button"
+              onClick={toggleLanguage}
+              className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 cursor-pointer"
+            >
+              {lang === 'bn' ? 'EN' : 'বাংলা'}
+            </button>
+
+            <a
+              href="/"
+              className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-800 flex items-center gap-1 whitespace-nowrap"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              <span>{lang === 'bn' ? 'পাবলিক সাইট' : 'Public Portal'}</span>
+            </a>
+          </div>
+        </header>
+
+        {/* Centered Login / Create Shop Account Card */}
+        <main className="flex-1 flex items-center justify-center p-4 sm:p-6">
+          <div className="w-full max-w-lg space-y-4">
+            {toastMessage && (
+              <div className="px-4 py-2.5 bg-slate-900 text-white text-xs font-medium rounded-lg flex items-center justify-between shadow-sm">
+                <span>{toastMessage}</span>
+                <button
+                  type="button"
+                  onClick={() => setToastMessage(null)}
+                  className="text-slate-400 hover:text-white ml-4 cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-5 sm:p-7 space-y-5">
+              {/* Locked Status Banner */}
+              <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3">
+                <div className="w-9 h-9 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+                  <Lock className="w-4.5 h-4.5" />
+                </div>
+                <div className="space-y-0.5 text-xs">
+                  <div className="font-bold text-amber-950">
+                    {lang === 'bn'
+                      ? 'এডমিন প্যানেলের সমস্ত ফিচার বর্তমানে বন্ধ রয়েছে'
+                      : 'All Admin Features Are Currently Locked'}
+                  </div>
+                  <p className="text-amber-900 leading-relaxed">
+                    {lang === 'bn'
+                      ? 'লগআউট অবস্থায় ক্রয়-বিক্রয়, ইনভেন্টরি, হিসাব ও সেটিংস বন্ধ থাকবে। কাজ শুরু করতে আপনার একাউন্টে লগইন করুন অথবা নতুন শপ একাউন্ট তৈরি করুন।'
+                      : 'POS, inventory, ledger, and settings are locked while logged out. Please log in or create a new shop account to continue.'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Heading */}
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-teal-700">
+                  <Cloud className="w-4 h-4" />
+                  <span>ফার্মেসী ও ডেন্টাল ম্যানেজমেন্ট সিস্টেম</span>
+                </div>
+                <h1 className="text-lg font-bold text-slate-900">
+                  {cloudAuthTab === 'register_owner'
+                    ? 'নতুন শপ / Owner একাউন্ট তৈরি করুন'
+                    : 'এডমিন লগইন (Owner ও স্টাফ)'}
+                </h1>
+              </div>
+
+              {/* Auth Mode Tabs */}
+              <div className="flex border-b border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCloudAuthTab('login');
+                    setLoginErrorMessage(null);
+                  }}
+                  className={`flex-1 py-2.5 text-xs font-bold text-center border-b-2 cursor-pointer transition-colors ${
+                    cloudAuthTab === 'login'
+                      ? 'border-teal-700 text-teal-800'
+                      : 'border-transparent text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  লগইন (Owner ও স্টাফ)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCloudAuthTab('register_owner');
+                    setLoginErrorMessage(null);
+                  }}
+                  className={`flex-1 py-2.5 text-xs font-bold text-center border-b-2 cursor-pointer transition-colors ${
+                    cloudAuthTab === 'register_owner'
+                      ? 'border-teal-700 text-teal-800'
+                      : 'border-transparent text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  নতুন শপ একাউন্ট তৈরি
+                </button>
+              </div>
+
+              {/* TAB 1: Login Form */}
+              {cloudAuthTab === 'login' && (
+                <form onSubmit={handleUniversalLoginSubmit} className="space-y-3.5">
+                  {loginErrorMessage && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 font-semibold leading-relaxed">
+                      ⚠️ {loginErrorMessage}
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">
+                      মোবাইল নম্বর অথবা ইমেইল / জিমেইল *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={cloudLoginEmail}
+                      onChange={(e) => setCloudLoginEmail(e.target.value)}
+                      placeholder="018XXXXXXXX অথবা example@gmail.com"
+                      className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-600"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-medium text-slate-700">
+                        লগইন পাসওয়ার্ড *
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setShowLoginPassword(!showLoginPassword)}
+                        className="text-[11px] text-teal-700 hover:text-teal-900 cursor-pointer inline-flex items-center gap-1"
+                      >
+                        {showLoginPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                        {showLoginPassword ? 'লুকান' : 'দেখুন'}
+                      </button>
+                    </div>
+                    <input
+                      type={showLoginPassword ? 'text' : 'password'}
+                      required
+                      value={cloudLoginPassword}
+                      onChange={(e) => setCloudLoginPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-600"
+                    />
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-center gap-2 pt-1">
+                    <button
+                      type="submit"
+                      disabled={cloudLoginLoading}
+                      className="w-full sm:flex-1 py-2.5 px-4 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-lg cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5 shadow-xs"
+                    >
+                      <LogIn className="w-4 h-4" />
+                      {cloudLoginLoading ? 'লগইন হচ্ছে...' : 'লগইন করুন (Owner / Staff)'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={cloudLoginLoading}
+                      onClick={handleGoogleCloudLogin}
+                      className="w-full sm:w-auto py-2.5 px-3.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg cursor-pointer disabled:opacity-50"
+                    >
+                      Google লগইন
+                    </button>
+                  </div>
+
+                  <div className="text-center pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCloudAuthTab('register_owner');
+                        setLoginErrorMessage(null);
+                      }}
+                      className="text-xs text-teal-700 hover:text-teal-900 font-semibold cursor-pointer underline"
+                    >
+                      নতুন শপ / Owner একাউন্ট তৈরি করবেন? এখানে ক্লিক করুন →
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* TAB 2: Create New Shop Owner Account Form */}
+              {cloudAuthTab === 'register_owner' && (
+                <form onSubmit={handleRegisterOwnerSubmit} className="space-y-3">
+                  {loginErrorMessage && (
+                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 font-semibold leading-relaxed">
+                      ℹ️ {loginErrorMessage}
+                    </div>
+                  )}
+
+                  <div className="p-3 bg-teal-50 border border-teal-200 rounded-lg text-xs text-teal-900 leading-relaxed">
+                    <strong>নতুন শপ একাউন্ট:</strong> আপনার ফার্মেসীর নাম, মালিকের নাম, মোবাইল নম্বর ও পাসওয়ার্ড দিয়ে নতুন শপ একাউন্ট তৈরি করুন।
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">
+                      দোকানের নাম (Shop Name) *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={registerShopName}
+                      onChange={(e) => setRegisterShopName(e.target.value)}
+                      placeholder="যেমন: ইকবাল ফার্মেসী"
+                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">
+                        মালিকের নাম (Owner Name) *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={registerOwnerName}
+                        onChange={(e) => setRegisterOwnerName(e.target.value)}
+                        placeholder="যেমন: ইকবাল মাহমুদ"
+                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">
+                        মোবাইল নম্বর *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={registerPhone}
+                        onChange={(e) => setRegisterPhone(e.target.value)}
+                        placeholder="018XXXXXXXX"
+                        className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">
+                      ইমেইল / জিমেইল (ঐচ্ছিক)
+                    </label>
+                    <input
+                      type="email"
+                      value={registerEmail}
+                      onChange={(e) => setRegisterEmail(e.target.value)}
+                      placeholder="owner@gmail.com"
+                      className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-medium text-slate-700">
+                        পাসওয়ার্ড সেট করুন *
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setShowRegisterPassword(!showRegisterPassword)}
+                        className="text-[11px] text-teal-700 hover:text-teal-900 cursor-pointer inline-flex items-center gap-1"
+                      >
+                        {showRegisterPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                        {showRegisterPassword ? 'লুকান' : 'দেখুন'}
+                      </button>
+                    </div>
+                    <input
+                      type={showRegisterPassword ? 'text' : 'password'}
+                      required
+                      value={registerPassword}
+                      onChange={(e) => setRegisterPassword(e.target.value)}
+                      placeholder="নূন্যতম ৬ অক্ষর"
+                      className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                    />
+                  </div>
+
+                  <div className="pt-1">
+                    <button
+                      type="submit"
+                      disabled={cloudLoginLoading}
+                      className="w-full py-2.5 px-4 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-lg cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5 shadow-xs"
+                    >
+                      <ShieldCheck className="w-4 h-4" />
+                      {cloudLoginLoading ? 'একাউন্ট তৈরি হচ্ছে...' : 'নতুন শপ একাউন্ট তৈরি করুন'}
+                    </button>
+                  </div>
+
+                  <div className="text-center pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCloudAuthTab('login');
+                        setLoginErrorMessage(null);
+                      }}
+                      className="text-xs text-teal-700 hover:text-teal-900 font-semibold cursor-pointer underline"
+                    >
+                      ইতিমধ্যে একাউন্ট আছে? লগইন করুন →
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
+        </main>
+      </div>
     );
   }
 

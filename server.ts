@@ -196,7 +196,7 @@ async function startServer() {
   // Multi-Device Cloud Auth: Register new owner or staff account
   app.post('/api/auth/register', (req, res) => {
     try {
-      const { phone, email, password, name, shopName, role } = req.body || {};
+      const { phone, email, password, name, shopName, role, shopId } = req.body || {};
       const cleanPhone = (phone || '').trim();
       const cleanPass = (password || '').trim();
       const cleanName = (name || '').trim() || 'মালিক (Owner)';
@@ -213,9 +213,11 @@ async function startServer() {
       const users: any[] = Array.isArray(record.registeredUsers) ? [...record.registeredUsers] : [];
       const bd11 = cleanDigits.length >= 10 ? '0' + cleanDigits.slice(-10) : cleanDigits;
       const autoId = cleanDigits.length >= 6 ? `staff_owner_${bd11}` : `staff_owner_${cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+      const cleanShopId = typeof shopId === 'string' && shopId.trim() ? shopId.trim() : undefined;
 
       const newRecord = {
         id: autoId,
+        ...(cleanShopId ? { shopId: cleanShopId } : {}),
         staffId: autoId,
         ownerId: `shop_owner_${bd11 || autoId}`,
         phone: cleanPhone,

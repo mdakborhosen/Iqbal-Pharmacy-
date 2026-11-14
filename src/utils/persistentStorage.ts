@@ -72,6 +72,13 @@ function openIdb(): Promise<IDBDatabase | null> {
     return Promise.resolve(null);
   }
   return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        resolve(null);
+      }
+    }, 1500);
     try {
       const req = window.indexedDB.open(IDB_NAME, 1);
       req.onupgradeneeded = () => {
@@ -80,10 +87,33 @@ function openIdb(): Promise<IDBDatabase | null> {
           db.createObjectStore(IDB_STORE);
         }
       };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => resolve(null);
+      req.onsuccess = () => {
+        clearTimeout(timer);
+        if (!settled) {
+          settled = true;
+          resolve(req.result);
+        }
+      };
+      req.onerror = () => {
+        clearTimeout(timer);
+        if (!settled) {
+          settled = true;
+          resolve(null);
+        }
+      };
+      req.onblocked = () => {
+        clearTimeout(timer);
+        if (!settled) {
+          settled = true;
+          resolve(null);
+        }
+      };
     } catch {
-      resolve(null);
+      clearTimeout(timer);
+      if (!settled) {
+        settled = true;
+        resolve(null);
+      }
     }
   });
 }
@@ -93,11 +123,27 @@ export async function saveIndexedDbSnapshot(state: PharmacyPersistentState): Pro
     const db = await openIdb();
     if (!db) return;
     await new Promise<void>((resolve) => {
-      const tx = db.transaction(IDB_STORE, 'readwrite');
-      const store = tx.objectStore(IDB_STORE);
-      store.put(state, IDB_KEY);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => resolve();
+      const timer = setTimeout(() => resolve(), 1500);
+      try {
+        const tx = db.transaction(IDB_STORE, 'readwrite');
+        const store = tx.objectStore(IDB_STORE);
+        store.put(state, IDB_KEY);
+        tx.oncomplete = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        tx.onerror = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        tx.onabort = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      } catch {
+        clearTimeout(timer);
+        resolve();
+      }
     });
   } catch {
     // ignore IDB errors
@@ -109,14 +155,24 @@ export async function loadIndexedDbSnapshot(): Promise<PharmacyPersistentState |
     const db = await openIdb();
     if (!db) return null;
     return await new Promise<PharmacyPersistentState | null>((resolve) => {
-      const tx = db.transaction(IDB_STORE, 'readonly');
-      const store = tx.objectStore(IDB_STORE);
-      const getReq = store.get(IDB_KEY);
-      getReq.onsuccess = () => {
-        const res = getReq.result as PharmacyPersistentState | undefined;
-        resolve(res && typeof res === 'object' ? res : null);
-      };
-      getReq.onerror = () => resolve(null);
+      const timer = setTimeout(() => resolve(null), 1500);
+      try {
+        const tx = db.transaction(IDB_STORE, 'readonly');
+        const store = tx.objectStore(IDB_STORE);
+        const getReq = store.get(IDB_KEY);
+        getReq.onsuccess = () => {
+          clearTimeout(timer);
+          const res = getReq.result as PharmacyPersistentState | undefined;
+          resolve(res && typeof res === 'object' ? res : null);
+        };
+        getReq.onerror = () => {
+          clearTimeout(timer);
+          resolve(null);
+        };
+      } catch {
+        clearTimeout(timer);
+        resolve(null);
+      }
     });
   } catch {
     return null;
@@ -347,40 +403,41 @@ export async function pushServerPharmacyState(
 ): Promise<PharmacyPersistentState | null> {
   const payloadState = { ...state, cloudSession: null };
 
-  // 1. Write to universal multi-device cloud database
-  try {
-    // Read current users to preserve
-    let existingUsers: any[] = [];
+  // 1. Write to universal multi-device cloud database in background with strict timeout
+  (async () => {
     try {
-      const curRes = await fetch(GLOBAL_CLOUD_URL, { cache: 'no-store' });
-      if (curRes.ok) {
-        const curJson = await curRes.json();
-        existingUsers = curJson?.data?.users || [];
-      }
-    } catch {}
+      let existingUsers: any[] = [];
+      try {
+        const curRes = await fetchWithTimeout(GLOBAL_CLOUD_URL, { cache: 'no-store' }, 2000);
+        if (curRes.ok) {
+          const curJson = await curRes.json();
+          existingUsers = curJson?.data?.users || [];
+        }
+      } catch {}
 
-    const cloudPayload = {
-      name: 'iqbal_pharmacy_global_db_v1',
-      data: {
-        state: payloadState,
-        users: existingUsers,
-        updatedAtMs: Date.now(),
-      },
-    };
+      const cloudPayload = {
+        name: 'iqbal_pharmacy_global_db_v1',
+        data: {
+          state: payloadState,
+          users: existingUsers,
+          updatedAtMs: Date.now(),
+        },
+      };
 
-    fetch(GLOBAL_CLOUD_URL, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cloudPayload),
-    }).catch(() => {});
-  } catch (err) {
-    console.warn('Global cloud push notice:', err);
-  }
+      await fetchWithTimeout(GLOBAL_CLOUD_URL, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cloudPayload),
+      }, 2500).catch(() => {});
+    } catch (err) {
+      console.warn('Global cloud push notice:', err);
+    }
+  })();
 
-  // 2. Write to Express server endpoint
+  // 2. Write to Express server endpoint with strict timeout
   try {
     const serverUrl = `${getApiBaseUrl()}/api/pharmacy-state`;
-    const res = await fetch(serverUrl, {
+    const res = await fetchWithTimeout(serverUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -388,7 +445,7 @@ export async function pushServerPharmacyState(
         mode,
         unmarkedIds,
       }),
-    });
+    }, 2500);
     if (res.ok) {
       const data = await res.json();
       return data?.state ? (data.state as PharmacyPersistentState) : payloadState;

@@ -23,6 +23,7 @@ import {
 import { InventoryItem, MedicineCatalogItem } from '../types';
 import { formatCleanMoney } from '../data/bdMedicines';
 import { createWorker } from 'tesseract.js';
+import { fetchWithTimeout, getApiBaseUrl } from '../utils/persistentStorage';
 
 export interface ScannedBoxData {
   brandName: string;
@@ -609,13 +610,17 @@ export const BoxScannerModal: React.FC<BoxScannerModalProps> = ({
         }
       }
 
-      // 3. Ultra-fast Server Vision with 0 thinking budget
+      // 3. Ultra-fast Server Vision with 0 thinking budget and strict timeout
       const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
-      fetch('/api/scan-medicine-box', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: dataUrl }),
-      })
+      fetchWithTimeout(
+        `${getApiBaseUrl()}/api/scan-medicine-box`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: dataUrl }),
+        },
+        6000
+      )
         .then((r) => (r.ok ? r.json() : null))
         .then((res) => {
           if (res?.ok && res.data) {
@@ -667,6 +672,8 @@ export const BoxScannerModal: React.FC<BoxScannerModalProps> = ({
       const dataUrl = reader.result as string;
       setScanStatusMsg('📸 ফটো থেকে বক্সের সকল তথ্য স্ক্যান করা হচ্ছে...');
 
+      let matchedSomething = false;
+
       // Run client OCR first
       if (tesseractWorkerRef.current) {
         try {
@@ -675,24 +682,40 @@ export const BoxScannerModal: React.FC<BoxScannerModalProps> = ({
           const detected = parseBoxTextInstantly(text);
           if (detected.brandName) {
             mergeScannedData(detected);
+            matchedSomething = true;
           }
-        } catch {}
+        } catch {
+          // ignore local OCR failure
+        }
       }
 
-      // Also call server vision
+      // Also call server vision with strict timeout & full API base URL
       try {
-        const res = await fetch('/api/scan-medicine-box', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image: dataUrl }),
-        });
+        const res = await fetchWithTimeout(
+          `${getApiBaseUrl()}/api/scan-medicine-box`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image: dataUrl }),
+          },
+          8000
+        );
         if (res.ok) {
           const resJson = await res.json();
           if (resJson.ok && resJson.data) {
             mergeScannedData(resJson.data);
+            matchedSomething = true;
           }
         }
-      } catch {}
+      } catch {
+        // timeout or network unavailable
+      } finally {
+        if (!matchedSomething) {
+          setScanStatusMsg(
+            '⚠️ অটো-স্ক্যান সম্পন্ন হয়েছে (প্রয়োজনে নিচে ঔষধের নাম ও তথ্য লিখুন বা পুনরায় স্পষ্ট ছবি দিন)'
+          );
+        }
+      }
     };
     reader.readAsDataURL(file);
   };
