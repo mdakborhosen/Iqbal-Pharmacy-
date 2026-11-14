@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   Building2,
@@ -181,11 +181,23 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
   const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
   const [copiedStaffId, setCopiedStaffId] = useState<string | null>(null);
 
-  // Check if current user is Master App Owner
+  // Keep local form states synchronized when switching shops or logging out/in
+  useEffect(() => {
+    setBranches(defaultBranches);
+    setActiveBranchId(shopProfile.activeBranchId || defaultBranches[0]?.id || 'branch-main');
+    setInvoiceSettings(defaultInvoiceSettings);
+    setShopName(shopProfile.shopName || '');
+    setLicenseNo(shopProfile.licenseNo || '');
+    setPhone(shopProfile.phone || '');
+    setAddress(shopProfile.address || '');
+  }, [shopProfile, defaultBranches, defaultInvoiceSettings]);
+
+  // Check if current user is Master App Owner (must be actively logged in)
   const isAppOwner =
-    cloudSession?.email?.toLowerCase() === 'mhakbor2001@gmail.com' ||
-    activeStaff?.email?.toLowerCase() === 'mhakbor2001@gmail.com' ||
-    activeStaff?.id === 'staff-owner-1';
+    isCloudLoggedIn &&
+    (cloudSession?.email?.toLowerCase() === 'mhakbor2001@gmail.com' ||
+      activeStaff?.email?.toLowerCase() === 'mhakbor2001@gmail.com' ||
+      activeStaff?.id === 'staff-owner-1');
 
   // Toggle table password visibility
   const toggleTablePassword = (staffId: string) => {
@@ -565,6 +577,35 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
         </div>
       </div>
 
+      {/* Logged-out Guest Mode Guard: Do not display any user/staff list or shop settings after logout */}
+      {!isCloudLoggedIn ? (
+        <div className="bg-white border border-slate-200 rounded-xl p-8 text-center space-y-3 shadow-xs">
+          <div className="w-12 h-12 rounded-full bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center mx-auto">
+            <Lock className="w-6 h-6" />
+          </div>
+          <h3 className="text-base font-bold text-slate-900">
+            {lang === 'bn'
+              ? 'কোনো ব্যবহারকারী লগইন অবস্থায় নেই'
+              : 'No User Logged In'}
+          </h3>
+          <p className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
+            {lang === 'bn'
+              ? 'সফলভাবে লগআউট সম্পন্ন হয়েছে। স্টাফ তালিকা, মালিক/সাব-মালিক অ্যাকাউন্ট এবং দোকানের সেটিংস দেখতে অনুগ্রহ করে লগইন করুন।'
+              : 'You are currently logged out. Please log in to view staff accounts, shop branches, and invoice settings.'}
+          </p>
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={onOpenCloudLoginModal}
+              className="px-5 py-2.5 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-lg inline-flex items-center gap-2 cursor-pointer shadow-xs"
+            >
+              <LogIn className="w-4 h-4" />
+              <span>{lang === 'bn' ? 'লগইন / নতুন শপ একাউন্ট' : 'Login / New Shop Account'}</span>
+            </button>
+          </div>
+        </div>
+      ) : (
+      <>
       {/* Navigation Sub-Tabs Bar */}
       <div className="flex border-b border-slate-200 bg-white rounded-t-lg overflow-x-auto">
         <button
@@ -1397,6 +1438,8 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
             </table>
           </div>
         </div>
+      )}
+      </>
       )}
 
       {/* MODAL: Add / Edit Institution Branch */}

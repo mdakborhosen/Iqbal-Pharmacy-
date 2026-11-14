@@ -185,7 +185,13 @@ export function computeCurrentShopId(
   user?: User | null
 ): string {
   if (session?.shopId) return session.shopId;
-  if (activeStaff?.shopId) return activeStaff.shopId;
+  if (
+    activeStaff?.shopId &&
+    activeStaff.shopId !== 'shop_guest' &&
+    activeStaff.id !== 'staff-offline-counter'
+  ) {
+    return activeStaff.shopId;
+  }
   const ident = session?.email || session?.phone || user?.email || '';
   const digits = ident.replace(/[^0-9]/g, '');
   const isMaster =
@@ -199,12 +205,35 @@ export function computeCurrentShopId(
     return `shop_${bd11}`;
   }
   if (session?.uid) return `shop_${session.uid.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-  return 'shop_iqbal_pharmacy';
+  return 'shop_guest';
 }
 
 export function getScopedStorageKey(baseKey: string, shopId: string): string {
-  return `${baseKey}_${shopId || 'shop_iqbal_pharmacy'}`;
+  return `${baseKey}_${shopId || 'shop_guest'}`;
 }
+
+const GUEST_SHOP_PROFILE: ShopProfile = {
+  id: 'shop_guest',
+  shopId: 'shop_guest',
+  ownerId: 'offline',
+  shopName: 'ফার্মেসী ম্যানেজমেন্ট',
+  licenseNo: '',
+  phone: '',
+  address: '',
+  updatedAtMs: 0,
+};
+
+const GUEST_OFFLINE_STAFF: StaffMember = {
+  id: 'staff-offline-counter',
+  shopId: 'shop_guest',
+  ownerId: 'offline',
+  name: 'অফলাইন কর্মী',
+  roleTitle: 'salesman',
+  phone: '',
+  shift: 'সাধারণ শিফট',
+  counterName: 'কাউন্টার ১',
+  active: true,
+};
 
 const DEFAULT_POS_CART: CartItem[] = [
   {
@@ -805,18 +834,24 @@ export default function App() {
     });
   };
 
-  const bootShopId = computeCurrentShopId(cloudSession);
+  const bootLoggedIn = Boolean(cloudSession && !isLoggedOutExplicitly);
+  const bootShopId = bootLoggedIn ? computeCurrentShopId(cloudSession) : 'shop_guest';
 
-  // Offline-first states initialized from localStorage or rich Bangladesh Pharmacy seed data
+  // Offline-first states initialized strictly when logged in; logged-out / guest mode starts completely clean with 0 users
   const [shopProfile, setShopProfile] = useState<ShopProfile>(() => {
+    if (!bootLoggedIn) return GUEST_SHOP_PROFILE;
     const saved = loadLocal(
       getScopedStorageKey(STORAGE_KEYS.SHOP, bootShopId),
-      loadLocal(STORAGE_KEYS.SHOP, DEFAULT_SHOP_PROFILE)
+      loadLocal(
+        STORAGE_KEYS.SHOP,
+        bootShopId === 'shop_iqbal_pharmacy' ? DEFAULT_SHOP_PROFILE : GUEST_SHOP_PROFILE
+      )
     );
     if (
-      !saved.shopName ||
-      saved.shopName === 'সেবা মেডিসিন কর্নার অ্যান্ড ফার্মেসি' ||
-      saved.shopName.includes('OshudhBazar')
+      bootShopId === 'shop_iqbal_pharmacy' &&
+      (!saved.shopName ||
+        saved.shopName === 'সেবা মেডিসিন কর্নার অ্যান্ড ফার্মেসি' ||
+        saved.shopName.includes('OshudhBazar'))
     ) {
       saveLocal(STORAGE_KEYS.SHOP, DEFAULT_SHOP_PROFILE);
       return DEFAULT_SHOP_PROFILE;
@@ -825,6 +860,7 @@ export default function App() {
   });
 
   const [inventory, setInventory] = useState<InventoryItem[]>(() => {
+    if (!bootLoggedIn) return [];
     const initialDeleted = new Set(
       loadLocal<string[]>(STORAGE_KEYS.DELETED_IDS, []).filter(
         (id) => !isCoreDatabaseMedicineId(id) && !id.startsWith('inv-seed-')
@@ -832,10 +868,12 @@ export default function App() {
     );
     const saved = loadLocal<InventoryItem[]>(
       getScopedStorageKey(STORAGE_KEYS.INVENTORY, bootShopId),
-      loadLocal<InventoryItem[]>(STORAGE_KEYS.INVENTORY, INITIAL_DEMO_INVENTORY)
+      loadLocal<InventoryItem[]>(
+        STORAGE_KEYS.INVENTORY,
+        bootShopId === 'shop_iqbal_pharmacy' ? INITIAL_DEMO_INVENTORY : []
+      )
     );
 
-    // Canonicalize IDs and deduplicate by canonical ID (preferring newer updatedAtMs)
     const byKey = new Map<string, InventoryItem>();
     for (const rawItem of saved) {
       const canonId = getCanonicalDocId(rawItem.id, bootShopId);
@@ -882,6 +920,7 @@ export default function App() {
   });
 
   const [customers, setCustomers] = useState<Customer[]>(() => {
+    if (!bootLoggedIn) return [];
     const initialDeleted = new Set(loadLocal<string[]>(STORAGE_KEYS.DELETED_IDS, []));
     const saved = loadLocal<Customer[]>(
       getScopedStorageKey(STORAGE_KEYS.CUSTOMERS, bootShopId),
@@ -901,6 +940,7 @@ export default function App() {
   });
 
   const [transactions, setTransactions] = useState<Transaction[]>(() => {
+    if (!bootLoggedIn) return [];
     const initialDeleted = new Set(loadLocal<string[]>(STORAGE_KEYS.DELETED_IDS, []));
     const loaded = loadLocal<Transaction[]>(
       getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, bootShopId),
@@ -923,6 +963,7 @@ export default function App() {
   });
 
   const [staffList, setStaffList] = useState<StaffMember[]>(() => {
+    if (!bootLoggedIn) return [];
     const initialDeleted = new Set(loadLocal<string[]>(STORAGE_KEYS.DELETED_IDS, []));
     const saved = loadLocal<StaffMember[]>(
       getScopedStorageKey(STORAGE_KEYS.STAFF, bootShopId),
@@ -943,6 +984,7 @@ export default function App() {
   });
 
   const [customMedicines, setCustomMedicines] = useState<CustomMedicine[]>(() => {
+    if (!bootLoggedIn) return [];
     const initialDeleted = new Set(loadLocal<string[]>(STORAGE_KEYS.DELETED_IDS, []));
     const saved = loadLocal<CustomMedicine[]>(
       getScopedStorageKey(STORAGE_KEYS.CUSTOM_MEDS, bootShopId),
@@ -963,10 +1005,11 @@ export default function App() {
   });
 
   const [priceWatches, setPriceWatches] = useState<PriceWatch[]>(() => {
+    if (!bootLoggedIn) return [];
     const initialDeleted = new Set(loadLocal<string[]>(STORAGE_KEYS.DELETED_IDS, []));
     const saved = loadLocal<PriceWatch[]>(
       getScopedStorageKey(STORAGE_KEYS.PRICE_WATCHES, bootShopId),
-      loadLocal(STORAGE_KEYS.PRICE_WATCHES, INITIAL_DEMO_PRICE_WATCHES)
+      loadLocal(STORAGE_KEYS.PRICE_WATCHES, bootShopId === 'shop_iqbal_pharmacy' ? INITIAL_DEMO_PRICE_WATCHES : [])
     );
     const byId = new Map<string, PriceWatch>();
     for (const w of saved) {
@@ -982,10 +1025,11 @@ export default function App() {
   });
 
   const [priceAlerts, setPriceAlerts] = useState<PriceAlert[]>(() => {
+    if (!bootLoggedIn) return [];
     const initialDeleted = new Set(loadLocal<string[]>(STORAGE_KEYS.DELETED_IDS, []));
     const saved = loadLocal<PriceAlert[]>(
       getScopedStorageKey(STORAGE_KEYS.PRICE_ALERTS, bootShopId),
-      loadLocal(STORAGE_KEYS.PRICE_ALERTS, INITIAL_DEMO_PRICE_ALERTS)
+      loadLocal(STORAGE_KEYS.PRICE_ALERTS, bootShopId === 'shop_iqbal_pharmacy' ? INITIAL_DEMO_PRICE_ALERTS : [])
     );
     const byId = new Map<string, PriceAlert>();
     for (const a of saved) {
@@ -1001,23 +1045,35 @@ export default function App() {
   });
 
   const [activeStaff, setActiveStaff] = useState<StaffMember>(
-    () => staffList[0] || INITIAL_DEMO_STAFF[0]
+    () => (bootLoggedIn ? staffList[0] || GUEST_OFFLINE_STAFF : GUEST_OFFLINE_STAFF)
   );
 
-  const effectiveShopId = computeCurrentShopId(cloudSession, activeStaff, user);
+  const effectiveShopId = isCloudLoggedIn
+    ? computeCurrentShopId(cloudSession, activeStaff, user)
+    : 'shop_guest';
 
-  // Persistent POS Cart state (saved in localStorage so refreshing never resets cart)
+  // Persistent POS Cart state (scoped when logged in, empty in guest/logged-out mode)
   const [posCart, setPosCart] = useState<CartItem[]>(() =>
-    loadLocal<CartItem[]>(STORAGE_KEYS.POS_CART, DEFAULT_POS_CART)
+    bootLoggedIn
+      ? loadLocal<CartItem[]>(
+          getScopedStorageKey(STORAGE_KEYS.POS_CART, bootShopId),
+          loadLocal<CartItem[]>(STORAGE_KEYS.POS_CART, bootShopId === 'shop_iqbal_pharmacy' ? DEFAULT_POS_CART : [])
+        )
+      : []
   );
 
-  // Persistent Purchase Invoice Cart state (saved in localStorage so refreshing never resets cart)
+  // Persistent Purchase Invoice Cart state (scoped when logged in, empty in guest/logged-out mode)
   const [purchaseCart, setPurchaseCart] = useState<PurchaseCartItem[]>(() =>
-    loadLocal<PurchaseCartItem[]>(STORAGE_KEYS.PURCHASE_CART, DEFAULT_PURCHASE_CART)
+    bootLoggedIn
+      ? loadLocal<PurchaseCartItem[]>(
+          getScopedStorageKey(STORAGE_KEYS.PURCHASE_CART, bootShopId),
+          loadLocal<PurchaseCartItem[]>(STORAGE_KEYS.PURCHASE_CART, bootShopId === 'shop_iqbal_pharmacy' ? DEFAULT_PURCHASE_CART : [])
+        )
+      : []
   );
 
   const [shopRegistrations, setShopRegistrations] = useState<ShopRegistration[]>(() =>
-    loadLocal<ShopRegistration[]>('shop_registrations_cache', [])
+    bootLoggedIn ? loadLocal<ShopRegistration[]>('shop_registrations_cache', []) : []
   );
 
   // Active Invoice being edited through the full New-Invoice Builder
@@ -1083,6 +1139,17 @@ export default function App() {
     };
 
     (async () => {
+      const isLoggedOutOnHydrate =
+        typeof window !== 'undefined' &&
+        (localStorage.getItem(LOGGED_OUT_FLAG_KEY) === '1' ||
+          sessionStorage.getItem(EXPLICIT_LOGOUT_KEY) === '1' ||
+          !loadSavedShopCloudSession());
+      if (isLoggedOutOnHydrate) {
+        serverHydratedRef.current = true;
+        setServerHydrated(true);
+        return;
+      }
+
       const [serverRes, idbSnapshot] = await Promise.all([
         fetchServerPharmacyState(),
         loadIndexedDbSnapshot(),
@@ -1279,44 +1346,57 @@ export default function App() {
     };
   }, []);
 
-  // Sync state changes to localStorage, IndexedDB, and Server Persistent Database (/api/pharmacy-state)
+  // Sync state changes to localStorage, IndexedDB, and Server Persistent Database (/api/pharmacy-state) ONLY when logged in
   useEffect(() => {
+    if (!isCloudLoggedIn || effectiveShopId === 'shop_guest') return;
     saveLocal(STORAGE_KEYS.SHOP, shopProfile);
-  }, [shopProfile]);
+  }, [isCloudLoggedIn, effectiveShopId, shopProfile]);
   useEffect(() => {
+    if (!isCloudLoggedIn || effectiveShopId === 'shop_guest') return;
     saveLocal(STORAGE_KEYS.INVENTORY, inventory);
-  }, [inventory]);
+  }, [isCloudLoggedIn, effectiveShopId, inventory]);
   useEffect(() => {
+    if (!isCloudLoggedIn || effectiveShopId === 'shop_guest') return;
     saveLocal(STORAGE_KEYS.CUSTOMERS, customers);
-  }, [customers]);
+  }, [isCloudLoggedIn, effectiveShopId, customers]);
   useEffect(() => {
+    if (!isCloudLoggedIn || effectiveShopId === 'shop_guest') return;
     saveLocal(STORAGE_KEYS.TRANSACTIONS, transactions);
-  }, [transactions]);
+  }, [isCloudLoggedIn, effectiveShopId, transactions]);
   useEffect(() => {
+    if (!isCloudLoggedIn || effectiveShopId === 'shop_guest') return;
     saveLocal(STORAGE_KEYS.STAFF, staffList);
-  }, [staffList]);
+  }, [isCloudLoggedIn, effectiveShopId, staffList]);
   useEffect(() => {
+    if (!isCloudLoggedIn || effectiveShopId === 'shop_guest') return;
     saveLocal(STORAGE_KEYS.CUSTOM_MEDS, customMedicines);
-  }, [customMedicines]);
+  }, [isCloudLoggedIn, effectiveShopId, customMedicines]);
   useEffect(() => {
+    if (!isCloudLoggedIn || effectiveShopId === 'shop_guest') return;
     saveLocal(STORAGE_KEYS.PRICE_WATCHES, priceWatches);
-  }, [priceWatches]);
+  }, [isCloudLoggedIn, effectiveShopId, priceWatches]);
   useEffect(() => {
+    if (!isCloudLoggedIn || effectiveShopId === 'shop_guest') return;
     saveLocal(STORAGE_KEYS.PRICE_ALERTS, priceAlerts);
-  }, [priceAlerts]);
+  }, [isCloudLoggedIn, effectiveShopId, priceAlerts]);
   useEffect(() => {
+    if (!isCloudLoggedIn || effectiveShopId === 'shop_guest') return;
     saveLocal(STORAGE_KEYS.DELETED_IDS, deletedIds);
-  }, [deletedIds]);
+  }, [isCloudLoggedIn, effectiveShopId, deletedIds]);
   useEffect(() => {
+    if (!isCloudLoggedIn || effectiveShopId === 'shop_guest') return;
     saveLocal(STORAGE_KEYS.POS_CART, posCart);
-  }, [posCart]);
+    saveLocal(getScopedStorageKey(STORAGE_KEYS.POS_CART, effectiveShopId), posCart);
+  }, [isCloudLoggedIn, effectiveShopId, posCart]);
   useEffect(() => {
+    if (!isCloudLoggedIn || effectiveShopId === 'shop_guest') return;
     saveLocal(STORAGE_KEYS.PURCHASE_CART, purchaseCart);
-  }, [purchaseCart]);
+    saveLocal(getScopedStorageKey(STORAGE_KEYS.PURCHASE_CART, effectiveShopId), purchaseCart);
+  }, [isCloudLoggedIn, effectiveShopId, purchaseCart]);
 
-  // Continuous automatic backup to Server Disk (/api/pharmacy-state) and IndexedDB
+  // Continuous automatic backup to Server Disk (/api/pharmacy-state) and IndexedDB (only while authenticated)
   useEffect(() => {
-    if (!serverHydrated || !serverHydratedRef.current) return;
+    if (!serverHydrated || !serverHydratedRef.current || !isCloudLoggedIn || effectiveShopId === 'shop_guest') return;
     try {
       localStorage.setItem(STORAGE_KEYS.HAS_USER_DATA, '1');
     } catch {
@@ -1344,6 +1424,8 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [
     serverHydrated,
+    isCloudLoggedIn,
+    effectiveShopId,
     shopProfile,
     inventory,
     customers,
@@ -1363,7 +1445,22 @@ export default function App() {
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === SHOP_CLOUD_SESSION_KEY) {
         try {
-          setCloudSession(e.newValue ? (JSON.parse(e.newValue) as ShopCloudSession) : null);
+          const nextSess = e.newValue ? (JSON.parse(e.newValue) as ShopCloudSession) : null;
+          setCloudSession(nextSess);
+          if (!nextSess) {
+            setStaffList([]);
+            setActiveStaff(GUEST_OFFLINE_STAFF);
+            setShopProfile(GUEST_SHOP_PROFILE);
+            setInventory([]);
+            setCustomers([]);
+            setTransactions([]);
+            setCustomMedicines([]);
+            setPriceWatches([]);
+            setPriceAlerts([]);
+            setPosCart([]);
+            setPurchaseCart([]);
+            setShopRegistrations([]);
+          }
         } catch {
           setCloudSession(null);
         }
@@ -1478,9 +1575,9 @@ export default function App() {
 
   // Default database starts empty with 0 accounts - users register clean shops, subject to App Owner approval
 
-  // Shared Pharmacy Real-Time Firestore Listeners (accessible across ALL devices, IPs & Cloudflare Pages)
+  // Shared Pharmacy Real-Time Firestore Listeners (attached strictly while authenticated to an isolated shopId)
   useEffect(() => {
-    if (!authReady) return;
+    if (!authReady || !isCloudLoggedIn || effectiveShopId === 'shop_guest') return;
     const effectiveOwnerId = user?.uid || cloudSession?.uid || SHARED_PHARMACY_OWNER_ID;
     const cleanedCloudKeys = new Set<string>();
 
@@ -2189,7 +2286,7 @@ export default function App() {
       unsubAlerts();
       unsubShopRegs();
     };
-  }, [serverHydrated, user?.uid, cloudSession?.uid, effectiveShopId]);
+  }, [serverHydrated, authReady, isCloudLoggedIn, user?.uid, cloudSession?.uid, effectiveShopId]);
 
   // Combined Medicine Catalog (Built-in 21,250+ DGDA core products can NEVER be deleted, but their purchasePrice & unitPrice can be modified)
   const fullCatalog = useMemo<MedicineCatalogItem[]>(() => {
@@ -2681,12 +2778,23 @@ export default function App() {
         const assignedRole: StaffMember['roleTitle'] = is01822 ? 'sub_owner' : 'owner';
         const assignedName = is01822 ? 'ইকবাল মাহমুদ (সাব-মালিক)' : 'Owner';
 
+        const scopedShop = loadLocal<ShopProfile | null>(
+          getScopedStorageKey(STORAGE_KEYS.SHOP, targetShopId),
+          null
+        );
+        const restoredShop = scopedShop && scopedShop.shopName
+          ? scopedShop
+          : { ...DEFAULT_SHOP_PROFILE, id: targetShopId, shopId: targetShopId };
+        setShopProfile(restoredShop);
+        saveLocal(STORAGE_KEYS.SHOP, restoredShop);
+        saveLocal(getScopedStorageKey(STORAGE_KEYS.SHOP, targetShopId), restoredShop);
+
         const session: ShopCloudSession = {
           uid: sessionUid,
           shopId: targetShopId,
           email: sessionEmail,
           displayName: is01822 ? assignedName : 'ইকবাল মাহমুদ (Owner)',
-          shopName: shopProfile.shopName || 'ইকবাল ফার্মেসী',
+          shopName: restoredShop.shopName || 'ইকবাল ফার্মেসী',
           phone: sessionPhone,
           operatorRole: assignedRole,
           staffId: sessionStaffId,
@@ -2711,14 +2819,69 @@ export default function App() {
           updatedAtMs: Date.now(),
         };
 
+        const scopedStaff = loadLocal<StaffMember[]>(
+          getScopedStorageKey(STORAGE_KEYS.STAFF, targetShopId),
+          INITIAL_DEMO_STAFF
+        );
         setStaffList((prev) => {
-          const shopPrev = targetShopId === effectiveShopId ? prev : [];
-          const next = deduplicateStaffMembers([ownerStaffMember, ...shopPrev], targetShopId);
+          const base = isCloudLoggedIn && targetShopId === effectiveShopId ? prev : scopedStaff;
+          const next = deduplicateStaffMembers([ownerStaffMember, ...base], targetShopId);
           saveLocal(STORAGE_KEYS.STAFF, next);
           saveLocal(getScopedStorageKey(STORAGE_KEYS.STAFF, targetShopId), next);
           return next;
         });
         setActiveStaff(ownerStaffMember);
+
+        if (!isCloudLoggedIn || targetShopId !== effectiveShopId) {
+          setInventory(
+            loadLocal<InventoryItem[]>(
+              getScopedStorageKey(STORAGE_KEYS.INVENTORY, targetShopId),
+              INITIAL_DEMO_INVENTORY
+            )
+          );
+          setCustomers(
+            loadLocal<Customer[]>(
+              getScopedStorageKey(STORAGE_KEYS.CUSTOMERS, targetShopId),
+              INITIAL_DEMO_CUSTOMERS
+            )
+          );
+          setTransactions(
+            loadLocal<Transaction[]>(
+              getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, targetShopId),
+              INITIAL_DEMO_TRANSACTIONS
+            )
+          );
+          setCustomMedicines(
+            loadLocal<CustomMedicine[]>(
+              getScopedStorageKey(STORAGE_KEYS.CUSTOM_MEDS, targetShopId),
+              []
+            )
+          );
+          setPriceWatches(
+            loadLocal<PriceWatch[]>(
+              getScopedStorageKey(STORAGE_KEYS.PRICE_WATCHES, targetShopId),
+              INITIAL_DEMO_PRICE_WATCHES
+            )
+          );
+          setPriceAlerts(
+            loadLocal<PriceAlert[]>(
+              getScopedStorageKey(STORAGE_KEYS.PRICE_ALERTS, targetShopId),
+              INITIAL_DEMO_PRICE_ALERTS
+            )
+          );
+          setPosCart(
+            loadLocal<CartItem[]>(
+              getScopedStorageKey(STORAGE_KEYS.POS_CART, targetShopId),
+              DEFAULT_POS_CART
+            )
+          );
+          setPurchaseCart(
+            loadLocal<PurchaseCartItem[]>(
+              getScopedStorageKey(STORAGE_KEYS.PURCHASE_CART, targetShopId),
+              DEFAULT_PURCHASE_CART
+            )
+          );
+        }
 
         // Reset stale deleted IDs so cloud data from Device 1 is never masked
         setDeletedIds([]);
@@ -2743,7 +2906,7 @@ export default function App() {
               password: cleanPass,
               name: assignedName,
               ownerName: assignedName,
-              shopName: shopProfile.shopName || 'ইকবাল ফার্মেসী',
+              shopName: restoredShop.shopName || 'ইকবাল ফার্মেসী',
               role: assignedRole,
               roleTitle: assignedRole,
               updatedAtMs: Date.now(),
@@ -2757,7 +2920,7 @@ export default function App() {
               ...ownerStaffMember,
               shopId: targetShopId,
               ownerName: assignedName,
-              shopName: shopProfile.shopName || 'ইকবাল ফার্মেসী',
+              shopName: restoredShop.shopName || 'ইকবাল ফার্মেসী',
               password: cleanPass,
               updatedAtMs: Date.now(),
             }).catch(() => {});
@@ -2766,8 +2929,8 @@ export default function App() {
             const cloudSnap = await fetchServerPharmacyState();
             if (cloudSnap.hasData && cloudSnap.state) {
               const rem = cloudSnap.state;
-              const remShopId = rem.shopProfile?.shopId || rem.cloudSession?.shopId;
-              if (!remShopId || remShopId === targetShopId) {
+              const remShopId = rem.shopProfile?.shopId || rem.cloudSession?.shopId || 'shop_iqbal_pharmacy';
+              if (remShopId === targetShopId) {
                 if (Array.isArray(rem.inventory) && rem.inventory.length > 0) {
                   setInventory((prev) => {
                     const next = mergeEntityList(rem.inventory, prev, new Set(), true, targetShopId);
@@ -3094,7 +3257,7 @@ export default function App() {
         updatedAtMs: Date.now(),
       };
 
-      const sameShop = resolvedTargetShopId === effectiveShopId;
+      const sameShop = isCloudLoggedIn && resolvedTargetShopId === effectiveShopId;
       setStaffList((prev) => {
         const base = sameShop
           ? prev.filter((p) => !p.shopId || p.shopId === resolvedTargetShopId)
@@ -3107,10 +3270,32 @@ export default function App() {
       setActiveStaff(loggedStaffMember);
 
       if (!sameShop) {
+        const scopedShop = loadLocal<ShopProfile | null>(
+          getScopedStorageKey(STORAGE_KEYS.SHOP, resolvedTargetShopId),
+          null
+        );
+        if (scopedShop && scopedShop.shopName) {
+          setShopProfile(scopedShop);
+        } else {
+          setShopProfile({
+            id: resolvedTargetShopId,
+            shopId: resolvedTargetShopId,
+            ownerId: effectiveUid,
+            shopName: session.shopName,
+            licenseNo: '',
+            phone: session.phone,
+            address: '',
+            updatedAtMs: Date.now(),
+          });
+        }
         setInventory(loadLocal<InventoryItem[]>(getScopedStorageKey(STORAGE_KEYS.INVENTORY, resolvedTargetShopId), []));
         setCustomers(loadLocal<Customer[]>(getScopedStorageKey(STORAGE_KEYS.CUSTOMERS, resolvedTargetShopId), []));
         setTransactions(loadLocal<Transaction[]>(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, resolvedTargetShopId), []));
         setCustomMedicines(loadLocal<CustomMedicine[]>(getScopedStorageKey(STORAGE_KEYS.CUSTOM_MEDS, resolvedTargetShopId), []));
+        setPriceWatches(loadLocal<PriceWatch[]>(getScopedStorageKey(STORAGE_KEYS.PRICE_WATCHES, resolvedTargetShopId), []));
+        setPriceAlerts(loadLocal<PriceAlert[]>(getScopedStorageKey(STORAGE_KEYS.PRICE_ALERTS, resolvedTargetShopId), []));
+        setPosCart(loadLocal<CartItem[]>(getScopedStorageKey(STORAGE_KEYS.POS_CART, resolvedTargetShopId), []));
+        setPurchaseCart(loadLocal<PurchaseCartItem[]>(getScopedStorageKey(STORAGE_KEYS.PURCHASE_CART, resolvedTargetShopId), []));
       }
 
       // Reset stale deleted IDs so all cloud data displays completely
@@ -3130,8 +3315,8 @@ export default function App() {
           const cloudSnap = await fetchServerPharmacyState();
           if (cloudSnap.hasData && cloudSnap.state) {
             const rem = cloudSnap.state;
-            const remShopId = rem.shopProfile?.shopId || rem.cloudSession?.shopId;
-            if (!remShopId || remShopId === resolvedTargetShopId) {
+            const remShopId = rem.shopProfile?.shopId || rem.cloudSession?.shopId || 'shop_iqbal_pharmacy';
+            if (remShopId === resolvedTargetShopId) {
               if (Array.isArray(rem.inventory) && rem.inventory.length > 0) {
                 setInventory((prev) => {
                   const next = mergeEntityList(rem.inventory, sameShop ? prev : [], new Set(), true, resolvedTargetShopId);
@@ -3400,8 +3585,8 @@ export default function App() {
           const cloudSnap = await fetchServerPharmacyState();
           if (cloudSnap.hasData && cloudSnap.state) {
             const rem = cloudSnap.state;
-            const remShopId = rem.shopProfile?.shopId || rem.cloudSession?.shopId;
-            if (!remShopId || remShopId === targetShopId) {
+            const remShopId = rem.shopProfile?.shopId || rem.cloudSession?.shopId || 'shop_iqbal_pharmacy';
+            if (remShopId === targetShopId) {
               if (Array.isArray(rem.inventory) && rem.inventory.length > 0) {
                 setInventory((prev) => {
                   const next = mergeEntityList(rem.inventory, isExistingShopSession ? prev : [], new Set(), true, targetShopId);
@@ -3458,9 +3643,28 @@ export default function App() {
       sessionStorage.setItem(EXPLICIT_LOGOUT_KEY, '1');
       localStorage.removeItem(SHOP_CLOUD_SESSION_KEY);
       sessionStorage.removeItem(SHOP_CLOUD_SESSION_KEY);
+      // Clear unscoped active local caches so logged-out state never retains previous shop/users
+      for (const k of [
+        STORAGE_KEYS.SHOP,
+        STORAGE_KEYS.INVENTORY,
+        STORAGE_KEYS.CUSTOMERS,
+        STORAGE_KEYS.TRANSACTIONS,
+        STORAGE_KEYS.STAFF,
+        STORAGE_KEYS.CUSTOM_MEDS,
+        STORAGE_KEYS.PRICE_WATCHES,
+        STORAGE_KEYS.PRICE_ALERTS,
+        STORAGE_KEYS.DELETED_IDS,
+        STORAGE_KEYS.POS_CART,
+        STORAGE_KEYS.PURCHASE_CART,
+        STORAGE_KEYS.HAS_USER_DATA,
+        'shop_registrations_cache',
+      ]) {
+        localStorage.removeItem(k);
+      }
     } catch {
       // ignore
     }
+    autoSignInAttemptedRef.current = false;
     saveShopCloudSession(null);
     setCloudSession(null);
     setUser(null);
@@ -3470,40 +3674,22 @@ export default function App() {
       console.warn('Firebase signout warning:', err);
     }
 
-    // Set active staff to logged-out counter staff
-    const loggedOutStaff: StaffMember = {
-      id: 'staff-offline-counter',
-      ownerId: 'offline',
-      name: lang === 'bn' ? 'অফলাইন কর্মী' : 'Offline Staff',
-      roleTitle: 'salesman',
-      phone: '',
-      shift: lang === 'bn' ? 'সাধারণ শিফট' : 'Standard Shift',
-      counterName: lang === 'bn' ? 'কাউন্টার ১' : 'Counter 1',
-      active: true,
-      updatedAtMs: Date.now(),
-    };
-    setActiveStaff(loggedOutStaff);
+    // Clear all active shop & user lists from UI state immediately on logout
+    setStaffList([]);
+    setActiveStaff(GUEST_OFFLINE_STAFF);
+    setShopProfile(GUEST_SHOP_PROFILE);
+    setInventory([]);
+    setCustomers([]);
+    setTransactions([]);
+    setCustomMedicines([]);
+    setPriceWatches([]);
+    setPriceAlerts([]);
+    setPosCart([]);
+    setPurchaseCart([]);
+    setShopRegistrations([]);
+    setEditingInvoiceTx(null);
+    setDeletedIds([]);
 
-    // Push null session to server persistent state & IDB so it never resurrects
-    if (serverHydrated) {
-      const snapshot: PharmacyPersistentState = {
-        shopProfile,
-        inventory,
-        customers,
-        transactions,
-        staffList,
-        customMedicines,
-        priceWatches,
-        priceAlerts,
-        deletedIds,
-        posCart,
-        purchaseCart,
-        cloudSession: null,
-        updatedAtMs: Date.now(),
-      };
-      pushServerPharmacyState(snapshot, 'overwrite').catch(() => {});
-      saveIndexedDbSnapshot(snapshot).catch(() => {});
-    }
     showToast(
       lang === 'bn'
         ? 'ফায়ারস্টোর ডাটাবেস ও একাউন্ট থেকে সফলভাবে লগআউট সম্পন্ন হয়েছে।'
@@ -6646,7 +6832,7 @@ export default function App() {
     return (
       <PublicHealthcarePortal
         transactions={transactions}
-        shopProfile={shopProfile}
+        shopProfile={isCloudLoggedIn ? shopProfile : DEFAULT_SHOP_PROFILE}
       />
     );
   }
@@ -6679,7 +6865,15 @@ export default function App() {
                 <div className="w-1.5 h-4 bg-white rounded-xs absolute"></div>
               </div>
             </div>
-            <span>{lang === 'bn' ? (shopProfile.shopName || 'ইকবাল ফার্মেসী') : (shopProfile.shopName || 'Iqbal Pharmacy')}</span>
+            <span>
+              {!isCloudLoggedIn
+                ? lang === 'bn'
+                  ? 'ফার্মেসী ম্যানেজমেন্ট'
+                  : 'Pharmacy Management'
+                : lang === 'bn'
+                ? shopProfile.shopName || 'ইকবাল ফার্মেসী'
+                : shopProfile.shopName || 'Iqbal Pharmacy'}
+            </span>
           </a>
         </div>
 
@@ -6978,17 +7172,23 @@ export default function App() {
                 {!sidebarCollapsed && (
                   <div className="space-y-0.5 min-w-0">
                     <div className="text-sm font-bold text-teal-800 truncate">
-                      {shopProfile.shopName || 'ইকবাল ফার্মেসী'}
+                      {isCloudLoggedIn ? (shopProfile.shopName || 'ইকবাল ফার্মেসী') : 'গেস্ট মোড (লগইন করুন)'}
                     </div>
-                    <div className="text-[11px] font-semibold text-slate-800 leading-snug line-clamp-2">
-                      ডেন্টিস্ট:- ইকবাল মাহমুদ (ডি.এম.টি.ডি (ডেন্টাল) · এল.এম.এ.এফ (ঢাকা) · আর.এম.পি (ঢাকা) · ফার্মাসিস্ট · ওরাল এন্ড ডেন্টাল টেকনোলজিষ্ট)
-                    </div>
-                    <div className="text-[10.5px] text-slate-600 truncate">
-                      ঠিকানা:- {shopProfile.address}
-                    </div>
-                    <div className="text-[10.5px] text-slate-700 font-mono">
-                      মোবাইল:- {shopProfile.phone}
-                    </div>
+                    {isCloudLoggedIn && effectiveShopId === 'shop_iqbal_pharmacy' && (
+                      <div className="text-[11px] font-semibold text-slate-800 leading-snug line-clamp-2">
+                        ডেন্টিস্ট:- ইকবাল মাহমুদ (ডি.এম.টি.ডি (ডেন্টাল) · এল.এম.এ.এফ (ঢাকা) · আর.এম.পি (ঢাকা) · ফার্মাসিস্ট · ওরাল এন্ড ডেন্টাল টেকনোলজিষ্ট)
+                      </div>
+                    )}
+                    {isCloudLoggedIn && shopProfile.address && (
+                      <div className="text-[10.5px] text-slate-600 truncate">
+                        ঠিকানা:- {shopProfile.address}
+                      </div>
+                    )}
+                    {isCloudLoggedIn && shopProfile.phone && (
+                      <div className="text-[10.5px] text-slate-700 font-mono">
+                        মোবাইল:- {shopProfile.phone}
+                      </div>
+                    )}
                   </div>
                 )}
                 <button
@@ -7063,30 +7263,32 @@ export default function App() {
 
                 {showExtraOptions && (
                   <div className="p-3 bg-slate-50/80 border border-slate-200 rounded-lg space-y-3 animate-fadeIn">
-                    {/* Active Operator Switcher */}
-                    <div className="space-y-1">
-                      <div className="text-[11px] font-bold text-slate-700">
-                        সক্রিয় অপারেটর (Owner / স্টাফ)
+                    {/* Active Operator Switcher (visible only when logged in) */}
+                    {isCloudLoggedIn && staffList.length > 0 && (
+                      <div className="space-y-1">
+                        <div className="text-[11px] font-bold text-slate-700">
+                          সক্রিয় অপারেটর (Owner / স্টাফ)
+                        </div>
+                        <select
+                          value={activeStaff.id}
+                          onChange={(e) => {
+                            const found = staffList.find((s) => s.id === e.target.value);
+                            if (found) {
+                              setActiveStaff(found);
+                              showToast(`সক্রিয় অপারেটর: ${getOperatorName(found)}`);
+                            }
+                          }}
+                          aria-label="সক্রিয় অপারেটর নির্বাচন"
+                          className="w-full px-2 py-1 text-xs font-medium bg-white border border-slate-200 rounded-md"
+                        >
+                          {staffList.map((st) => (
+                            <option key={st.id} value={st.id}>
+                              {st.roleTitle === 'owner' ? 'Owner' : st.name} — {st.counterName}
+                            </option>
+                          ))}
+                        </select>
                       </div>
-                      <select
-                        value={activeStaff.id}
-                        onChange={(e) => {
-                          const found = staffList.find((s) => s.id === e.target.value);
-                          if (found) {
-                            setActiveStaff(found);
-                            showToast(`সক্রিয় অপারেটর: ${getOperatorName(found)}`);
-                          }
-                        }}
-                        aria-label="সক্রিয় অপারেটর নির্বাচন"
-                        className="w-full px-2 py-1 text-xs font-medium bg-white border border-slate-200 rounded-md"
-                      >
-                        {staffList.map((st) => (
-                          <option key={st.id} value={st.id}>
-                            {st.roleTitle === 'owner' ? 'Owner' : st.name} — {st.counterName}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    )}
 
                     {/* PWA Install Button if available */}
                     {!isInstalled && (isInstallable || isIOS) && (
