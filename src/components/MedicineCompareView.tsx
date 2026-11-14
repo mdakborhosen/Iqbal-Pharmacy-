@@ -12,6 +12,7 @@ import {
   Edit3,
   ExternalLink,
   FlaskConical,
+  Layers,
   Link2,
   Package,
   PackagePlus,
@@ -31,6 +32,7 @@ import {
   BD_COMPANIES_DIRECTORY,
   BD_GENERICS_DIRECTORY,
   BD_PHARMA_COMPANIES,
+  buildDefaultVariantName,
   calculateProportionalMedicinePrice,
   DOSAGE_FORM_OPTIONS,
   formatBrandVariantLabel,
@@ -43,7 +45,7 @@ import {
   searchAndRankMedicines,
   formatCleanMoney,
 } from '../data/bdMedicines';
-import { InventoryItem, MedicineCatalogItem, PriceAlert, PriceWatch } from '../types';
+import { InventoryItem, MedicineCatalogItem, MedicineVariant, PriceAlert, PriceWatch } from '../types';
 
 interface MedicineCompareViewProps {
   catalog: MedicineCatalogItem[];
@@ -55,7 +57,10 @@ interface MedicineCompareViewProps {
   onAddToPurchaseCart?: (med: MedicineCatalogItem, qty?: number) => void;
   onQuickAddInventory: (med: MedicineCatalogItem) => void;
   onSaveMedicineCatalog: (
-    med: Omit<MedicineCatalogItem, 'id' | 'darNo' | 'unitsPerStrip'>,
+    med: Omit<MedicineCatalogItem, 'id' | 'darNo' | 'unitsPerStrip' | 'dosageForm'> & {
+      dosageForm: string;
+      variants?: MedicineVariant[];
+    },
     existingMed?: MedicineCatalogItem
   ) => Promise<void>;
   onDeleteCustomMedicine: (medId: string) => Promise<void>;
@@ -115,6 +120,8 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
   const [medClass, setMedClass] = useState('Proton Pump Inhibitor');
   const [medIndication, setMedIndication] = useState('গ্যাস্ট্রিক ও অ্যাসিডিটি নিরাময়ে ব্যবহৃত');
   const [submittingMed, setSubmittingMed] = useState(false);
+  const [modalVariants, setModalVariants] = useState<MedicineVariant[]>([]);
+  const [variantDbSearch, setVariantDbSearch] = useState('');
   const [showModalBrandList, setShowModalBrandList] = useState(false);
   const [showModalGenericList, setShowModalGenericList] = useState(false);
   const [showModalCompanyList, setShowModalCompanyList] = useState(false);
@@ -215,9 +222,10 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
   // Filtered 36,000+ Medicines with Complete 13 Dosage Forms per Company & Generic + Exact Brand Priority Ranking
   const filteredMedicines = useMemo(() => {
     const q = searchQuery.trim();
+    const visibleCatalog = catalog.filter((m) => !m.mergedIntoParentId);
 
     const baseFiltered = getCompleteCompanyGenericItems({
-      catalog,
+      catalog: visibleCatalog,
       selectedCompany,
       selectedGeneric,
       selectedDosageForm,
@@ -273,6 +281,28 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
   }, [filteredGenerics, safeGenPage]);
 
   const activeMedicine = useMemo(() => {
+    if (activeMedicineId.includes('__var__')) {
+      const [parentId, varId] = activeMedicineId.split('__var__');
+      const parent = catalog.find((m) => m.id === parentId);
+      const foundVar = parent?.variants?.find((v) => v.id === varId);
+      if (parent && foundVar) {
+        return {
+          ...parent,
+          id: `${parent.id}__var__${foundVar.id}`,
+          brandName: foundVar.variantName,
+          variantDisplayName: foundVar.variantName,
+          dosageForm: (foundVar.dosageForm as MedicineCatalogItem['dosageForm']) || parent.dosageForm,
+          strength: foundVar.strength || parent.strength,
+          packSize: foundVar.packSize || parent.packSize,
+          purchasePrice: foundVar.purchasePrice,
+          unitPrice: foundVar.unitPrice,
+          stripPrice: foundVar.stripPrice,
+          parentMedicineId: parent.id,
+          variantId: foundVar.id,
+          variants: parent.variants,
+        } as MedicineCatalogItem;
+      }
+    }
     return (
       catalog.find((m) => m.id === activeMedicineId) ||
       filteredMedicines[0] ||
@@ -385,6 +415,61 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
     setTimeout(() => setAddedFeedbackId(null), 1200);
   };
 
+  const variantDbMatches = useMemo(() => {
+    const q = variantDbSearch.trim();
+    if (q) {
+      return searchAndRankMedicines(catalog, q, 24);
+    }
+    if (medBrand.trim()) {
+      return getBrandFormAndStrengthVariants(catalog, medBrand, medGeneric).slice(0, 20);
+    }
+    return catalog.slice(0, 12);
+  }, [catalog, variantDbSearch, medBrand, medGeneric]);
+
+  const makeVariantFromCatalogMed = (med: MedicineCatalogItem): MedicineVariant => ({
+    id: `var_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    variantName: buildDefaultVariantName(med),
+    strength: med.strength || 'Standard',
+    dosageForm: med.dosageForm || 'Tablet',
+    packSize: med.packSize || '10 × 10 (100 pcs)',
+    purchasePrice: getMedPurchasePrice(med),
+    unitPrice: med.unitPrice,
+    stripPrice: med.stripPrice || Number((med.unitPrice * (med.unitsPerStrip || 10)).toFixed(2)),
+    sourceMedicineId: med.parentMedicineId || med.id,
+  });
+
+  const handleAttachDbMedicineAsVariant = (dbMed: MedicineCatalogItem) => {
+    const candidate = makeVariantFromCatalogMed(dbMed);
+    setModalVariants((prev) => {
+      const exists = prev.some(
+        (v) =>
+          (v.sourceMedicineId && v.sourceMedicineId === candidate.sourceMedicineId) ||
+          v.variantName.trim().toLowerCase() === candidate.variantName.trim().toLowerCase()
+      );
+      if (exists) return prev;
+      return [...prev, candidate];
+    });
+  };
+
+  const handleAddCustomVariantRow = () => {
+    const unitP = Math.max(0.1, parseFloat(medUnitPrice) || 6);
+    const purP = Math.max(0.01, parseFloat(medPurchasePrice) || Number((unitP * 0.88).toFixed(2)));
+    const baseName = medBrand.trim() || 'Medicine';
+    setModalVariants((prev) => [
+      ...prev,
+      {
+        id: `var_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        variantName: `${baseName} Variant ${prev.length + 1}`,
+        strength: medStrength.trim() || '20 mg',
+        dosageForm: medForm || 'Tablet',
+        packSize: medPackSize.trim() || '10 × 10 (100 pcs)',
+        purchasePrice: purP,
+        unitPrice: unitP,
+        stripPrice: Math.max(1, parseFloat(medStripPrice) || Number((unitP * 10).toFixed(2))),
+      },
+    ]);
+  };
+
   const openAddMedicineModal = () => {
     setEditingMed(null);
     setMedBrand('');
@@ -398,53 +483,58 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
     setMedStripPrice('60.00');
     setMedClass('Proton Pump Inhibitor');
     setMedIndication('গ্যাস্ট্রিক ও অ্যাসিডিটি নিরাময়ে ব্যবহৃত');
+    setModalVariants([]);
+    setVariantDbSearch('');
     setShowMedModal(true);
   };
 
   const openEditMedicineModal = (med: MedicineCatalogItem) => {
-    setEditingMed(med);
-    setMedBrand(med.brandName);
-    setMedGeneric(med.genericName);
-    setMedCompany(med.companyName);
-    setMedStrength(med.strength);
-    setMedForm(med.dosageForm);
-    setMedPackSize(med.packSize);
-    setMedPurchasePrice(getMedPurchasePrice(med).toFixed(2));
-    setMedUnitPrice(med.unitPrice.toFixed(2));
-    setMedStripPrice(med.stripPrice.toFixed(2));
-    setMedClass(med.therapeuticClass);
-    setMedIndication(med.indication);
+    const parentMed = med.parentMedicineId
+      ? catalog.find((m) => m.id === med.parentMedicineId) || med
+      : med;
+    setEditingMed(parentMed);
+    setMedBrand(parentMed.brandName);
+    setMedGeneric(parentMed.genericName);
+    setMedCompany(parentMed.companyName);
+    setMedStrength(parentMed.strength);
+    setMedForm(parentMed.dosageForm);
+    setMedPackSize(parentMed.packSize);
+    setMedPurchasePrice(getMedPurchasePrice(parentMed).toFixed(2));
+    setMedUnitPrice(parentMed.unitPrice.toFixed(2));
+    setMedStripPrice(parentMed.stripPrice.toFixed(2));
+    setMedClass(parentMed.therapeuticClass);
+    setMedIndication(parentMed.indication);
+    setModalVariants(
+      Array.isArray(parentMed.variants) ? parentMed.variants.map((v) => ({ ...v })) : []
+    );
+    setVariantDbSearch('');
     setShowMedModal(true);
   };
 
   const openAddVariantModal = (baseMed: MedicineCatalogItem) => {
-    setEditingMed(null);
-    setMedBrand(baseMed.brandName);
-    setMedGeneric(baseMed.genericName);
-    setMedCompany(baseMed.companyName);
-    const currentStr = baseMed.strength.trim();
-    if (currentStr.includes('20')) {
-      setMedStrength(currentStr.replace('20', '40'));
-      const estimatedNewPrice = Number((baseMed.unitPrice * 1.5).toFixed(2));
-      setMedUnitPrice(estimatedNewPrice.toFixed(2));
-      setMedPurchasePrice((estimatedNewPrice * 0.88).toFixed(2));
-      setMedStripPrice((estimatedNewPrice * 10).toFixed(2));
-    } else if (currentStr.includes('500')) {
-      setMedStrength(currentStr.replace('500', '650'));
-      const estimatedNewPrice = Number((baseMed.unitPrice * 1.3).toFixed(2));
-      setMedUnitPrice(estimatedNewPrice.toFixed(2));
-      setMedPurchasePrice((estimatedNewPrice * 0.88).toFixed(2));
-      setMedStripPrice((estimatedNewPrice * 10).toFixed(2));
-    } else {
-      setMedStrength(baseMed.strength);
-      setMedUnitPrice(baseMed.unitPrice.toFixed(2));
-      setMedPurchasePrice(getMedPurchasePrice(baseMed).toFixed(2));
-      setMedStripPrice(baseMed.stripPrice.toFixed(2));
-    }
-    setMedForm(baseMed.dosageForm);
-    setMedPackSize(baseMed.packSize);
-    setMedClass(baseMed.therapeuticClass);
-    setMedIndication(baseMed.indication);
+    const parentMed = baseMed.parentMedicineId
+      ? catalog.find((m) => m.id === baseMed.parentMedicineId) || baseMed
+      : baseMed;
+    setEditingMed(parentMed);
+    setMedBrand(parentMed.brandName);
+    setMedGeneric(parentMed.genericName);
+    setMedCompany(parentMed.companyName);
+    setMedStrength(parentMed.strength);
+    setMedUnitPrice(parentMed.unitPrice.toFixed(2));
+    setMedPurchasePrice(getMedPurchasePrice(parentMed).toFixed(2));
+    setMedStripPrice(parentMed.stripPrice.toFixed(2));
+    setMedForm(parentMed.dosageForm);
+    setMedPackSize(parentMed.packSize);
+    setMedClass(parentMed.therapeuticClass);
+    setMedIndication(parentMed.indication);
+
+    const existingVars =
+      Array.isArray(parentMed.variants) && parentMed.variants.length > 0
+        ? parentMed.variants.map((v) => ({ ...v }))
+        : [makeVariantFromCatalogMed(parentMed)];
+
+    setModalVariants(existingVars);
+    setVariantDbSearch('');
     setShowMedModal(true);
   };
 
@@ -458,6 +548,19 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
         0.01,
         parseFloat(medPurchasePrice) || Number((parsedSellingPrice * 0.88).toFixed(2))
       );
+      const cleanModalVariants = modalVariants
+        .filter((v) => v.variantName.trim().length > 0)
+        .map((v) => ({
+          ...v,
+          variantName: v.variantName.trim(),
+          strength: v.strength.trim() || 'Standard',
+          dosageForm: String(v.dosageForm || medForm || 'Tablet'),
+          packSize: (v.packSize || medPackSize || '10 × 10').trim(),
+          purchasePrice: Math.max(0.01, Number(v.purchasePrice) || Number((Number(v.unitPrice || 1) * 0.88).toFixed(2))),
+          unitPrice: Math.max(0.1, Number(v.unitPrice) || 1),
+          stripPrice: Math.max(0.1, Number(v.stripPrice) || Number((Number(v.unitPrice || 1) * 10).toFixed(2))),
+        }));
+
       await onSaveMedicineCatalog(
         {
           brandName: medBrand.trim(),
@@ -471,6 +574,7 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
           stripPrice: Math.max(1, parseFloat(medStripPrice) || 10),
           therapeuticClass: medClass.trim(),
           indication: medIndication.trim(),
+          variants: cleanModalVariants,
         },
         editingMed || undefined
       );
@@ -1557,6 +1661,51 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                     </div>
                   </div>
 
+                  {/* Explicit Saved Variants Switcher (e.g., Seclo 20, Seclo 40, Seclo MUPS 20) */}
+                  {activeMedicine.variants && activeMedicine.variants.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-slate-200/80">
+                      <div className="flex items-center justify-between gap-2 mb-1.5">
+                        <div className="text-[11px] font-bold text-emerald-900 flex items-center gap-1">
+                          <Layers className="w-3.5 h-3.5 text-emerald-700" />
+                          <span>সংরক্ষিত ভ্যারিয়েন্টসমূহ ({activeMedicine.variants.length}টি আলাদা নাম):</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => openAddVariantModal(activeMedicine)}
+                          className="text-[10px] font-bold text-teal-800 hover:underline cursor-pointer"
+                        >
+                          + ভ্যারিয়েন্ট ম্যানেজ/যুক্ত করুন
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {activeMedicine.variants.map((v) => {
+                          const varCompId = `${activeMedicine.parentMedicineId || activeMedicine.id}__var__${v.id}`;
+                          const isCurr = activeMedicine.id === varCompId;
+                          return (
+                            <button
+                              key={v.id}
+                              type="button"
+                              onClick={() => setActiveMedicineId(varCompId)}
+                              className={`px-2.5 py-1 text-xs rounded border transition-all cursor-pointer flex items-center gap-1.5 ${
+                                isCurr
+                                  ? 'bg-emerald-700 text-white border-emerald-700 font-bold shadow-xs'
+                                  : 'bg-emerald-50/60 text-emerald-950 border-emerald-300 hover:bg-emerald-100'
+                              }`}
+                            >
+                              <span className="font-bold">{v.variantName}</span>
+                              <span className={`text-[10px] ${isCurr ? 'text-emerald-100' : 'text-slate-500'}`}>
+                                ({v.dosageForm} · {v.strength})
+                              </span>
+                              <span className={`font-mono font-bold ${isCurr ? 'text-white' : 'text-emerald-700'}`}>
+                                — ক্রয় ৳{Number(v.purchasePrice || v.unitPrice * 0.88).toFixed(2)} | বিক্রয় ৳{Number(v.unitPrice).toFixed(2)}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Quick Switcher for Specific Brand Family Variants (e.g., Napa Tab, Syrup, Drops, Extend, Extra, Napadol, Supp) */}
                   {activeBrandFormStrengthVariants.length > 0 && (
                     <div className="mt-3 pt-3 border-t border-slate-200/80">
@@ -1922,6 +2071,7 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                             setMedStripPrice(m.stripPrice.toFixed(2));
                             setMedClass(m.therapeuticClass);
                             setMedIndication(m.indication);
+                            setModalVariants(Array.isArray(m.variants) ? m.variants.map((vr) => ({ ...vr })) : []);
                             setShowModalBrandList(false);
                           }}
                           className="w-full text-left px-3 py-1.5 text-xs hover:bg-teal-50 flex items-center justify-between cursor-pointer"
@@ -2332,6 +2482,261 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                 />
               </div>
 
+              {/* Variants Management Section: Attach DB medicines OR add custom variants under single parent name */}
+              <div className="p-3.5 bg-emerald-50/60 border border-emerald-200 rounded-lg space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
+                      <Layers className="w-4 h-4 text-emerald-700" />
+                      <span>ভ্যারিয়েন্ট ব্যবস্থাপনা (ডাটাবেসে &quot;{medBrand || 'মূল নাম'}&quot; নামে সংরক্ষণ হবে)</span>
+                    </div>
+                    <p className="text-[11px] text-emerald-800 mt-0.5">
+                      এখানে যুক্ত প্রতিটি ভ্যারিয়েন্ট (যেমন: {medBrand || 'Seclo'} 20, {medBrand || 'Seclo'} 40, {medBrand || 'Seclo'} MUPS 20) ইনভয়েসে সার্চ করলে আলাদা নামে দেখাবে।
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAddCustomVariantRow}
+                    className="px-2.5 py-1 text-[11px] font-bold text-emerald-900 bg-white hover:bg-emerald-100 border border-emerald-300 rounded-md flex items-center gap-1 cursor-pointer shadow-2xs"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>কাস্টম ভ্যারিয়েন্ট যোগ করুন</span>
+                  </button>
+                </div>
+
+                {/* Attach existing medicine from database as a variant */}
+                <div className="bg-white p-2.5 rounded-md border border-emerald-200/80 space-y-2">
+                  <label className="block text-[11px] font-bold text-slate-800">
+                    ডাটাবেস এ থাকা অন্য ঔষধ ভ্যারিয়েন্ট হিসেবে যুক্ত করুন (যেমন: Seclo 40, Seclo MUPS 20):
+                  </label>
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={variantDbSearch}
+                      onChange={(e) => setVariantDbSearch(e.target.value)}
+                      placeholder="ডাটাবেস থেকে ঔষধ সার্চ করুন (নাম, মাত্রা বা জেনেরিক)..."
+                      className="w-full pl-8 pr-7 py-1.5 text-xs border border-slate-300 rounded focus:border-emerald-600 focus:outline-none"
+                    />
+                    {variantDbSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setVariantDbSearch('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {variantDbMatches.length > 0 && (
+                    <div className="max-h-40 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded">
+                      {variantDbMatches.map((dbMed) => {
+                        const suggestedVarName = buildDefaultVariantName(dbMed);
+                        const alreadyAdded = modalVariants.some(
+                          (v) =>
+                            v.sourceMedicineId === dbMed.id ||
+                            v.variantName.trim().toLowerCase() === suggestedVarName.trim().toLowerCase()
+                        );
+                        return (
+                          <div
+                            key={dbMed.id}
+                            className="px-2.5 py-1.5 flex items-center justify-between gap-2 text-xs hover:bg-emerald-50/50"
+                          >
+                            <div className="min-w-0">
+                              <div className="font-bold text-slate-900 truncate">
+                                {suggestedVarName}{' '}
+                                <span className="font-normal text-slate-500">
+                                  ({dbMed.dosageForm} · {dbMed.strength})
+                                </span>
+                              </div>
+                              <div className="text-[10px] text-slate-500 truncate">
+                                {dbMed.genericName} · {dbMed.companyName} · ক্রয় ৳{getMedPurchasePrice(dbMed).toFixed(2)} | বিক্রয় ৳{dbMed.unitPrice.toFixed(2)}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={alreadyAdded}
+                              onClick={() => handleAttachDbMedicineAsVariant(dbMed)}
+                              className={`px-2 py-1 text-[11px] font-bold rounded shrink-0 cursor-pointer ${
+                                alreadyAdded
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-200 cursor-default'
+                                  : 'bg-emerald-700 hover:bg-emerald-800 text-white'
+                              }`}
+                            >
+                              {alreadyAdded ? 'যুক্ত আছে ✓' : '+ যুক্ত করুন'}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Editable List of Attached / Custom Variants */}
+                {modalVariants.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-[11px] font-bold text-emerald-900">
+                      সংরক্ষিত ভ্যারিয়েন্ট তালিকা ({modalVariants.length}টি — ইনভয়েসে এই নামগুলোতে সার্চ হবে):
+                    </div>
+                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                      {modalVariants.map((v, idx) => (
+                        <div
+                          key={v.id}
+                          className="p-2.5 bg-white border border-emerald-200 rounded-md space-y-2 text-xs"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-bold text-emerald-800">
+                              ভ্যারিয়েন্ট #{idx + 1}
+                              {v.sourceMedicineId ? ' (ডাটাবেস থেকে যুক্ত)' : ' (কাস্টম)'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setModalVariants((prev) => prev.filter((item) => item.id !== v.id))
+                              }
+                              className="text-[11px] text-red-600 hover:underline flex items-center gap-0.5 cursor-pointer"
+                            >
+                              <Trash2 className="w-3 h-3" /> মুছুন
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <div>
+                              <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">
+                                ভ্যারিয়েন্ট নাম (ইনভয়েস সার্চ নাম) *
+                              </label>
+                              <input
+                                type="text"
+                                value={v.variantName}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setModalVariants((prev) =>
+                                    prev.map((item) =>
+                                      item.id === v.id ? { ...item, variantName: val } : item
+                                    )
+                                  );
+                                }}
+                                placeholder="যেমন: Seclo 20 / Seclo MUPS 20"
+                                className="w-full px-2 py-1 text-xs font-bold text-slate-900 border border-slate-300 rounded"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">
+                                ধরণ (Form)
+                              </label>
+                              <select
+                                value={v.dosageForm}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setModalVariants((prev) =>
+                                    prev.map((item) =>
+                                      item.id === v.id ? { ...item, dosageForm: val } : item
+                                    )
+                                  );
+                                }}
+                                className="w-full px-2 py-1 text-xs border border-slate-300 rounded bg-white"
+                              >
+                                {DOSAGE_FORM_OPTIONS.map((o) => (
+                                  <option key={o.value} value={o.value}>
+                                    {o.value}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">
+                                মাত্রা (Strength)
+                              </label>
+                              <input
+                                type="text"
+                                value={v.strength}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setModalVariants((prev) =>
+                                    prev.map((item) =>
+                                      item.id === v.id ? { ...item, strength: val } : item
+                                    )
+                                  );
+                                }}
+                                placeholder="20 mg / 40 mg"
+                                className="w-full px-2 py-1 text-xs border border-slate-300 rounded"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-2">
+                            <div>
+                              <label className="block text-[10px] font-semibold text-indigo-800 mb-0.5">
+                                ক্রয় মূল্য (৳)
+                              </label>
+                              <input
+                                type="number"
+                                step="any"
+                                value={v.purchasePrice}
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value) || 0;
+                                  setModalVariants((prev) =>
+                                    prev.map((item) =>
+                                      item.id === v.id ? { ...item, purchasePrice: val } : item
+                                    )
+                                  );
+                                }}
+                                className="w-full px-2 py-1 text-xs font-mono font-bold text-indigo-900 border border-indigo-200 rounded"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-semibold text-teal-800 mb-0.5">
+                                বিক্রয় মূল্য (৳)
+                              </label>
+                              <input
+                                type="number"
+                                step="any"
+                                value={v.unitPrice}
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value) || 0;
+                                  setModalVariants((prev) =>
+                                    prev.map((item) =>
+                                      item.id === v.id
+                                        ? {
+                                            ...item,
+                                            unitPrice: val,
+                                            stripPrice: Number((val * 10).toFixed(2)),
+                                          }
+                                        : item
+                                    )
+                                  );
+                                }}
+                                className="w-full px-2 py-1 text-xs font-mono font-bold text-teal-900 border border-teal-200 rounded"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">
+                                পাতা দর (৳)
+                              </label>
+                              <input
+                                type="number"
+                                step="any"
+                                value={v.stripPrice}
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value) || 0;
+                                  setModalVariants((prev) =>
+                                    prev.map((item) =>
+                                      item.id === v.id ? { ...item, stripPrice: val } : item
+                                    )
+                                  );
+                                }}
+                                className="w-full px-2 py-1 text-xs font-mono border border-slate-200 rounded"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
                 <button
                   type="button"
@@ -2345,7 +2750,7 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                   disabled={submittingMed}
                   className="px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-md cursor-pointer disabled:opacity-50"
                 >
-                  {submittingMed ? 'সংরক্ষণ হচ্ছে...' : 'ক্রয় ও বিক্রয় মূল্য সংরক্ষণ করুন'}
+                  {submittingMed ? 'সংরক্ষণ হচ্ছে...' : 'তথ্য ও ভ্যারিয়েন্ট সংরক্ষণ করুন'}
                 </button>
               </div>
             </form>

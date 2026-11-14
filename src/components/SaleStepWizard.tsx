@@ -1098,17 +1098,22 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                           <div>
                             <div className="flex items-start justify-between gap-1">
                               <span className="font-bold text-xs text-slate-900 truncate">
-                                {med.brandName}{' '}
-                                <span className="font-normal text-slate-500">
-                                  {med.strength}
-                                </span>
+                                {med.variantDisplayName || med.brandName}{' '}
+                                {!(med.variantDisplayName && med.variantDisplayName !== med.brandName) && (
+                                  <span className="font-normal text-slate-500">
+                                    {med.strength}
+                                  </span>
+                                )}
                               </span>
                               <span className="font-mono text-xs font-bold text-teal-800 shrink-0">
                                 ৳{formatCleanMoney(med.unitPrice)}
                               </span>
                             </div>
                             <div className="text-[11px] text-slate-500 truncate flex items-center justify-between">
-                              <span>{med.genericName} · {med.dosageForm}</span>
+                              <span>
+                                {med.genericName} · {med.dosageForm}
+                                {med.strength ? ` (${med.strength})` : ''}
+                              </span>
                               <span className="font-mono text-[10px] text-indigo-700">
                                 ক্রয়: ৳{formatCleanMoney(purPrice)}
                               </span>

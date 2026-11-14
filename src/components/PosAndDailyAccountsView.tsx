@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import {
   BD_PHARMA_COMPANIES,
+  expandCatalogWithVariantsForSearch,
   formatCartItemInvoiceLine,
   formatCleanMoney,
   formatPurchaseItemInvoiceLine,
@@ -39,6 +40,7 @@ import {
   numberToBanglaWords,
   parseTransactionItemsDetailed,
   searchAndRankMedicines,
+  searchCatalogVariantsForInvoice,
 } from '../data/bdMedicines';
 import { getTodayDateStr } from '../data/demoSeedData';
 import {
@@ -48,6 +50,7 @@ import {
   InventoryItem,
   InvoiceSealType,
   MedicineCatalogItem,
+  MedicineVariant,
   PurchaseCartItem,
   PurchasePackUnit,
   ShopProfile,
@@ -209,6 +212,7 @@ interface PosAndDailyAccountsViewProps {
   onSaveMedicineCatalog?: (
     medData: Omit<MedicineCatalogItem, 'id' | 'darNo' | 'unitsPerStrip' | 'dosageForm'> & {
       dosageForm: string;
+      variants?: MedicineVariant[];
     },
     existingMed?: MedicineCatalogItem
   ) => Promise<any>;
@@ -629,17 +633,21 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     });
   };
 
+  const expandedInvoiceCatalog = useMemo(() => {
+    return expandCatalogWithVariantsForSearch(catalog);
+  }, [catalog]);
+
   const quickSearchSaleMedicines = useMemo(() => {
     const q = medSearch.trim();
-    if (!q) return catalog.slice(0, 16);
-    return searchAndRankMedicines(catalog, q, 24);
-  }, [catalog, medSearch]);
+    if (!q) return expandedInvoiceCatalog.slice(0, 16);
+    return searchCatalogVariantsForInvoice(expandedInvoiceCatalog, q, 24);
+  }, [expandedInvoiceCatalog, medSearch]);
 
   const quickSearchPurchaseMedicines = useMemo(() => {
     const q = purMedSearch.trim();
-    if (!q) return catalog.slice(0, 16);
-    return searchAndRankMedicines(catalog, q, 24);
-  }, [catalog, purMedSearch]);
+    if (!q) return expandedInvoiceCatalog.slice(0, 16);
+    return searchCatalogVariantsForInvoice(expandedInvoiceCatalog, q, 24);
+  }, [expandedInvoiceCatalog, purMedSearch]);
 
   const filteredPurchaseCompanies = useMemo(() => {
     const q = purCompanySearch.trim().toLowerCase();

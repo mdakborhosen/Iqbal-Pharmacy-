@@ -21,9 +21,11 @@ import {
 import {
   BD_PHARMA_COMPANIES,
   DOSAGE_FORM_OPTIONS,
+  expandCatalogWithVariantsForSearch,
   formatCleanMoney,
   matchesMedicineQuery,
   searchAndRankMedicines,
+  searchCatalogVariantsForInvoice,
 } from '../data/bdMedicines';
 import { getTodayDateStr } from '../data/demoSeedData';
 import {
@@ -174,28 +176,33 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
   const [customBatch, setCustomBatch] = useState('B-2601');
   const [customExpiry, setCustomExpiry] = useState('2028-12-31');
 
+  const expandedCatalog = useMemo(() => {
+    return expandCatalogWithVariantsForSearch(catalog);
+  }, [catalog]);
+
   // Search Results for Step 1
   const searchResults = useMemo(() => {
     const q = productSearch.trim();
     if (!q) return [];
     const filteredCatalog =
       supplierCompany && supplierCompany !== 'সকল কোম্পানি'
-        ? catalog.filter(
+        ? expandedCatalog.filter(
             (m) => m.companyName.toLowerCase().trim() === supplierCompany.toLowerCase().trim()
           )
-        : catalog;
-    const matches = searchAndRankMedicines(filteredCatalog, q, 18);
+        : expandedCatalog;
+    const matches = searchCatalogVariantsForInvoice(filteredCatalog, q, 22);
     // If filtered by company had no hits, search globally
     if (matches.length === 0 && supplierCompany && supplierCompany !== 'সকল কোম্পানি') {
-      return searchAndRankMedicines(catalog, q, 18);
+      return searchCatalogVariantsForInvoice(expandedCatalog, q, 22);
     }
     return matches;
-  }, [catalog, productSearch, supplierCompany]);
+  }, [expandedCatalog, productSearch, supplierCompany]);
 
   // Handle selecting a medicine from search
   const handleSelectMedicine = (med: MedicineCatalogItem) => {
     setSelectedMed(med);
-    setProductSearch(`${med.brandName} (${med.strength || med.dosageForm}) - ${med.companyName}`);
+    const displayLabel = med.variantDisplayName || med.brandName;
+    setProductSearch(`${displayLabel} (${med.strength || med.dosageForm}) - ${med.companyName}`);
     const defaultTp =
       typeof med.purchasePrice === 'number' && med.purchasePrice > 0
         ? med.purchasePrice
@@ -734,7 +741,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                         >
                           <div>
                             <div className="font-bold text-slate-900">
-                              {m.brandName}{' '}
+                              {m.variantDisplayName || m.brandName}{' '}
                               <span className="font-normal text-slate-500">
                                 ({m.dosageForm} · {m.strength})
                               </span>
@@ -761,7 +768,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-xs text-indigo-950 flex items-center gap-1.5">
                         <Check className="w-4 h-4 text-emerald-600" />
-                        <span>নির্বাচিত: {selectedMed.brandName} ({selectedMed.dosageForm} {selectedMed.strength}) - {selectedMed.companyName}</span>
+                        <span>নির্বাচিত: {selectedMed.variantDisplayName || selectedMed.brandName} ({selectedMed.dosageForm} {selectedMed.strength}) - {selectedMed.companyName}</span>
                       </span>
                       <button
                         type="button"

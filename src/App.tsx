@@ -127,6 +127,7 @@ import {
   InventoryItem,
   InvoiceSealType,
   MedicineCatalogItem,
+  MedicineVariant,
   PriceAlert,
   PriceWatch,
   PurchaseCartItem,
@@ -604,6 +605,39 @@ function buildStaffCloudPayload(st: StaffMember, ownerId = SHARED_PHARMACY_OWNER
   return payload;
 }
 
+function sanitizeMedicineVariants(variants?: MedicineVariant[]): MedicineVariant[] {
+  if (!Array.isArray(variants) || variants.length === 0) return [];
+  const out: MedicineVariant[] = [];
+  for (const v of variants.slice(0, 60)) {
+    if (!v || typeof v !== 'object') continue;
+    const varName = sanitizeString(v.variantName, 120);
+    if (!varName) continue;
+    const unitP = sanitizeNumber(v.unitPrice, 0, 1000000);
+    const purP = sanitizeNumber(
+      typeof v.purchasePrice === 'number' && v.purchasePrice > 0
+        ? v.purchasePrice
+        : Number((unitP * 0.88).toFixed(2)),
+      0,
+      1000000
+    );
+    const cleanVar: MedicineVariant = {
+      id: sanitizeString(v.id, 100, `var_${Date.now()}_${out.length}`),
+      variantName: varName,
+      strength: sanitizeString(v.strength, 60, 'Standard'),
+      dosageForm: sanitizeString(String(v.dosageForm || 'Tablet'), 60, 'Tablet'),
+      packSize: sanitizeString(v.packSize, 60, '10 × 10'),
+      purchasePrice: purP,
+      unitPrice: unitP,
+      stripPrice: sanitizeNumber(v.stripPrice, 0, 1000000),
+    };
+    if (v.sourceMedicineId && String(v.sourceMedicineId).trim()) {
+      cleanVar.sourceMedicineId = sanitizeString(v.sourceMedicineId, 120);
+    }
+    out.push(cleanVar);
+  }
+  return out;
+}
+
 function buildCustomMedCloudPayload(cm: CustomMedicine, ownerId = SHARED_PHARMACY_OWNER_ID, shopId = 'shop_iqbal_pharmacy') {
   const unitPrice = sanitizeNumber(cm.unitPrice, 0, 1000000);
   const purchasePrice = sanitizeNumber(
@@ -613,6 +647,7 @@ function buildCustomMedCloudPayload(cm: CustomMedicine, ownerId = SHARED_PHARMAC
     0,
     1000000
   );
+  const cleanVariants = sanitizeMedicineVariants(cm.variants);
   return {
     id: cm.id,
     shopId: sanitizeString(shopId, 128, 'shop_iqbal_pharmacy'),
@@ -628,6 +663,7 @@ function buildCustomMedCloudPayload(cm: CustomMedicine, ownerId = SHARED_PHARMAC
     stripPrice: sanitizeNumber(cm.stripPrice, 0, 1000000),
     therapeuticClass: sanitizeString(cm.therapeuticClass, 100, 'General Medicine'),
     indication: sanitizeString(cm.indication, 300, 'চিকিৎসকের পরামর্শ অনুযায়ী সেব্য'),
+    ...(cleanVariants.length > 0 ? { variants: cleanVariants } : {}),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
@@ -2347,6 +2383,7 @@ export default function App() {
         typeof override.purchasePrice === 'number' && override.purchasePrice > 0
           ? override.purchasePrice
           : Number((override.unitPrice * 0.88).toFixed(2));
+      const cleanVariants = sanitizeMedicineVariants(override.variants);
       return {
         ...baseMed,
         brandName: override.brandName,
@@ -2363,6 +2400,7 @@ export default function App() {
         isCoreProduct: true,
         isCustom: false,
         hasPriceOverride: true,
+        ...(cleanVariants.length > 0 ? { variants: cleanVariants } : {}),
       };
     });
 
@@ -2374,6 +2412,7 @@ export default function App() {
         typeof cm.purchasePrice === 'number' && cm.purchasePrice > 0
           ? cm.purchasePrice
           : Number((cm.unitPrice * 0.88).toFixed(2));
+      const cleanVariants = sanitizeMedicineVariants(cm.variants);
       standaloneCustoms.push({
         id: cm.id,
         brandName: cm.brandName,
@@ -2391,10 +2430,33 @@ export default function App() {
         darNo: 'CUSTOM-BD',
         isCoreProduct: false,
         isCustom: true,
+        ...(cleanVariants.length > 0 ? { variants: cleanVariants } : {}),
       });
     }
 
-    return [...standaloneCustoms, ...updatedBase];
+    const combined = [...standaloneCustoms, ...updatedBase];
+    const absorbedByParent = new Map<string, string>();
+    for (const item of combined) {
+      if (item.variants && item.variants.length > 0) {
+        for (const v of item.variants) {
+          if (v.sourceMedicineId && v.sourceMedicineId !== item.id) {
+            absorbedByParent.set(v.sourceMedicineId, item.id);
+          }
+        }
+      }
+    }
+
+    if (absorbedByParent.size === 0) {
+      return combined;
+    }
+
+    return combined.map((item) => {
+      const parentId = absorbedByParent.get(item.id);
+      if (parentId && parentId !== item.id && !(item.variants && item.variants.length > 0)) {
+        return { ...item, mergedIntoParentId: parentId };
+      }
+      return item;
+    });
   }, [customMedicines, deletedIdsSet]);
 
   // Helper to get operator display name: Owner shows "Owner", staff shows specific name
@@ -6365,10 +6427,15 @@ export default function App() {
   const handleSaveMedicineCatalog = async (
     medData: Omit<MedicineCatalogItem, 'id' | 'darNo' | 'unitsPerStrip' | 'dosageForm'> & {
       dosageForm: string;
+      variants?: MedicineVariant[];
     },
     existingMed?: MedicineCatalogItem
   ) => {
     const nowMs = Date.now();
+    const cleanExisting = existingMed?.parentMedicineId
+      ? fullCatalog.find((m) => m.id === existingMed.parentMedicineId) || existingMed
+      : existingMed;
+
     // If existingMed is provided, verify if brandName+strength still match existingMed or if user selected a different variant
     const matchedCatalogVariant = fullCatalog.find(
       (m) =>
@@ -6378,13 +6445,16 @@ export default function App() {
     );
 
     const targetMed =
-      existingMed &&
-      existingMed.brandName.toLowerCase() === medData.brandName.toLowerCase() &&
-      existingMed.strength.toLowerCase() === medData.strength.toLowerCase()
-        ? existingMed
-        : matchedCatalogVariant || existingMed;
+      cleanExisting &&
+      cleanExisting.brandName.toLowerCase() === medData.brandName.toLowerCase() &&
+      cleanExisting.strength.toLowerCase() === medData.strength.toLowerCase()
+        ? cleanExisting
+        : cleanExisting && Array.isArray(medData.variants) && medData.variants.length > 0
+        ? cleanExisting
+        : matchedCatalogVariant || cleanExisting;
 
-    const medId = getCanonicalDocId(targetMed ? targetMed.id : `cmed_${nowMs}`, effectiveShopId);
+    const rawTargetId = targetMed ? (targetMed.parentMedicineId || targetMed.id) : `cmed_${nowMs}`;
+    const medId = getCanonicalDocId(rawTargetId, effectiveShopId);
     unmarkDeletedId(medId);
 
     const resolvedPurchasePrice = sanitizeNumber(
@@ -6407,6 +6477,8 @@ export default function App() {
       });
     }
 
+    const cleanVariants = sanitizeMedicineVariants(medData.variants);
+
     const newMed: CustomMedicine = {
       id: medId,
       shopId: effectiveShopId,
@@ -6422,6 +6494,7 @@ export default function App() {
       stripPrice: sanitizeNumber(medData.stripPrice),
       therapeuticClass: sanitizeString(medData.therapeuticClass, 100),
       indication: sanitizeString(medData.indication, 300),
+      ...(cleanVariants.length > 0 ? { variants: cleanVariants } : {}),
       updatedAtMs: nowMs,
     };
 

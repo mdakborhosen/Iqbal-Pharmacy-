@@ -23,6 +23,7 @@ import {
   BD_PHARMA_COMPANIES,
   calculateProportionalMedicinePrice,
   DOSAGE_FORM_OPTIONS,
+  expandCatalogWithVariantsForSearch,
   formatBrandVariantLabel,
   getBrandFormAndStrengthVariants,
   getShortDosageForm,
@@ -31,6 +32,7 @@ import {
   matchesMedicineQuery,
   normalizePharmaSearchText,
   searchAndRankMedicines,
+  searchCatalogVariantsForInvoice,
   formatCleanMoney,
 } from '../data/bdMedicines';
 import { InventoryItem, MedicineCatalogItem } from '../types';
@@ -227,7 +229,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       )
     );
 
-    const catalogMatches = searchAndRankMedicines(catalog, searchQuery, 45);
+    const expandedCatalog = expandCatalogWithVariantsForSearch(catalog);
+    const catalogMatches = searchCatalogVariantsForInvoice(expandedCatalog, searchQuery, 45);
     const virtualCatalogItems: InventoryItem[] = [];
 
     for (const med of catalogMatches) {
@@ -345,20 +348,24 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   };
 
   // Filtered catalog for top quick-pick search/select in modal
+  const expandedModalCatalog = useMemo(() => {
+    return expandCatalogWithVariantsForSearch(catalog);
+  }, [catalog]);
+
   const filteredModalCatalog = useMemo(() => {
     const q = modalCatalogSearch.trim();
     const pool =
       modalCompanyFilter === 'ALL'
-        ? catalog
-        : catalog.filter((m) => m.companyName === modalCompanyFilter);
-    return searchAndRankMedicines(pool, q, 150);
-  }, [catalog, modalCatalogSearch, modalCompanyFilter]);
+        ? expandedModalCatalog
+        : expandedModalCatalog.filter((m) => m.companyName === modalCompanyFilter);
+    return searchCatalogVariantsForInvoice(pool, q, 150);
+  }, [expandedModalCatalog, modalCatalogSearch, modalCompanyFilter]);
 
   // Filtered Medicine Brand list when typing or opening Brand Name dropdown
   const matchingBrandSuggestions = useMemo(() => {
     const q = brandName.trim();
-    return searchAndRankMedicines(catalog, q, 80);
-  }, [catalog, brandName]);
+    return searchCatalogVariantsForInvoice(expandedModalCatalog, q, 80);
+  }, [expandedModalCatalog, brandName]);
 
   // Filtered 258+ Company list when typing or opening Company Name dropdown
   const matchingCompanies = useMemo(() => {

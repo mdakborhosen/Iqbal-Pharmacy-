@@ -2,6 +2,7 @@ import {
   CartItem,
   InventoryItem,
   MedicineCatalogItem,
+  MedicineVariant,
   PurchaseCartItem,
   PurchasePackUnit,
   Transaction,
@@ -4880,25 +4881,150 @@ export function normalizePharmaSearchText(input: string): string {
     .replace(/[^a-z0-9\u0980-\u09ff]/g, '');
 }
 
+export function buildDefaultVariantName(med: {
+  brandName: string;
+  strength?: string;
+  dosageForm?: string;
+  variantDisplayName?: string;
+}): string {
+  if (med.variantDisplayName && med.variantDisplayName.trim()) {
+    return med.variantDisplayName.trim();
+  }
+  const brand = (med.brandName || '').trim();
+  if (!brand) return 'Custom Product';
+  const strength = (med.strength || '').trim();
+  if (!strength || strength === 'Standard') return brand;
+
+  const bLow = brand.toLowerCase();
+  const sLow = strength.toLowerCase();
+  if (bLow.includes(sLow)) return brand;
+
+  // Extract concise strength token (e.g. "20 mg" -> "20", "60 ml" -> "60ml", "500 mg+65 mg" -> "500+65")
+  const concise = strength
+    .replace(/\s*(mg|mcg|gm|g|iu)\b/gi, '')
+    .replace(/\s*\+\s*/g, '+')
+    .replace(/\s*ml\b/gi, 'ml')
+    .trim();
+
+  const leadingNumMatch = concise.match(/^(\d+(?:\.\d+)?(?:\+\d+(?:\.\d+)?)?)/);
+  if (leadingNumMatch) {
+    const numTok = leadingNumMatch[1];
+    if (
+      bLow.endsWith(` ${numTok}`) ||
+      bLow.endsWith(`-${numTok}`) ||
+      bLow.endsWith(numTok)
+    ) {
+      return brand;
+    }
+  }
+
+  const sForm = med.dosageForm ? getShortDosageForm(med.dosageForm) : '';
+  const needsFormTag =
+    sForm &&
+    !['Tab', 'Cap'].includes(sForm) &&
+    !bLow.includes(sForm.toLowerCase()) &&
+    !bLow.includes((med.dosageForm || '').toLowerCase());
+
+  if (needsFormTag) {
+    return concise ? `${brand} ${sForm} ${concise}` : `${brand} ${sForm}`;
+  }
+
+  return concise ? `${brand} ${concise}` : `${brand} ${strength}`;
+}
+
+export function expandCatalogWithVariantsForSearch(
+  catalog: MedicineCatalogItem[]
+): MedicineCatalogItem[] {
+  const absorbedIds = new Set<string>();
+  const coveredKeys = new Set<string>();
+
+  for (const m of catalog) {
+    if (m.variants && m.variants.length > 0) {
+      for (const v of m.variants) {
+        if (v.sourceMedicineId) {
+          absorbedIds.add(v.sourceMedicineId);
+        }
+        const key = `${v.variantName.trim().toLowerCase()}__${(v.strength || '').trim().toLowerCase()}__${getShortDosageForm(String(v.dosageForm || m.dosageForm))}`;
+        coveredKeys.add(key);
+      }
+    }
+  }
+
+  const expanded: MedicineCatalogItem[] = [];
+  for (const m of catalog) {
+    if (m.variants && m.variants.length > 0) {
+      for (const v of m.variants) {
+        const purPrice =
+          typeof v.purchasePrice === 'number' && v.purchasePrice > 0
+            ? v.purchasePrice
+            : Number((v.unitPrice * 0.88).toFixed(2));
+        expanded.push({
+          ...m,
+          id: `${m.id}__var__${v.id}`,
+          brandName: v.variantName,
+          variantDisplayName: v.variantName,
+          dosageForm: (v.dosageForm as MedicineCatalogItem['dosageForm']) || m.dosageForm,
+          strength: v.strength || m.strength,
+          packSize: v.packSize || m.packSize,
+          purchasePrice: purPrice,
+          unitPrice: v.unitPrice,
+          stripPrice: v.stripPrice || Number((v.unitPrice * (m.unitsPerStrip || 10)).toFixed(2)),
+          parentMedicineId: m.id,
+          variantId: v.id,
+        });
+      }
+      continue;
+    }
+
+    if (m.mergedIntoParentId || absorbedIds.has(m.id)) {
+      continue;
+    }
+
+    const defName = buildDefaultVariantName(m);
+    const key = `${defName.trim().toLowerCase()}__${(m.strength || '').trim().toLowerCase()}__${getShortDosageForm(m.dosageForm)}`;
+    if (coveredKeys.has(key)) {
+      continue;
+    }
+
+    expanded.push({
+      ...m,
+      variantDisplayName: defName,
+    });
+  }
+
+  return expanded;
+}
+
+export function searchCatalogVariantsForInvoice(
+  expandedCatalog: MedicineCatalogItem[],
+  rawQuery: string,
+  limit = 24
+): MedicineCatalogItem[] {
+  const q = rawQuery.trim();
+  if (!q) return expandedCatalog.slice(0, limit);
+  return searchAndRankMedicines(expandedCatalog, q, limit);
+}
+
 export function getMedicineSearchMatchScore(m: MedicineCatalogItem, rawQuery: string): number {
   const q = rawQuery.trim().toLowerCase();
   if (!q) return 1;
 
   const bLow = m.brandName.toLowerCase();
+  const vLow = (m.variantDisplayName || m.brandName).toLowerCase();
 
-  // FAST PATH 1: Exact brand name match (0ms execution, no regex)
-  if (bLow === q) {
+  // FAST PATH 1: Exact brand or variant name match
+  if (bLow === q || vLow === q) {
     return 1000;
   }
 
-  // FAST PATH 2: Brand name starts with query (e.g. "Napa", "Seclo", "Otogen")
-  if (bLow.startsWith(q)) {
+  // FAST PATH 2: Brand or variant name starts with query (e.g. "Napa", "Seclo", "Seclo 20", "Seclo MUPS")
+  if (bLow.startsWith(q) || vLow.startsWith(q)) {
     return 800;
   }
 
-  // FAST PATH 3: Brand contains query or starts with brand+strength
+  // FAST PATH 3: Brand/variant contains query or starts with brand+strength
   const brandAndStrength = `${bLow} ${m.strength.toLowerCase()}`;
-  if (bLow.includes(q) || brandAndStrength.startsWith(q)) {
+  if (bLow.includes(q) || vLow.includes(q) || brandAndStrength.startsWith(q)) {
     return 600;
   }
 
@@ -5131,6 +5257,24 @@ export function formatCleanMoney(val: number | string | null | undefined): strin
   return fixed;
 }
 
+function combineBrandAndStrengthClean(brandName: string, strength: string): string {
+  const cleanBrand = (brandName || 'Custom Product').trim();
+  const cleanStrength =
+    strength && strength.trim() !== 'Standard' ? strength.trim() : '';
+  if (!cleanStrength) return cleanBrand;
+  const bLow = cleanBrand.toLowerCase();
+  const sLow = cleanStrength.toLowerCase();
+  if (bLow.includes(sLow)) return cleanBrand;
+  const numMatch = sLow.match(/^(\d+(?:\.\d+)?(?:\+\d+(?:\.\d+)?)?)/);
+  if (numMatch) {
+    const tok = numMatch[1];
+    if (bLow.endsWith(` ${tok}`) || bLow.endsWith(`-${tok}`)) {
+      return cleanBrand;
+    }
+  }
+  return `${cleanBrand} ${cleanStrength}`;
+}
+
 export function formatCartItemInvoiceLine(
   item: {
     brandName: string;
@@ -5147,10 +5291,7 @@ export function formatCartItemInvoiceLine(
   const prefix = getInvoiceFormPrefix(item.dosageForm);
   const unitStr = formatCleanMoney(item.unitPrice);
   const totalStr = formatCleanMoney(item.unitPrice * item.qty);
-  const cleanBrand = (item.brandName || 'Custom Product').trim();
-  const cleanStrength =
-    item.strength && item.strength.trim() !== 'Standard' ? item.strength.trim() : '';
-  const nameAndStrength = cleanStrength ? `${cleanBrand} ${cleanStrength}` : cleanBrand;
+  const nameAndStrength = combineBrandAndStrengthClean(item.brandName, item.strength);
   const stockTag = item.updateStock === false ? ' [নন-স্টক/শুধু-বিল]' : '';
   
   const schedule = (item.dosageSchedule || '').trim();
@@ -5238,10 +5379,7 @@ export function formatPurchaseItemInvoiceLine(
   const exactLineTotal = Number((baseCost + totalItemVat).toFixed(2));
   const unitStr = formatCleanMoney(item.purchasePrice);
   const totalStr = formatCleanMoney(exactLineTotal);
-  const cleanBrand = (item.brandName || 'Custom Product').trim();
-  const cleanStrength =
-    item.strength && item.strength.trim() !== 'Standard' ? item.strength.trim() : '';
-  const nameAndStrength = cleanStrength ? `${cleanBrand} ${cleanStrength}` : cleanBrand;
+  const nameAndStrength = combineBrandAndStrengthClean(item.brandName, item.strength);
   const stockTag = item.updateStock === false ? ' [নন-স্টক/শুধু-বিল]' : '';
   const bonusTag = bQty > 0 ? ` [বোনাস: +${bQty} পিস]` : '';
   
@@ -5311,6 +5449,36 @@ function findCatalogMedicineByText(
   const source = catalog.length > 0 ? catalog : CURATED_BD_MEDICINES;
   const cleaned = rawNameAndStrength.trim().toLowerCase();
   const compact = cleaned.replace(/\s+/g, '');
+
+  // 0. Check inside explicit parent variants (e.g., "Seclo 20", "Seclo 40", "Seclo MUPS 20")
+  for (const m of source) {
+    if (!m.variants || m.variants.length === 0) continue;
+    for (const v of m.variants) {
+      const vLow = v.variantName.trim().toLowerCase();
+      const vWithStr = `${vLow} ${(v.strength || '').trim().toLowerCase()}`.trim();
+      if (
+        vLow === cleaned ||
+        vWithStr === cleaned ||
+        vLow.replace(/\s+/g, '') === compact ||
+        vWithStr.replace(/\s+/g, '') === compact
+      ) {
+        return {
+          ...m,
+          id: `${m.id}__var__${v.id}`,
+          brandName: v.variantName,
+          variantDisplayName: v.variantName,
+          dosageForm: (v.dosageForm as MedicineCatalogItem['dosageForm']) || m.dosageForm,
+          strength: v.strength || m.strength,
+          packSize: v.packSize || m.packSize,
+          purchasePrice: v.purchasePrice,
+          unitPrice: v.unitPrice,
+          stripPrice: v.stripPrice,
+          parentMedicineId: m.id,
+          variantId: v.id,
+        };
+      }
+    }
+  }
 
   // 1. Exact match on brandName + strength
   const exact = source.find((m) => {

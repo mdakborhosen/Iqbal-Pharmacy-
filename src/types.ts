@@ -13,6 +13,18 @@ export type DosageFormType =
   | 'Injection'
   | 'Gel';
 
+export interface MedicineVariant {
+  id: string;
+  variantName: string; // e.g., "Seclo 20", "Seclo 40", "Seclo MUPS 20"
+  strength: string;
+  dosageForm: DosageFormType | string;
+  packSize?: string;
+  purchasePrice: number;
+  unitPrice: number;
+  stripPrice: number;
+  sourceMedicineId?: string;
+}
+
 export interface MedicineCatalogItem {
   id: string;
   brandName: string;
@@ -32,6 +44,11 @@ export interface MedicineCatalogItem {
   isCustom?: boolean;
   isCoreProduct?: boolean;
   hasPriceOverride?: boolean;
+  variants?: MedicineVariant[];
+  variantDisplayName?: string;
+  parentMedicineId?: string;
+  variantId?: string;
+  mergedIntoParentId?: string;
 }
 
 export interface ShopNotice {
@@ -260,6 +277,7 @@ export interface CustomMedicine {
   stripPrice: number;
   therapeuticClass: string;
   indication: string;
+  variants?: MedicineVariant[];
   createdAt?: unknown;
   updatedAt?: unknown;
   updatedAtMs?: number;

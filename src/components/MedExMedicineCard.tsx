@@ -39,24 +39,40 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
   const [posSuccess, setPosSuccess] = useState(false);
   const [purchaseSuccess, setPurchaseSuccess] = useState(false);
 
-  // Find all strength/form variants for this exact brand name (e.g., A-Cal D vs A-Cal DX)
+  // Explicit saved variants on this medicine + other catalog brand family variants (deduplicated)
+  const explicitVariants = React.useMemo(() => {
+    return Array.isArray(medicine.variants) ? medicine.variants : [];
+  }, [medicine.variants]);
+
   const brandFamilyVariants = React.useMemo(() => {
     const rootName = medicine.brandName.split(' ')[0].toLowerCase();
+    const absorbedSourceIds = new Set(
+      explicitVariants.map((v) => v.sourceMedicineId).filter(Boolean) as string[]
+    );
+    const explicitNames = new Set(
+      explicitVariants.map((v) => v.variantName.trim().toLowerCase())
+    );
     return allMedicines.filter((m) => {
+      if (m.id === medicine.id || m.mergedIntoParentId || absorbedSourceIds.has(m.id)) {
+        return false;
+      }
+      if (explicitNames.has(m.brandName.trim().toLowerCase())) {
+        return false;
+      }
       const mRoot = m.brandName.split(' ')[0].toLowerCase();
       return (
-        m.id !== medicine.id &&
         (m.brandName.toLowerCase().startsWith(rootName) || mRoot === rootName) &&
         m.genericName.toLowerCase() === medicine.genericName.toLowerCase()
       );
     });
-  }, [medicine, allMedicines]);
+  }, [medicine, allMedicines, explicitVariants]);
 
   // Find alternate brands under the same generic
   const alternateBrands = React.useMemo(() => {
     return allMedicines.filter(
       (m) =>
         m.id !== medicine.id &&
+        !m.mergedIntoParentId &&
         m.genericName.toLowerCase().trim() === medicine.genericName.toLowerCase().trim()
     );
   }, [medicine, allMedicines]);
@@ -155,6 +171,36 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
         {/* Also available as: [ Variant Pills with Prices & Add Variant Button ] */}
         <div className="mt-3.5 flex items-center gap-2 flex-wrap text-xs text-slate-600">
           <span className="font-semibold text-slate-700">ভ্যারিয়েন্টসমূহ:</span>
+          {explicitVariants.map((v) => {
+            const expandedMed: MedicineCatalogItem = {
+              ...medicine,
+              id: `${medicine.id}__var__${v.id}`,
+              brandName: v.variantName,
+              variantDisplayName: v.variantName,
+              dosageForm: (v.dosageForm as MedicineCatalogItem['dosageForm']) || medicine.dosageForm,
+              strength: v.strength || medicine.strength,
+              packSize: v.packSize || medicine.packSize,
+              purchasePrice: v.purchasePrice,
+              unitPrice: v.unitPrice,
+              stripPrice: v.stripPrice,
+              parentMedicineId: medicine.id,
+              variantId: v.id,
+            };
+            return (
+              <button
+                key={v.id}
+                type="button"
+                onClick={() => onSelectMedicine && onSelectMedicine(expandedMed)}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-teal-900 bg-teal-50/80 border border-teal-500 hover:bg-teal-100 rounded-md transition-colors cursor-pointer shadow-2xs"
+                title={`${v.variantName} (${v.dosageForm} · ${v.strength}) - বিক্রয়মূল্য: ৳${v.unitPrice.toFixed(2)}`}
+              >
+                <span>{v.variantName}</span>
+                <span className="text-[10px] font-normal text-slate-600">{v.dosageForm}</span>
+                <span className="font-mono text-emerald-700 font-bold">৳{v.unitPrice.toFixed(2)}</span>
+              </button>
+            );
+          })}
+
           {brandFamilyVariants.map((v) => (
             <button
               key={v.id}
@@ -173,7 +219,7 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
               type="button"
               onClick={() => onAddVariant(medicine)}
               className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-md transition-colors cursor-pointer shadow-2xs"
-              title="এই ঔষধের নতুন মাত্রা বা ধরণ (যেমন: ৪০ মি.গ্রা, সিরাপ, ইত্যাদি) এবং ভিন্ন দাম যুক্ত করুন"
+              title="এই ঔষধের নতুন মাত্রা বা ধরণ (যেমন: Seclo 40, Seclo MUPS 20) বা ডাটাবেস থেকে অন্য ঔষধ ভ্যারিয়েন্ট হিসেবে যুক্ত করুন"
             >
               <Layers className="w-3.5 h-3.5 text-emerald-600" />
               <span>+ নতুন ভ্যারিয়েন্ট/ধরণ</span>
