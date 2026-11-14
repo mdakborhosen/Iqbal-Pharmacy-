@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRightLeft,
   Bell,
@@ -12,12 +12,15 @@ import {
   Edit3,
   ExternalLink,
   FlaskConical,
+  Globe,
   Layers,
   Link2,
+  Loader2,
   Package,
   PackagePlus,
   Pill,
   Plus,
+  RefreshCw,
   Search,
   ShoppingCart,
   LayoutGrid,
@@ -67,6 +70,11 @@ interface MedicineCompareViewProps {
   onTogglePriceWatch: (med: MedicineCatalogItem) => Promise<void>;
   onMarkAlertRead: (alertId: string) => Promise<void>;
   onDeletePriceAlert: (alertId: string) => Promise<void>;
+  onSearchMedexLive?: (
+    query: string,
+    opts?: { limit?: number; refresh?: boolean; signal?: AbortSignal; silent?: boolean }
+  ) => Promise<MedicineCatalogItem[]>;
+  onSyncSavedMedexPrices?: (opts?: { silent?: boolean }) => Promise<number>;
 }
 
 const ALPHABET = [
@@ -91,6 +99,8 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
   onTogglePriceWatch,
   onMarkAlertRead,
   onDeletePriceAlert,
+  onSearchMedexLive,
+  onSyncSavedMedexPrices,
 }) => {
   const [directoryTab, setDirectoryTab] = useState<'medicines' | 'companies' | 'generics'>('medicines');
   const [searchQuery, setSearchQuery] = useState('');
@@ -104,6 +114,57 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
   const [addedFeedbackId, setAddedFeedbackId] = useState<string | null>(null);
   const [showWatchCenter, setShowWatchCenter] = useState<boolean>(false);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
+  const [medexLiveResults, setMedexLiveResults] = useState<MedicineCatalogItem[]>([]);
+  const [medexSearching, setMedexSearching] = useState<boolean>(false);
+  const [medexSyncingAll, setMedexSyncingAll] = useState<boolean>(false);
+  const [medexStatusMsg, setMedexStatusMsg] = useState<string>('');
+  const [medexRefreshTick, setMedexRefreshTick] = useState<number>(0);
+
+  // Live direct search against https://medex.com.bd/ whenever user searches any medicine
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (!onSearchMedexLive || q.length < 2) {
+      setMedexLiveResults([]);
+      setMedexSearching(false);
+      setMedexStatusMsg('');
+      return;
+    }
+
+    const controller = new AbortController();
+    const forceRefresh = medexRefreshTick > 0;
+    const timer = setTimeout(async () => {
+      setMedexSearching(true);
+      setMedexStatusMsg('medex.com.bd থেকে সরাসরি অনুসন্ধান ও বিক্রয়মূল্য যাচাই হচ্ছে...');
+      try {
+        const items = await onSearchMedexLive(q, {
+          limit: 8,
+          refresh: forceRefresh,
+          signal: controller.signal,
+        });
+        if (!controller.signal.aborted) {
+          setMedexLiveResults(items);
+          setMedexStatusMsg(
+            items.length > 0
+              ? `medex.com.bd থেকে সরাসরি ${items.length}টি ঔষধের লাইভ মূল্য পাওয়া গেছে ও ডাটাবেসে সংরক্ষিত হয়েছে`
+              : 'medex.com.bd এ সরাসরি পাওয়া যায়নি; স্থানীয় ডাটাবেস থেকে ফলাফল দেখানো হচ্ছে'
+          );
+        }
+      } catch (err: any) {
+        if (!controller.signal.aborted && err?.name !== 'AbortError') {
+          setMedexStatusMsg('medex.com.bd সংযোগ সাময়িক ব্যস্ত; স্থানীয় ডাটাবেস থেকে ফলাফল দেখানো হচ্ছে');
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setMedexSearching(false);
+        }
+      }
+    }, 400);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [searchQuery, medexRefreshTick]);
 
   // Add / Edit Medicine Modal states
   const [showMedModal, setShowMedModal] = useState(false);
@@ -219,7 +280,7 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
     return map;
   }, [catalog]);
 
-  // Filtered 36,000+ Medicines with Complete 13 Dosage Forms per Company & Generic + Exact Brand Priority Ranking
+  // Filtered Medicines + Live MedEx Direct Results Merged with Updated Selling Prices
   const filteredMedicines = useMemo(() => {
     const q = searchQuery.trim();
     const visibleCatalog = catalog.filter((m) => !m.mergedIntoParentId);
@@ -232,9 +293,60 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
       selectedLetter,
     });
 
-    if (!q) return baseFiltered;
-    return searchAndRankMedicines(baseFiltered, q);
-  }, [catalog, searchQuery, selectedCompany, selectedGeneric, selectedDosageForm, selectedLetter]);
+    const rankedLocal = q ? searchAndRankMedicines(baseFiltered, q) : baseFiltered;
+
+    if (!q || medexLiveResults.length === 0) {
+      return rankedLocal;
+    }
+
+    // Merge live MedEx items first (respecting dosage form filter if active), deduplicating with local matches
+    const liveFiltered = medexLiveResults.filter((m) => {
+      if (
+        selectedDosageForm !== 'ALL' &&
+        getShortDosageForm(m.dosageForm) !== getShortDosageForm(selectedDosageForm)
+      ) {
+        return false;
+      }
+      return true;
+    });
+
+    const seenKeys = new Set<string>();
+    const merged: MedicineCatalogItem[] = [];
+    for (const mx of liveFiltered) {
+      const key = `${mx.brandName.trim().toLowerCase()}__${(mx.strength || '').trim().toLowerCase()}__${getShortDosageForm(mx.dosageForm).toLowerCase()}`;
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        // Prefer canonical DB item if it already carries the synced MedEx price & variants
+        const dbMatch = rankedLocal.find(
+          (l) =>
+            (mx.medexBrandId && l.medexBrandId === mx.medexBrandId) ||
+            `${l.brandName.trim().toLowerCase()}__${(l.strength || '').trim().toLowerCase()}__${getShortDosageForm(l.dosageForm).toLowerCase()}` === key
+        );
+        if (dbMatch) {
+          merged.push({
+            ...dbMatch,
+            unitPrice: mx.unitPrice > 0 ? mx.unitPrice : dbMatch.unitPrice,
+            stripPrice: mx.stripPrice > 0 ? mx.stripPrice : dbMatch.stripPrice,
+            medexUrl: mx.medexUrl || dbMatch.medexUrl,
+            medexBrandId: mx.medexBrandId || dbMatch.medexBrandId,
+            source: 'medex',
+          });
+        } else {
+          merged.push(mx);
+        }
+      }
+    }
+
+    for (const loc of rankedLocal) {
+      const key = `${loc.brandName.trim().toLowerCase()}__${(loc.strength || '').trim().toLowerCase()}__${getShortDosageForm(loc.dosageForm).toLowerCase()}`;
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        merged.push(loc);
+      }
+    }
+
+    return merged;
+  }, [catalog, searchQuery, selectedCompany, selectedGeneric, selectedDosageForm, selectedLetter, medexLiveResults]);
 
   // Filtered 250+ Companies
   const filteredCompanies = useMemo(() => {
@@ -706,6 +818,56 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Live medex.com.bd Search Status & Price Sync Bar */}
+        {(searchQuery.trim().length >= 2 || onSyncSavedMedexPrices) && (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3 py-2 rounded-md bg-teal-50/80 border border-teal-200/80 text-xs">
+            <div className="flex items-center gap-2 text-teal-900">
+              {medexSearching ? (
+                <Loader2 className="w-3.5 h-3.5 text-teal-700 animate-spin shrink-0" />
+              ) : (
+                <Globe className="w-3.5 h-3.5 text-teal-700 shrink-0" />
+              )}
+              <span className="font-medium">
+                {searchQuery.trim().length >= 2
+                  ? medexStatusMsg || 'medex.com.bd থেকে সরাসরি অনুসন্ধান সক্রিয় (অটো-সেভ ও মূল্য আপডেট)'
+                  : 'সরাসরি medex.com.bd সার্চ ও স্বয়ংক্রিয় মূল্য সংশোধন সক্রিয় — যেকোনো ঔষধ সার্চ করুন'}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {searchQuery.trim().length >= 2 && onSearchMedexLive && (
+                <button
+                  type="button"
+                  disabled={medexSearching}
+                  onClick={() => setMedexRefreshTick((t) => t + 1)}
+                  className="px-2.5 py-1 bg-white hover:bg-teal-100 text-teal-800 border border-teal-300 rounded font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-60"
+                >
+                  <RefreshCw className={`w-3 h-3 ${medexSearching ? 'animate-spin' : ''}`} />
+                  <span>লাইভ রিফ্রেশ</span>
+                </button>
+              )}
+              {onSyncSavedMedexPrices && (
+                <button
+                  type="button"
+                  disabled={medexSyncingAll}
+                  onClick={async () => {
+                    setMedexSyncingAll(true);
+                    try {
+                      await onSyncSavedMedexPrices({ silent: false });
+                    } finally {
+                      setMedexSyncingAll(false);
+                    }
+                  }}
+                  className="px-2.5 py-1 bg-teal-700 hover:bg-teal-800 text-white rounded font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-60"
+                  title="ডাটাবেসে সংরক্ষিত MedEx ঔষধগুলোর মূল্য পরিবর্তন হয়েছে কিনা যাচাই ও সংশোধন করুন"
+                >
+                  <RefreshCw className={`w-3 h-3 ${medexSyncingAll ? 'animate-spin' : ''}`} />
+                  <span>{medexSyncingAll ? 'যাচাই হচ্ছে...' : 'MedEx দাম সিঙ্ক'}</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* A–Z Alphabetical Index Filter Bar (MedEx Style) */}
         <div className="flex items-center gap-1 overflow-x-auto pt-1 pb-1 border-t border-slate-100">

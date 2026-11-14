@@ -119,15 +119,30 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
             </span>
           </div>
 
-          {/* Green [ 📷 Pack Image ] Button (Exact match from screenshot) */}
-          <button
-            type="button"
-            onClick={() => setShowPackImageModal(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#258750] hover:bg-[#1e6f42] text-white text-xs font-semibold rounded-md shadow-2xs transition-colors shrink-0 cursor-pointer"
-          >
-            <Camera className="w-3.5 h-3.5" />
-            <span>Pack Image</span>
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {medicine.medexUrl && (
+              <a
+                href={medicine.medexUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 text-[11px] font-bold rounded-md transition-colors"
+                title="medex.com.bd থেকে সরাসরি প্রাপ্ত ও ডাটাবেসে সংরক্ষিত বিক্রয়মূল্য"
+              >
+                <ExternalLink className="w-3 h-3" />
+                <span>MedEx লাইভ</span>
+              </a>
+            )}
+            {/* Green [ 📷 Pack Image ] Button (Exact match from screenshot) */}
+            <button
+              type="button"
+              onClick={() => setShowPackImageModal(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#258750] hover:bg-[#1e6f42] text-white text-xs font-semibold rounded-md shadow-2xs transition-colors shrink-0 cursor-pointer"
+            >
+              <Camera className="w-3.5 h-3.5" />
+              <span>Pack Image</span>
+            </button>
+          </div>
         </div>
 
         {/* Generic Name (Teal color) */}

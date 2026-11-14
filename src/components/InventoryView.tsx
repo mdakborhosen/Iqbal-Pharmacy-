@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Building2,
@@ -48,6 +48,10 @@ interface InventoryViewProps {
   onQuickRestock: (item: InventoryItem, addQty: number) => Promise<void>;
   onAddToPosCart?: (med: MedicineCatalogItem, qty: number) => void;
   onAddToPurchaseCart?: (med: MedicineCatalogItem, qty?: number) => void;
+  onSearchMedexLive?: (
+    query: string,
+    opts?: { limit?: number; refresh?: boolean; signal?: AbortSignal; silent?: boolean }
+  ) => Promise<MedicineCatalogItem[]>;
 }
 
 export const InventoryView: React.FC<InventoryViewProps> = ({
@@ -58,6 +62,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   onQuickRestock,
   onAddToPosCart,
   onAddToPurchaseCart,
+  onSearchMedexLive,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterMode, setFilterMode] = useState<'all' | 'low_stock' | 'expiring'>('all');
@@ -65,6 +70,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [saving, setSaving] = useState(false);
+  const [medexLiveSearchItems, setMedexLiveSearchItems] = useState<MedicineCatalogItem[]>([]);
+  const [medexLiveSearching, setMedexLiveSearching] = useState(false);
 
   // Modal Search & Dropdown states for Medicine Name, Company Name, Generic Name
   const [modalCatalogSearch, setModalCatalogSearch] = useState('');
@@ -184,6 +191,39 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     document.body.removeChild(link);
   };
 
+  // Live MedEx search on main Inventory search bar & modal catalog search bar
+  const activeMedexInvQuery = (showModal ? modalCatalogSearch : filterMode === 'all' ? searchQuery : '').trim();
+  useEffect(() => {
+    if (!onSearchMedexLive || activeMedexInvQuery.length < 2) {
+      setMedexLiveSearchItems([]);
+      setMedexLiveSearching(false);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setMedexLiveSearching(true);
+      try {
+        const items = await onSearchMedexLive(activeMedexInvQuery, {
+          limit: 8,
+          signal: controller.signal,
+        });
+        if (!controller.signal.aborted) {
+          setMedexLiveSearchItems(items);
+        }
+      } catch {
+        // fallback cleanly
+      } finally {
+        if (!controller.signal.aborted) {
+          setMedexLiveSearching(false);
+        }
+      }
+    }, 400);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [activeMedexInvQuery]);
+
   const filteredItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const normQ = normalizePharmaSearchText(q);
@@ -230,7 +270,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     );
 
     const expandedCatalog = expandCatalogWithVariantsForSearch(catalog);
-    const catalogMatches = searchCatalogVariantsForInvoice(expandedCatalog, searchQuery, 45);
+    const localCatalogMatches = searchCatalogVariantsForInvoice(expandedCatalog, searchQuery, 45);
+    const catalogMatches =
+      medexLiveSearchItems.length > 0 && !showModal
+        ? [...medexLiveSearchItems, ...localCatalogMatches]
+        : localCatalogMatches;
     const virtualCatalogItems: InventoryItem[] = [];
 
     for (const med of catalogMatches) {
@@ -274,7 +318,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     }
 
     return [...invMatches, ...virtualCatalogItems];
-  }, [inventory, catalog, searchQuery, filterMode, dosageFormFilter]);
+  }, [inventory, catalog, searchQuery, filterMode, dosageFormFilter, medexLiveSearchItems, showModal]);
 
   // All catalog variants (Tab, Cap, Syp, Susp, Supp, Inhaler, Sachet, Inj, Drops, Gel & mg/ml strengths) for the currently selected Brand/Generic
   const brandFormAndStrengthVariants = useMemo(() => {
@@ -358,8 +402,28 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       modalCompanyFilter === 'ALL'
         ? expandedModalCatalog
         : expandedModalCatalog.filter((m) => m.companyName === modalCompanyFilter);
-    return searchCatalogVariantsForInvoice(pool, q, 150);
-  }, [expandedModalCatalog, modalCatalogSearch, modalCompanyFilter]);
+    const localMatches = searchCatalogVariantsForInvoice(pool, q, 150);
+    if (!q || medexLiveSearchItems.length === 0) return localMatches;
+
+    const merged: MedicineCatalogItem[] = [];
+    const seen = new Set<string>();
+    for (const mx of medexLiveSearchItems) {
+      if (modalCompanyFilter !== 'ALL' && mx.companyName !== modalCompanyFilter) continue;
+      const key = `${mx.brandName.trim().toLowerCase()}__${mx.strength.trim().toLowerCase()}__${getShortDosageForm(mx.dosageForm).toLowerCase()}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(mx);
+      }
+    }
+    for (const loc of localMatches) {
+      const key = `${loc.brandName.trim().toLowerCase()}__${loc.strength.trim().toLowerCase()}__${getShortDosageForm(loc.dosageForm).toLowerCase()}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(loc);
+      }
+    }
+    return merged.slice(0, 150);
+  }, [expandedModalCatalog, modalCatalogSearch, modalCompanyFilter, medexLiveSearchItems]);
 
   // Filtered Medicine Brand list when typing or opening Brand Name dropdown
   const matchingBrandSuggestions = useMemo(() => {
@@ -727,6 +791,13 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               ফর্ম (Syp, Cap, Tab, Supp, Inhaler, Sachet) ও mg/ml অনুপাতে একক এবং মোট স্টকের দাম প্রদর্শিত হচ্ছে
             </div>
           </div>
+
+          {medexLiveSearching && !showModal && searchQuery.trim().length >= 2 && (
+            <div className="text-[11px] font-medium text-teal-800 bg-teal-50 border border-teal-200 rounded px-2.5 py-1 inline-flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-teal-600 animate-ping" />
+              <span>medex.com.bd থেকে সরাসরি অনুসন্ধান ও লাইভ মূল্য যাচাই হচ্ছে...</span>
+            </div>
+          )}
 
           {/* Dosage Form Filter Pills */}
           <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">

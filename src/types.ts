@@ -49,6 +49,10 @@ export interface MedicineCatalogItem {
   parentMedicineId?: string;
   variantId?: string;
   mergedIntoParentId?: string;
+  medexBrandId?: string;
+  medexUrl?: string;
+  medexLastSyncedMs?: number;
+  source?: 'medex' | 'custom' | 'catalog';
 }
 
 export interface ShopNotice {
@@ -278,6 +282,10 @@ export interface CustomMedicine {
   therapeuticClass: string;
   indication: string;
   variants?: MedicineVariant[];
+  medexBrandId?: string;
+  medexUrl?: string;
+  medexLastSyncedMs?: number;
+  source?: 'medex' | 'custom' | 'catalog';
   createdAt?: unknown;
   updatedAt?: unknown;
   updatedAtMs?: number;

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -112,6 +112,10 @@ export interface PurchaseStepWizardProps {
   activeStaff: StaffMember;
   isEditingPurchase?: boolean;
   onPreviewCurrentPurchaseInvoice?: () => void;
+  onSearchMedexLive?: (
+    query: string,
+    opts?: { limit?: number; refresh?: boolean; signal?: AbortSignal; silent?: boolean }
+  ) => Promise<MedicineCatalogItem[]>;
 }
 
 export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
@@ -149,9 +153,12 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
   activeStaff,
   isEditingPurchase = false,
   onPreviewCurrentPurchaseInvoice,
+  onSearchMedexLive,
 }) => {
   // Step 1: Product Search & Pack options state
   const [productSearch, setProductSearch] = useState('');
+  const [medexLiveResults, setMedexLiveResults] = useState<MedicineCatalogItem[]>([]);
+  const [medexSearching, setMedexSearching] = useState(false);
   const [isCustomCompanyMode, setIsCustomCompanyMode] = useState(
     !BD_PHARMA_COMPANIES.includes(supplierCompany) && supplierCompany !== 'সকল কোম্পানি'
   );
@@ -176,11 +183,41 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
   const [customBatch, setCustomBatch] = useState('B-2601');
   const [customExpiry, setCustomExpiry] = useState('2028-12-31');
 
+  // Live direct search against https://medex.com.bd/ in Step 1 product search
+  useEffect(() => {
+    const q = productSearch.trim();
+    if (!onSearchMedexLive || selectedMed || q.length < 2) {
+      setMedexLiveResults([]);
+      setMedexSearching(false);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setMedexSearching(true);
+      try {
+        const items = await onSearchMedexLive(q, { limit: 8, signal: controller.signal });
+        if (!controller.signal.aborted) {
+          setMedexLiveResults(items);
+        }
+      } catch {
+        // fallback cleanly
+      } finally {
+        if (!controller.signal.aborted) {
+          setMedexSearching(false);
+        }
+      }
+    }, 400);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [productSearch, selectedMed]);
+
   const expandedCatalog = useMemo(() => {
     return expandCatalogWithVariantsForSearch(catalog);
   }, [catalog]);
 
-  // Search Results for Step 1
+  // Search Results for Step 1 (Local + Live MedEx)
   const searchResults = useMemo(() => {
     const q = productSearch.trim();
     if (!q) return [];
@@ -190,13 +227,47 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
             (m) => m.companyName.toLowerCase().trim() === supplierCompany.toLowerCase().trim()
           )
         : expandedCatalog;
-    const matches = searchCatalogVariantsForInvoice(filteredCatalog, q, 22);
-    // If filtered by company had no hits, search globally
-    if (matches.length === 0 && supplierCompany && supplierCompany !== 'সকল কোম্পানি') {
-      return searchCatalogVariantsForInvoice(expandedCatalog, q, 22);
+    const companyMatches = searchCatalogVariantsForInvoice(filteredCatalog, q, 22);
+    const localMatches =
+      companyMatches.length === 0 && supplierCompany && supplierCompany !== 'সকল কোম্পানি'
+        ? searchCatalogVariantsForInvoice(expandedCatalog, q, 22)
+        : companyMatches;
+
+    if (medexLiveResults.length === 0) return localMatches;
+
+    const merged: MedicineCatalogItem[] = [];
+    const seen = new Set<string>();
+    for (const mx of medexLiveResults) {
+      const key = `${mx.brandName.trim().toLowerCase()}__${(mx.strength || '').trim().toLowerCase()}__${mx.dosageForm.toLowerCase()}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        const dbMatch = localMatches.find(
+          (l) =>
+            (mx.medexBrandId && l.medexBrandId === mx.medexBrandId) ||
+            `${l.brandName.trim().toLowerCase()}__${(l.strength || '').trim().toLowerCase()}__${l.dosageForm.toLowerCase()}` === key
+        );
+        merged.push(
+          dbMatch
+            ? {
+                ...dbMatch,
+                unitPrice: mx.unitPrice > 0 ? mx.unitPrice : dbMatch.unitPrice,
+                stripPrice: mx.stripPrice > 0 ? mx.stripPrice : dbMatch.stripPrice,
+                medexUrl: mx.medexUrl || dbMatch.medexUrl,
+                source: 'medex',
+              }
+            : mx
+        );
+      }
     }
-    return matches;
-  }, [expandedCatalog, productSearch, supplierCompany]);
+    for (const loc of localMatches) {
+      const key = `${loc.brandName.trim().toLowerCase()}__${(loc.strength || '').trim().toLowerCase()}__${loc.dosageForm.toLowerCase()}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(loc);
+      }
+    }
+    return merged.slice(0, 26);
+  }, [expandedCatalog, productSearch, supplierCompany, medexLiveResults]);
 
   // Handle selecting a medicine from search
   const handleSelectMedicine = (med: MedicineCatalogItem) => {
@@ -731,8 +802,14 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                   )}
 
                   {/* Search Autocomplete Dropdown */}
-                  {!selectedMed && searchResults.length > 0 && (
+                  {!selectedMed && (searchResults.length > 0 || medexSearching) && (
                     <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-64 overflow-y-auto z-30 divide-y divide-slate-100">
+                      {medexSearching && (
+                        <div className="px-3 py-1.5 bg-teal-50 text-[11px] font-medium text-teal-800 flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-teal-600 animate-ping" />
+                          <span>medex.com.bd থেকে সরাসরি অনুসন্ধান ও লাইভ মূল্য যাচাই হচ্ছে...</span>
+                        </div>
+                      )}
                       {searchResults.map((m) => (
                         <div
                           key={m.id}
@@ -740,11 +817,16 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                           className="p-2.5 hover:bg-indigo-50/80 cursor-pointer flex items-center justify-between text-xs transition-colors"
                         >
                           <div>
-                            <div className="font-bold text-slate-900">
-                              {m.variantDisplayName || m.brandName}{' '}
+                            <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                              <span>{m.variantDisplayName || m.brandName}</span>
                               <span className="font-normal text-slate-500">
                                 ({m.dosageForm} · {m.strength})
                               </span>
+                              {m.source === 'medex' && (
+                                <span className="text-[9px] font-bold px-1 py-0.2 bg-teal-100 text-teal-800 rounded">
+                                  MedEx
+                                </span>
+                              )}
                             </div>
                             <div className="text-[11px] text-teal-800 font-medium">
                               {m.genericName} · <span className="text-slate-500">{m.companyName}</span>

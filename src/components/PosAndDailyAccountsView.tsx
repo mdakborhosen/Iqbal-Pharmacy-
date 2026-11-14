@@ -36,6 +36,7 @@ import {
   formatTransactionItemsText,
   getInventoryStockForMedicine,
   getInvoiceFormPrefix,
+  getShortDosageForm,
   matchesMedicineQuery,
   numberToBanglaWords,
   parseTransactionItemsDetailed,
@@ -217,6 +218,10 @@ interface PosAndDailyAccountsViewProps {
     existingMed?: MedicineCatalogItem
   ) => Promise<any>;
   onOpenScanner?: () => void;
+  onSearchMedexLive?: (
+    query: string,
+    opts?: { limit?: number; refresh?: boolean; signal?: AbortSignal; silent?: boolean }
+  ) => Promise<MedicineCatalogItem[]>;
 }
 
 const CUSTOM_PRODUCT_FORMS = [
@@ -355,6 +360,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
   shopProfile,
   onSaveMedicineCatalog,
   onOpenScanner,
+  onSearchMedexLive,
 }) => {
   const [isMonthlyReportOpen, setIsMonthlyReportOpen] = useState(false);
   const invoiceBuilderRef = useRef<HTMLDivElement | null>(null);
@@ -633,6 +639,38 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     });
   };
 
+  const [medexLiveSaleResults, setMedexLiveSaleResults] = useState<MedicineCatalogItem[]>([]);
+  const [medexSaleSearching, setMedexSaleSearching] = useState(false);
+
+  useEffect(() => {
+    const q = medSearch.trim();
+    if (!onSearchMedexLive || q.length < 2) {
+      setMedexLiveSaleResults([]);
+      setMedexSaleSearching(false);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setMedexSaleSearching(true);
+      try {
+        const items = await onSearchMedexLive(q, { limit: 8, signal: controller.signal });
+        if (!controller.signal.aborted) {
+          setMedexLiveSaleResults(items);
+        }
+      } catch {
+        // fallback cleanly to local catalog
+      } finally {
+        if (!controller.signal.aborted) {
+          setMedexSaleSearching(false);
+        }
+      }
+    }, 400);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [medSearch]);
+
   const expandedInvoiceCatalog = useMemo(() => {
     return expandCatalogWithVariantsForSearch(catalog);
   }, [catalog]);
@@ -640,8 +678,42 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
   const quickSearchSaleMedicines = useMemo(() => {
     const q = medSearch.trim();
     if (!q) return expandedInvoiceCatalog.slice(0, 16);
-    return searchCatalogVariantsForInvoice(expandedInvoiceCatalog, q, 24);
-  }, [expandedInvoiceCatalog, medSearch]);
+    const localMatches = searchCatalogVariantsForInvoice(expandedInvoiceCatalog, q, 24);
+    if (medexLiveSaleResults.length === 0) return localMatches;
+
+    const merged: MedicineCatalogItem[] = [];
+    const seen = new Set<string>();
+    for (const mx of medexLiveSaleResults) {
+      const key = `${mx.brandName.trim().toLowerCase()}__${(mx.strength || '').trim().toLowerCase()}__${getShortDosageForm(mx.dosageForm).toLowerCase()}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        const dbMatch = localMatches.find(
+          (l) =>
+            (mx.medexBrandId && l.medexBrandId === mx.medexBrandId) ||
+            `${l.brandName.trim().toLowerCase()}__${(l.strength || '').trim().toLowerCase()}__${getShortDosageForm(l.dosageForm).toLowerCase()}` === key
+        );
+        merged.push(
+          dbMatch
+            ? {
+                ...dbMatch,
+                unitPrice: mx.unitPrice > 0 ? mx.unitPrice : dbMatch.unitPrice,
+                stripPrice: mx.stripPrice > 0 ? mx.stripPrice : dbMatch.stripPrice,
+                medexUrl: mx.medexUrl || dbMatch.medexUrl,
+                source: 'medex',
+              }
+            : mx
+        );
+      }
+    }
+    for (const loc of localMatches) {
+      const key = `${loc.brandName.trim().toLowerCase()}__${(loc.strength || '').trim().toLowerCase()}__${getShortDosageForm(loc.dosageForm).toLowerCase()}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(loc);
+      }
+    }
+    return merged.slice(0, 28);
+  }, [expandedInvoiceCatalog, medSearch, medexLiveSaleResults]);
 
   const quickSearchPurchaseMedicines = useMemo(() => {
     const q = purMedSearch.trim();
@@ -1680,6 +1752,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
             saleSearchInputRef={saleSearchInputRef}
             onOpenScanner={onOpenScanner}
             quickSearchSaleMedicines={quickSearchSaleMedicines}
+            medexSaleSearching={medexSaleSearching}
             getStockForMed={getStockForMed}
             getMedPurchasePrice={getMedPurchasePrice}
             getOldEditedQtyForMed={getOldEditedQtyForMed}
@@ -1747,6 +1820,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
             activeStaff={activeStaff}
             isEditingPurchase={isEditingPurchase}
             onPreviewCurrentPurchaseInvoice={handlePreviewCurrentPurchaseInvoice}
+            onSearchMedexLive={onSearchMedexLive}
           />
         )}
       </div>

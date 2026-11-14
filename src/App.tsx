@@ -69,6 +69,7 @@ import { MedicineCompareView } from './components/MedicineCompareView';
 import { PosAndDailyAccountsView } from './components/PosAndDailyAccountsView';
 import { StaffAndShopView } from './components/StaffAndShopView';
 import { PublicHealthcarePortal } from './components/PublicHealthcarePortal';
+import { searchMedexLiveFromApi, syncMedexPricesFromApi } from './utils/medexLiveClient';
 import {
   BD_COMPANIES_DIRECTORY,
   BD_GENERICS_DIRECTORY,
@@ -664,6 +665,12 @@ function buildCustomMedCloudPayload(cm: CustomMedicine, ownerId = SHARED_PHARMAC
     therapeuticClass: sanitizeString(cm.therapeuticClass, 100, 'General Medicine'),
     indication: sanitizeString(cm.indication, 300, 'চিকিৎসকের পরামর্শ অনুযায়ী সেব্য'),
     ...(cleanVariants.length > 0 ? { variants: cleanVariants } : {}),
+    ...(cm.medexBrandId ? { medexBrandId: sanitizeString(cm.medexBrandId, 64) } : {}),
+    ...(cm.medexUrl ? { medexUrl: sanitizeString(cm.medexUrl, 300) } : {}),
+    ...(typeof cm.medexLastSyncedMs === 'number' && cm.medexLastSyncedMs > 0
+      ? { medexLastSyncedMs: cm.medexLastSyncedMs }
+      : {}),
+    ...(cm.source ? { source: sanitizeString(cm.source, 32) } : {}),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
@@ -2400,6 +2407,12 @@ export default function App() {
         isCoreProduct: true,
         isCustom: false,
         hasPriceOverride: true,
+        ...(override.medexBrandId ? { medexBrandId: override.medexBrandId } : {}),
+        ...(override.medexUrl ? { medexUrl: override.medexUrl } : {}),
+        ...(typeof override.medexLastSyncedMs === 'number'
+          ? { medexLastSyncedMs: override.medexLastSyncedMs }
+          : {}),
+        ...(override.source ? { source: override.source } : {}),
         ...(cleanVariants.length > 0 ? { variants: cleanVariants } : {}),
       };
     });
@@ -2427,9 +2440,15 @@ export default function App() {
         stripPrice: cm.stripPrice,
         therapeuticClass: cm.therapeuticClass,
         indication: cm.indication,
-        darNo: 'CUSTOM-BD',
+        darNo: cm.medexBrandId ? `MEDEX-${cm.medexBrandId}` : 'CUSTOM-BD',
         isCoreProduct: false,
         isCustom: true,
+        ...(cm.medexBrandId ? { medexBrandId: cm.medexBrandId } : {}),
+        ...(cm.medexUrl ? { medexUrl: cm.medexUrl } : {}),
+        ...(typeof cm.medexLastSyncedMs === 'number'
+          ? { medexLastSyncedMs: cm.medexLastSyncedMs }
+          : {}),
+        ...(cm.source ? { source: cm.source } : {}),
         ...(cleanVariants.length > 0 ? { variants: cleanVariants } : {}),
       });
     }
@@ -2459,6 +2478,11 @@ export default function App() {
     });
   }, [customMedicines, deletedIdsSet]);
 
+  const fullCatalogRef = useRef<MedicineCatalogItem[]>(fullCatalog);
+  fullCatalogRef.current = fullCatalog;
+  const customMedicinesRef = useRef<CustomMedicine[]>(customMedicines);
+  customMedicinesRef.current = customMedicines;
+
   // Helper to get operator display name: Owner shows "Owner", staff shows specific name
   const getOperatorName = (staff: StaffMember) =>
     staff.roleTitle === 'owner' ? 'Owner' : staff.name;
@@ -2474,12 +2498,13 @@ export default function App() {
     newUnitPrice: number;
     oldStripPrice: number;
     newStripPrice: number;
+    changedByOverride?: string;
   }) => {
     if (Math.abs(params.oldUnitPrice - params.newUnitPrice) < 0.001) return;
 
     const nowMs = Date.now();
-    const alertId = `alert_${nowMs}`;
-    const changedBy = getOperatorName(activeStaff);
+    const alertId = `alert_${nowMs}_${Math.random().toString(36).slice(2, 5)}`;
+    const changedBy = params.changedByOverride || getOperatorName(activeStaff);
     const newAlert: PriceAlert = {
       id: alertId,
       shopId: effectiveShopId,
@@ -6588,6 +6613,392 @@ export default function App() {
     );
   };
 
+  // Upsert live MedEx search results into database and automatically correct changed prices
+  const upsertMedexResultsToDatabase = async (
+    medexItems: MedicineCatalogItem[],
+    options: { silent?: boolean } = {}
+  ) => {
+    if (!Array.isArray(medexItems) || medexItems.length === 0) {
+      return { addedCount: 0, updatedCount: 0, priceChanges: [] as Array<{ brandName: string; strength: string; oldPrice: number; newPrice: number }> };
+    }
+
+    const nowMs = Date.now();
+    const currentCatalog = fullCatalogRef.current;
+    const currentCustoms = customMedicinesRef.current;
+
+    const customById = new Map<string, CustomMedicine>();
+    const customByMedexBrandId = new Map<string, CustomMedicine>();
+    const customByKey = new Map<string, CustomMedicine>();
+    for (const cm of currentCustoms) {
+      const canonId = getCanonicalDocId(cm.id, effectiveShopId);
+      customById.set(canonId, cm);
+      if (cm.medexBrandId) customByMedexBrandId.set(cm.medexBrandId, cm);
+      customByKey.set(
+        `${cm.brandName.trim().toLowerCase()}__${cm.strength.trim().toLowerCase()}__${getShortDosageForm(cm.dosageForm).toLowerCase()}`,
+        cm
+      );
+    }
+
+    const toUpsertCustoms: CustomMedicine[] = [];
+    const seenIds = new Set<string>();
+    const priceChanges: Array<{ brandName: string; strength: string; oldPrice: number; newPrice: number }> = [];
+    let addedCount = 0;
+    let updatedCount = 0;
+
+    for (const mx of medexItems) {
+      if (!mx || !mx.brandName) continue;
+      const mxKey = `${mx.brandName.trim().toLowerCase()}__${(mx.strength || 'Standard').trim().toLowerCase()}__${getShortDosageForm(mx.dosageForm).toLowerCase()}`;
+
+      const matchedCatalog =
+        (mx.medexBrandId ? currentCatalog.find((c) => c.medexBrandId === mx.medexBrandId) : undefined) ||
+        currentCatalog.find(
+          (c) =>
+            c.brandName.trim().toLowerCase() === mx.brandName.trim().toLowerCase() &&
+            c.strength.trim().toLowerCase() === (mx.strength || 'Standard').trim().toLowerCase() &&
+            getShortDosageForm(c.dosageForm).toLowerCase() === getShortDosageForm(mx.dosageForm).toLowerCase()
+        ) ||
+        currentCatalog.find(
+          (c) =>
+            c.brandName.trim().toLowerCase() === mx.brandName.trim().toLowerCase() &&
+            c.strength.trim().toLowerCase() === (mx.strength || 'Standard').trim().toLowerCase()
+        );
+
+      const rawId = matchedCatalog
+        ? matchedCatalog.parentMedicineId || matchedCatalog.id
+        : mx.medexBrandId
+        ? `medex_${mx.medexBrandId}`
+        : mx.id;
+      const canonId = getCanonicalDocId(rawId, effectiveShopId);
+      if (seenIds.has(canonId)) continue;
+      seenIds.add(canonId);
+
+      const existingCustom =
+        customById.get(canonId) ||
+        (mx.medexBrandId ? customByMedexBrandId.get(mx.medexBrandId) : undefined) ||
+        customByKey.get(mxKey);
+
+      const liveUnitPrice = typeof mx.unitPrice === 'number' && mx.unitPrice > 0 ? Number(mx.unitPrice.toFixed(2)) : 0;
+      const liveStripPrice =
+        typeof mx.stripPrice === 'number' && mx.stripPrice > 0
+          ? Number(mx.stripPrice.toFixed(2))
+          : liveUnitPrice > 0
+          ? Number((liveUnitPrice * (mx.unitsPerStrip || matchedCatalog?.unitsPerStrip || 10)).toFixed(2))
+          : 0;
+
+      const prevUnitPrice = existingCustom?.unitPrice ?? matchedCatalog?.unitPrice ?? 0;
+      const prevStripPrice = existingCustom?.stripPrice ?? matchedCatalog?.stripPrice ?? 0;
+
+      const resolvedUnitPrice = liveUnitPrice > 0 ? liveUnitPrice : prevUnitPrice;
+      const resolvedStripPrice = liveStripPrice > 0 ? liveStripPrice : prevStripPrice;
+      if (resolvedUnitPrice <= 0 && !matchedCatalog && !existingCustom) {
+        continue;
+      }
+
+      const priceChanged =
+        liveUnitPrice > 0 &&
+        prevUnitPrice > 0 &&
+        (Math.abs(prevUnitPrice - liveUnitPrice) >= 0.01 ||
+          (liveStripPrice > 0 && prevStripPrice > 0 && Math.abs(prevStripPrice - liveStripPrice) >= 0.01));
+
+      const needsMedexMetaSave =
+        !existingCustom ||
+        (mx.medexUrl && existingCustom.medexUrl !== mx.medexUrl) ||
+        (mx.medexBrandId && existingCustom.medexBrandId !== mx.medexBrandId);
+
+      if (!priceChanged && !needsMedexMetaSave) {
+        continue;
+      }
+
+      // Preserve manually tuned purchasePrice if unchanged or non-88%, otherwise align 88% with new live MRP
+      const existingPur = existingCustom?.purchasePrice ?? matchedCatalog?.purchasePrice;
+      const wasDefaultRatio =
+        !existingPur ||
+        existingPur <= 0 ||
+        (prevUnitPrice > 0 && Math.abs(existingPur - Number((prevUnitPrice * 0.88).toFixed(2))) < 0.05) ||
+        existingPur > resolvedUnitPrice;
+
+      const resolvedPurchasePrice =
+        priceChanged && wasDefaultRatio
+          ? Number((resolvedUnitPrice * 0.88).toFixed(2))
+          : existingPur && existingPur > 0
+          ? existingPur
+          : Number((resolvedUnitPrice * 0.88).toFixed(2));
+
+      const existingVariants = sanitizeMedicineVariants(existingCustom?.variants || matchedCatalog?.variants);
+
+      const customRecord: CustomMedicine = {
+        id: canonId,
+        shopId: effectiveShopId,
+        ownerId: effectiveCloudUid,
+        brandName: sanitizeString(mx.brandName || matchedCatalog?.brandName || existingCustom?.brandName, 120),
+        genericName: sanitizeString(mx.genericName || matchedCatalog?.genericName || existingCustom?.genericName, 150),
+        companyName: sanitizeString(mx.companyName || matchedCatalog?.companyName || existingCustom?.companyName, 120),
+        strength: sanitizeString(mx.strength || matchedCatalog?.strength || existingCustom?.strength, 60),
+        dosageForm: sanitizeString(mx.dosageForm || matchedCatalog?.dosageForm || existingCustom?.dosageForm, 60),
+        packSize: sanitizeString(mx.packSize || matchedCatalog?.packSize || existingCustom?.packSize, 60),
+        purchasePrice: sanitizeNumber(resolvedPurchasePrice),
+        unitPrice: sanitizeNumber(resolvedUnitPrice),
+        stripPrice: sanitizeNumber(resolvedStripPrice),
+        therapeuticClass: sanitizeString(
+          mx.therapeuticClass || matchedCatalog?.therapeuticClass || existingCustom?.therapeuticClass,
+          100,
+          'General Medicine'
+        ),
+        indication: sanitizeString(
+          mx.indication || matchedCatalog?.indication || existingCustom?.indication,
+          300,
+          'চিকিৎসকের পরামর্শ অনুযায়ী সেব্য'
+        ),
+        ...(existingVariants.length > 0 ? { variants: existingVariants } : {}),
+        ...(mx.medexBrandId || existingCustom?.medexBrandId
+          ? { medexBrandId: sanitizeString(mx.medexBrandId || existingCustom?.medexBrandId, 64) }
+          : {}),
+        ...(mx.medexUrl || existingCustom?.medexUrl
+          ? { medexUrl: sanitizeString(mx.medexUrl || existingCustom?.medexUrl, 300) }
+          : {}),
+        medexLastSyncedMs: nowMs,
+        source: 'medex',
+        updatedAtMs: nowMs,
+      };
+
+      unmarkDeletedId(canonId);
+      toUpsertCustoms.push(customRecord);
+
+      if (!matchedCatalog && !existingCustom) {
+        addedCount++;
+      } else if (priceChanged) {
+        updatedCount++;
+        priceChanges.push({
+          brandName: customRecord.brandName,
+          strength: customRecord.strength,
+          oldPrice: prevUnitPrice,
+          newPrice: resolvedUnitPrice,
+        });
+      }
+    }
+
+    if (toUpsertCustoms.length === 0) {
+      return { addedCount: 0, updatedCount: 0, priceChanges: [] };
+    }
+
+    const upsertById = new Map<string, CustomMedicine>(toUpsertCustoms.map((c) => [c.id, c]));
+
+    setCustomMedicines((prev) => {
+      const next = [...prev];
+      for (const rec of toUpsertCustoms) {
+        const idx = next.findIndex((m) => getCanonicalDocId(m.id, effectiveShopId) === rec.id);
+        if (idx >= 0) {
+          next[idx] = rec;
+        } else {
+          next.unshift(rec);
+        }
+      }
+      saveLocal(STORAGE_KEYS.CUSTOM_MEDS, next);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOM_MEDS, effectiveShopId), next);
+      return next;
+    });
+
+    const changedInvItemsForCloud: InventoryItem[] = [];
+    if (priceChanges.length > 0) {
+      setInventory((prev) => {
+        let modified = false;
+        const next = prev.map((inv) => {
+          const matchById = upsertById.get(getCanonicalDocId(inv.medicineId, effectiveShopId));
+          const matchByKey =
+            matchById ||
+            toUpsertCustoms.find(
+              (c) =>
+                c.brandName.toLowerCase() === inv.brandName.toLowerCase() &&
+                c.strength.toLowerCase() === inv.strength.toLowerCase() &&
+                getShortDosageForm(c.dosageForm).toLowerCase() === getShortDosageForm(inv.dosageForm).toLowerCase()
+            );
+          if (
+            matchByKey &&
+            (Math.abs(inv.unitPrice - matchByKey.unitPrice) >= 0.01 ||
+              Math.abs(inv.stripPrice - matchByKey.stripPrice) >= 0.01)
+          ) {
+            modified = true;
+            const updatedInv: InventoryItem = {
+              ...inv,
+              id: getCanonicalDocId(inv.id, effectiveShopId),
+              shopId: effectiveShopId,
+              unitPrice: matchByKey.unitPrice,
+              stripPrice: matchByKey.stripPrice,
+              updatedAtMs: nowMs,
+            };
+            changedInvItemsForCloud.push(updatedInv);
+            return updatedInv;
+          }
+          return inv;
+        });
+        if (modified) {
+          saveLocal(STORAGE_KEYS.INVENTORY, next);
+          saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveShopId), next);
+        }
+        return modified ? next : prev;
+      });
+
+      setPosCart((prev) => {
+        let modified = false;
+        const next = prev.map((item) => {
+          const matchById = upsertById.get(getCanonicalDocId(item.medicineId, effectiveShopId));
+          const matchByKey =
+            matchById ||
+            toUpsertCustoms.find(
+              (c) =>
+                c.brandName.toLowerCase() === item.brandName.toLowerCase() &&
+                c.strength.toLowerCase() === item.strength.toLowerCase()
+            );
+          if (matchByKey && Math.abs(item.unitPrice - matchByKey.unitPrice) >= 0.01) {
+            modified = true;
+            return {
+              ...item,
+              unitPrice: matchByKey.unitPrice,
+              originalUnitPrice: matchByKey.unitPrice,
+            };
+          }
+          return item;
+        });
+        if (modified) saveLocal(STORAGE_KEYS.POS_CART, next);
+        return modified ? next : prev;
+      });
+
+      for (const pc of priceChanges) {
+        const rec = toUpsertCustoms.find(
+          (c) => c.brandName === pc.brandName && c.strength === pc.strength
+        );
+        if (rec) {
+          void triggerPriceChangeAlert({
+            medicineId: rec.id,
+            brandName: rec.brandName,
+            genericName: rec.genericName,
+            companyName: rec.companyName,
+            strength: rec.strength,
+            oldUnitPrice: pc.oldPrice,
+            newUnitPrice: pc.newPrice,
+            oldStripPrice: rec.stripPrice,
+            newStripPrice: rec.stripPrice,
+            changedByOverride: 'MedEx লাইভ আপডেট',
+          });
+        }
+      }
+    }
+
+    if (user || isCloudLoggedIn) {
+      const writes: Array<{ promise: Promise<unknown>; operationType: OperationType; path: string | null }> = [];
+      for (const rec of toUpsertCustoms) {
+        const scopedMedId = getScopedFirestoreDocId(effectiveShopId, rec.id);
+        writes.push({
+          promise: setDoc(
+            doc(db, 'custom_medicines', scopedMedId),
+            buildCustomMedCloudPayload(rec, effectiveCloudUid, effectiveShopId)
+          ),
+          operationType: OperationType.WRITE,
+          path: `custom_medicines/${scopedMedId}`,
+        });
+      }
+      for (const invItem of changedInvItemsForCloud) {
+        const canonInvId = getCanonicalDocId(invItem.id, effectiveShopId);
+        writes.push({
+          promise: setDoc(
+            doc(db, 'inventory', getScopedFirestoreDocId(effectiveShopId, canonInvId)),
+            buildInventoryCloudPayload(invItem, effectiveCloudUid, effectiveShopId)
+          ),
+          operationType: OperationType.WRITE,
+          path: `inventory/${canonInvId}`,
+        });
+      }
+      if (writes.length > 0) {
+        void fireAndRaceFirestoreWrites(writes, 1200);
+      }
+    }
+
+    if (!options.silent) {
+      if (priceChanges.length > 0) {
+        const first = priceChanges[0];
+        showToast(
+          `MedEx লাইভ দাম সংশোধিত: ${first.brandName} (${first.strength}) ৳${first.oldPrice.toFixed(2)} → ৳${first.newPrice.toFixed(2)}${
+            priceChanges.length > 1 ? ` (+আরও ${priceChanges.length - 1}টি)` : ''
+          }`
+        );
+      } else if (addedCount > 0) {
+        showToast(`medex.com.bd থেকে ${addedCount}টি নতুন ঔষধ ডাটাবেসে সংরক্ষিত হয়েছে!`);
+      }
+    }
+
+    return { addedCount, updatedCount, priceChanges };
+  };
+
+  const handleSearchMedexLive = async (
+    searchQ: string,
+    options: { limit?: number; refresh?: boolean; signal?: AbortSignal; silent?: boolean } = {}
+  ): Promise<MedicineCatalogItem[]> => {
+    const cleanQ = searchQ.trim();
+    if (cleanQ.length < 2) return [];
+    const liveItems = await searchMedexLiveFromApi(cleanQ, {
+      limit: options.limit ?? 8,
+      refresh: options.refresh,
+      signal: options.signal,
+    });
+    if (liveItems.length > 0) {
+      await upsertMedexResultsToDatabase(liveItems, { silent: options.silent });
+    }
+    return liveItems;
+  };
+
+  const handleSyncSavedMedexPrices = async (options: { silent?: boolean } = {}) => {
+    const nowMs = Date.now();
+    const candidates = customMedicinesRef.current
+      .filter(
+        (cm) =>
+          (Boolean(cm.medexUrl) || Boolean(cm.medexBrandId) || cm.source === 'medex') &&
+          nowMs - (cm.medexLastSyncedMs || 0) > (options.silent ? 30 * 60 * 1000 : 10 * 1000)
+      )
+      .slice(0, 10);
+
+    if (candidates.length === 0) {
+      if (!options.silent) {
+        showToast('সংরক্ষিত MedEx ঔষধগুলোর মূল্য ইতিমধ্যে হালনাগাদ রয়েছে');
+      }
+      return 0;
+    }
+
+    const updatedLive = await syncMedexPricesFromApi(
+      candidates.map((c) => ({
+        id: c.id,
+        medexUrl: c.medexUrl,
+        medexBrandId: c.medexBrandId,
+        brandName: c.brandName,
+        strength: c.strength,
+        dosageForm: c.dosageForm,
+      }))
+    );
+
+    if (updatedLive.length > 0) {
+      const res = await upsertMedexResultsToDatabase(updatedLive, { silent: options.silent });
+      if (!options.silent && res.priceChanges.length === 0) {
+        showToast(`${updatedLive.length}টি ঔষধের লাইভ মূল্য medex.com.bd থেকে যাচাই সম্পন্ন হয়েছে (সব দাম ঠিক আছে)`);
+      }
+      return res.priceChanges.length;
+    }
+    return 0;
+  };
+
+  const medexAutoSyncDoneRef = useRef<boolean>(false);
+  useEffect(() => {
+    if (!isCloudLoggedIn || medexAutoSyncDoneRef.current) return;
+    if (customMedicines.length === 0) return;
+    const hasMedexLinked = customMedicines.some(
+      (c) => Boolean(c.medexUrl) || Boolean(c.medexBrandId) || c.source === 'medex'
+    );
+    if (!hasMedexLinked) return;
+    medexAutoSyncDoneRef.current = true;
+    const timer = setTimeout(() => {
+      void handleSyncSavedMedexPrices({ silent: false }).catch(() => {});
+    }, 3500);
+    return () => clearTimeout(timer);
+  }, [isCloudLoggedIn, customMedicines.length]);
+
   const handleDeleteCustomMedicine = async (medId: string) => {
     const canonId = getCanonicalDocId(medId, effectiveShopId);
     const scopedId = getScopedFirestoreDocId(effectiveShopId, canonId);
@@ -8009,6 +8420,8 @@ export default function App() {
                   onTogglePriceWatch={handleTogglePriceWatch}
                   onMarkAlertRead={handleMarkAlertRead}
                   onDeletePriceAlert={handleDeletePriceAlert}
+                  onSearchMedexLive={handleSearchMedexLive}
+                  onSyncSavedMedexPrices={handleSyncSavedMedexPrices}
                 />
               )}
 
@@ -8063,6 +8476,7 @@ export default function App() {
                   shopProfile={shopProfile}
                   onSaveMedicineCatalog={handleSaveMedicineCatalog}
                   onOpenScanner={() => setShowScannerModal(true)}
+                  onSearchMedexLive={handleSearchMedexLive}
                 />
               )}
 
@@ -8075,6 +8489,7 @@ export default function App() {
                   onQuickRestock={handleQuickRestock}
                   onAddToPosCart={handleAddToPosCart}
                   onAddToPurchaseCart={handleAddToPurchaseCart}
+                  onSearchMedexLive={handleSearchMedexLive}
                 />
               )}
 

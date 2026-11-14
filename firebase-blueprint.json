@@ -443,6 +443,21 @@
           "minLength": 1,
           "maxLength": 300
         },
+        "medexBrandId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "medexUrl": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "medexLastSyncedMs": {
+          "type": "number"
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 32
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"

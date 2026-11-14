@@ -610,6 +610,395 @@ Return STRICTLY a JSON object matching these keys.`;
     }
   });
 
+  // ============================================================================
+  // Live MedEx (https://medex.com.bd/) Direct Search & Price Sync Engine
+  // ============================================================================
+  const MEDEX_BASE_URL = 'https://medex.com.bd';
+  const medexBrandCache = new Map<string, { fetchedAtMs: number; data: any }>();
+  const medexSearchCache = new Map<string, { fetchedAtMs: number; items: any[] }>();
+  const MEDEX_BRAND_CACHE_TTL_MS = 60 * 1000;
+  const MEDEX_SEARCH_CACHE_TTL_MS = 90 * 1000;
+
+  function decodeHtmlEntities(input: string): string {
+    if (!input) return '';
+    return input
+      .replace(/&#(\d+);/g, (_m, dec) => String.fromCharCode(parseInt(dec, 10)))
+      .replace(/&#x([0-9a-fA-F]+);/g, (_m, hex) => String.fromCharCode(parseInt(hex, 16)))
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#0?39;|&apos;/g, "'")
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&times;/g, '×')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function stripHtmlTags(html: string): string {
+    return decodeHtmlEntities(String(html || '').replace(/<[^>]+>/g, ' '));
+  }
+
+  function mapMedexDosageForm(rawForm: string, brandHint = ''): string {
+    const f = `${rawForm} ${brandHint}`.toLowerCase();
+    if (f.includes('eye') && f.includes('drop')) return 'Eye Drop';
+    if (f.includes('ear') && f.includes('drop')) return 'Ear Drop';
+    if (f.includes('nasal') && f.includes('drop')) return 'Nasal Drop';
+    if (f.includes('ophthalmic') || f.includes('eye')) return 'Eye Drop';
+    if (f.includes('otic')) return 'Ear Drop';
+    if (f.includes('nasal spray')) return 'Nasal Drop';
+    if (f.includes('drop')) return 'Drops';
+    if (f.includes('capsule')) return 'Capsule';
+    if (f.includes('tablet')) return 'Tablet';
+    if (f.includes('syrup')) return 'Syrup';
+    if (f.includes('suspension')) return 'Suspension';
+    if (f.includes('suppository')) return 'Suppository';
+    if (f.includes('inhaler') || f.includes('rotacap')) return 'Inhaler';
+    if (f.includes('sachet') || f.includes('powder for oral')) return 'Sachet';
+    if (f.includes('injection') || f.includes('infusion') || f.includes('iv ') || f.includes('im ')) return 'Injection';
+    if (f.includes('gel') || f.includes('cream') || f.includes('ointment') || f.includes('lotion')) return 'Gel';
+    return 'Tablet';
+  }
+
+  async function fetchMedexHtml(url: string, timeoutMs = 7000): Promise<string> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const resp = await fetch(url, {
+        method: 'GET',
+        signal: controller.signal,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9,bn;q=0.8',
+          Referer: `${MEDEX_BASE_URL}/`,
+          'Cache-Control': 'no-cache',
+        },
+      });
+      if (!resp.ok) {
+        throw new Error(`MedEx HTTP ${resp.status}`);
+      }
+      return await resp.text();
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function parseMedexBrandDetailHtml(html: string, url: string) {
+    const idMatch = url.match(/\/brands\/(\d+)/);
+    const medexBrandId = idMatch ? idMatch[1] : '';
+    const nowMs = Date.now();
+
+    const h1Match = html.match(/<h1[^>]*class="[^"]*page-heading-1-l[^"]*brand[^"]*"[^>]*>([\s\S]*?)<\/h1>/i);
+    const h1Inner = h1Match ? h1Match[1] : '';
+    const subtitleMatch = h1Inner.match(/<small[^>]*>([\s\S]*?)<\/small>/i);
+    const rawDosageForm = subtitleMatch ? stripHtmlTags(subtitleMatch[1]) : '';
+    const brandName = stripHtmlTags(h1Inner.replace(/<small[\s\S]*?<\/small>/gi, ''));
+
+    if (!brandName) return null;
+
+    const genericMatch = html.match(/<div[^>]*title="Generic Name"[^>]*>([\s\S]*?)<\/div>/i);
+    const genericName = genericMatch ? stripHtmlTags(genericMatch[1]) : brandName;
+
+    const strengthMatch = html.match(/<div[^>]*title="Strength"[^>]*>([\s\S]*?)<\/div>/i);
+    let strength = strengthMatch ? stripHtmlTags(strengthMatch[1]) : '';
+
+    const companyMatch = html.match(/<div[^>]*title="Manufactured by"[^>]*>([\s\S]*?)<\/div>/i);
+    let companyName = companyMatch ? stripHtmlTags(companyMatch[1]) : 'Unknown Pharma';
+    companyName = companyName.replace(/\s*\(See [^)]+\)\s*/gi, '').trim();
+
+    const dosageForm = mapMedexDosageForm(rawDosageForm, brandName);
+
+    let unitPrice = 0;
+    let stripPrice = 0;
+    let unitsPerStrip = dosageForm === 'Tablet' || dosageForm === 'Capsule' ? 10 : 1;
+    let packSize = '';
+
+    const pkgSectionMatch = html.match(/class="[^"]*packages-wrapper[^"]*"([\s\S]{0,6000})/i);
+    const rawPkgChunk = pkgSectionMatch ? pkgSectionMatch[1] : '';
+    const pkgChunk = rawPkgChunk.split(/Also available as:|id="indications"|class="[^"]*brand-indications/i)[0] || '';
+    if (pkgChunk) {
+      const containerBlocks = pkgChunk.split(/<div[^>]*class="[^"]*package-container[^"]*"[^>]*>/i).slice(1);
+      const containerTexts = containerBlocks
+        .map((blk) => stripHtmlTags(blk.split(/<div[^>]*class="[^"]*col-xs-12/i)[0]))
+        .filter(Boolean);
+      const fullPkgText = containerTexts.length > 0 ? containerTexts.join(' | ') : stripHtmlTags(pkgChunk);
+
+      const unitMatch = fullPkgText.match(/Unit\s*Price:\s*(?:৳|Tk\.?|BDT)?\s*([0-9,]+(?:\.[0-9]+)?)/i);
+      if (unitMatch) {
+        unitPrice = parseFloat(unitMatch[1].replace(/,/g, '')) || 0;
+      }
+
+      const stripMatch = fullPkgText.match(/Strip\s*Price:\s*(?:৳|Tk\.?|BDT)?\s*([0-9,]+(?:\.[0-9]+)?)/i);
+      if (stripMatch) {
+        stripPrice = parseFloat(stripMatch[1].replace(/,/g, '')) || 0;
+      }
+
+      const packInfoMatch = fullPkgText.match(/\((\d+)\s*[x×]\s*(\d+)\s*:\s*(?:৳|Tk\.?|BDT)?\s*([0-9,.]+)\)/i);
+      if (packInfoMatch) {
+        const boxes = parseInt(packInfoMatch[1], 10) || 1;
+        const perStrip = parseInt(packInfoMatch[2], 10) || 10;
+        const totalPcs = boxes * perStrip;
+        unitsPerStrip = perStrip;
+        packSize = `${boxes} × ${perStrip} (${totalPcs} pcs)`;
+      }
+
+      // Syrups / Drops / Inhalers / Bottles / Tubes / Injections
+      if (unitPrice <= 0) {
+        for (const cText of containerTexts) {
+          const bottleMatch = cText.match(/^([^:|]+):\s*(?:৳|Tk\.?|BDT)?\s*([0-9,]+(?:\.[0-9]+)?)/i);
+          if (bottleMatch) {
+            const label = bottleMatch[1].trim();
+            const price = parseFloat(bottleMatch[2].replace(/,/g, '')) || 0;
+            if (price > 0 && !/price unavailable/i.test(cText)) {
+              unitPrice = price;
+              stripPrice = price;
+              unitsPerStrip = 1;
+              if (!packSize) packSize = label;
+              if (!strength) {
+                const volMatch = label.match(/(\d+(?:\.\d+)?\s*(?:ml|mg|gm|g|mcg))/i);
+                if (volMatch) strength = volMatch[1];
+              }
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    if (unitPrice > 0 && stripPrice <= 0) {
+      if (unitsPerStrip > 1 && (dosageForm === 'Tablet' || dosageForm === 'Capsule')) {
+        stripPrice = Number((unitPrice * unitsPerStrip).toFixed(2));
+      } else {
+        stripPrice = unitPrice;
+      }
+    } else if (stripPrice > 0 && unitPrice <= 0 && unitsPerStrip > 0) {
+      unitPrice = Number((stripPrice / unitsPerStrip).toFixed(2));
+    }
+
+    if (unitPrice > 0 && stripPrice > 0 && unitPrice !== stripPrice) {
+      const ratio = Math.round(stripPrice / unitPrice);
+      if (ratio >= 2 && ratio <= 50) {
+        unitsPerStrip = ratio;
+      }
+    }
+
+    if (!packSize) {
+      packSize =
+        dosageForm === 'Tablet' || dosageForm === 'Capsule'
+          ? `10 × ${unitsPerStrip} (${10 * unitsPerStrip} pcs)`
+          : '1 Pack / Bottle';
+    }
+    if (!strength) {
+      strength = 'Standard';
+    }
+
+    let indication = 'চিকিৎসকের পরামর্শ অনুযায়ী সেব্য';
+    const indMatch = html.match(/id="indications"[\s\S]{0,600}<div[^>]*class="[^"]*ac-body[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+    if (indMatch) {
+      const cleaned = stripHtmlTags(indMatch[1]);
+      if (cleaned) {
+        indication = cleaned.length > 220 ? `${cleaned.slice(0, 217)}...` : cleaned;
+      }
+    }
+
+    return {
+      id: medexBrandId ? `medex_${medexBrandId}` : `medex_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      brandName,
+      genericName,
+      companyName,
+      strength,
+      dosageForm,
+      packSize,
+      unitsPerStrip,
+      unitPrice: Number(unitPrice.toFixed(2)),
+      stripPrice: Number(stripPrice.toFixed(2)),
+      purchasePrice: unitPrice > 0 ? Number((unitPrice * 0.88).toFixed(2)) : 0,
+      therapeuticClass: rawDosageForm || 'MedEx Verified Medicine',
+      indication,
+      darNo: medexBrandId ? `MEDEX-${medexBrandId}` : 'MEDEX-BD',
+      medexBrandId,
+      medexUrl: url,
+      medexLastSyncedMs: nowMs,
+      source: 'medex' as const,
+    };
+  }
+
+  async function fetchMedexBrandDetail(url: string, bypassCache = false) {
+    const cleanUrl = url.startsWith('http') ? url : `${MEDEX_BASE_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+    const cached = medexBrandCache.get(cleanUrl);
+    if (!bypassCache && cached && Date.now() - cached.fetchedAtMs < MEDEX_BRAND_CACHE_TTL_MS) {
+      return cached.data;
+    }
+    const html = await fetchMedexHtml(cleanUrl, 6500);
+    const parsed = parseMedexBrandDetailHtml(html, cleanUrl);
+    if (parsed) {
+      medexBrandCache.set(cleanUrl, { fetchedAtMs: Date.now(), data: parsed });
+    }
+    return parsed;
+  }
+
+  function extractBrandUrlsFromHtml(html: string): string[] {
+    const urls = new Set<string>();
+    const matches = html.matchAll(/href=["'](https?:\/\/medex\.com\.bd\/brands\/\d+\/[^"'#?]+|\/brands\/\d+\/[^"'#?]+)["']/gi);
+    for (const m of matches) {
+      const raw = m[1];
+      const full = raw.startsWith('http') ? raw : `${MEDEX_BASE_URL}${raw}`;
+      urls.add(full);
+    }
+    return Array.from(urls);
+  }
+
+  async function searchMedexLive(query: string, limit = 8, bypassCache = false) {
+    const cleanQ = query.trim();
+    if (cleanQ.length < 2) return [];
+    const safeLimit = Math.min(Math.max(limit, 1), 12);
+    const cacheKey = `${cleanQ.toLowerCase()}::${safeLimit}`;
+
+    if (!bypassCache) {
+      const cached = medexSearchCache.get(cacheKey);
+      if (cached && Date.now() - cached.fetchedAtMs < MEDEX_SEARCH_CACHE_TTL_MS) {
+        return cached.items;
+      }
+    }
+
+    let brandUrls: string[] = [];
+    try {
+      const brandsSearchHtml = await fetchMedexHtml(
+        `${MEDEX_BASE_URL}/search?search=${encodeURIComponent(cleanQ)}&type=brands`,
+        7000
+      );
+      brandUrls = extractBrandUrlsFromHtml(brandsSearchHtml);
+    } catch {
+      // ignore and fallback
+    }
+
+    // Fallback to general search (handles generic names like Omeprazole, Paracetamol, etc.)
+    if (brandUrls.length === 0) {
+      try {
+        const generalHtml = await fetchMedexHtml(
+          `${MEDEX_BASE_URL}/search?search=${encodeURIComponent(cleanQ)}&type=search`,
+          7000
+        );
+        brandUrls = extractBrandUrlsFromHtml(generalHtml);
+        if (brandUrls.length === 0) {
+          const genMatch = generalHtml.match(
+            /href=["'](https?:\/\/medex\.com\.bd\/generics\/\d+\/[^"'#?]+|\/generics\/\d+\/[^"'#?]+)["']/i
+          );
+          if (genMatch) {
+            const rawGenUrl = genMatch[1].startsWith('http')
+              ? genMatch[1]
+              : `${MEDEX_BASE_URL}${genMatch[1]}`;
+            const brandListUrl = rawGenUrl.endsWith('/brand-names') ? rawGenUrl : `${rawGenUrl}/brand-names`;
+            const genBrandsHtml = await fetchMedexHtml(brandListUrl, 7000);
+            brandUrls = extractBrandUrlsFromHtml(genBrandsHtml);
+          }
+        }
+      } catch {
+        // ignore fallback error
+      }
+    }
+
+    const targetUrls = brandUrls.slice(0, safeLimit);
+    if (targetUrls.length === 0) {
+      return [];
+    }
+
+    const settled = await Promise.allSettled(
+      targetUrls.map((u) => fetchMedexBrandDetail(u, bypassCache))
+    );
+
+    const items = settled
+      .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled' && Boolean(r.value))
+      .map((r) => r.value);
+
+    if (items.length > 0) {
+      medexSearchCache.set(cacheKey, { fetchedAtMs: Date.now(), items });
+    }
+
+    return items;
+  }
+
+  app.get('/api/medex/search', async (req, res) => {
+    try {
+      const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+      const limit = parseInt(String(req.query.limit || '8'), 10) || 8;
+      const refresh = req.query.refresh === '1' || req.query.refresh === 'true';
+
+      if (q.length < 2) {
+        res.json({ ok: true, source: 'medex.com.bd', query: q, fetchedAtMs: Date.now(), items: [] });
+        return;
+      }
+
+      const items = await searchMedexLive(q, limit, refresh);
+      res.json({
+        ok: true,
+        source: 'medex.com.bd',
+        query: q,
+        fetchedAtMs: Date.now(),
+        items,
+      });
+    } catch (err: any) {
+      console.error('Error in /api/medex/search:', err?.message || err);
+      res.status(502).json({
+        ok: false,
+        error: err?.message || 'MedEx search failed',
+        items: [],
+      });
+    }
+  });
+
+  app.post('/api/medex/sync-prices', async (req, res) => {
+    try {
+      const rawItems = Array.isArray(req.body?.items) ? req.body.items.slice(0, 12) : [];
+      if (rawItems.length === 0) {
+        res.json({ ok: true, fetchedAtMs: Date.now(), updatedItems: [] });
+        return;
+      }
+
+      const settled = await Promise.allSettled(
+        rawItems.map(async (entry: any) => {
+          if (!entry) return null;
+          if (entry.medexUrl && typeof entry.medexUrl === 'string' && entry.medexUrl.includes('medex.com.bd/brands/')) {
+            const detail = await fetchMedexBrandDetail(entry.medexUrl, true);
+            return detail ? { ...detail, targetCatalogId: entry.id } : null;
+          }
+          const q = `${entry.brandName || ''} ${entry.strength || ''}`.trim();
+          if (q.length < 2) return null;
+          const found = await searchMedexLive(q, 5, true);
+          const normBrand = String(entry.brandName || '').trim().toLowerCase();
+          const normStr = String(entry.strength || '').trim().toLowerCase();
+          const matched =
+            found.find(
+              (f: any) =>
+                f.brandName.toLowerCase() === normBrand &&
+                (!normStr || f.strength.toLowerCase() === normStr)
+            ) || found[0];
+          return matched ? { ...matched, targetCatalogId: entry.id } : null;
+        })
+      );
+
+      const updatedItems = settled
+        .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled' && Boolean(r.value))
+        .map((r) => r.value);
+
+      res.json({
+        ok: true,
+        source: 'medex.com.bd',
+        fetchedAtMs: Date.now(),
+        updatedItems,
+      });
+    } catch (err: any) {
+      console.error('Error in /api/medex/sync-prices:', err?.message || err);
+      res.status(502).json({
+        ok: false,
+        error: err?.message || 'MedEx price sync failed',
+        updatedItems: [],
+      });
+    }
+  });
+
   const distPath = path.join(process.cwd(), 'dist');
   const distIndexPath = path.join(distPath, 'index.html');
   const isProduction = process.env.NODE_ENV === 'production' || (fs.existsSync(distIndexPath) && process.env.NODE_ENV !== 'development');

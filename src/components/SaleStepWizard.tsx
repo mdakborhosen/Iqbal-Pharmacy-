@@ -89,6 +89,7 @@ export interface SaleStepWizardProps {
   saleSearchInputRef: React.RefObject<HTMLInputElement | null>;
   onOpenScanner?: () => void;
   quickSearchSaleMedicines: MedicineCatalogItem[];
+  medexSaleSearching?: boolean;
   getStockForMed: (med: MedicineCatalogItem | CartItem) => number;
   getMedPurchasePrice: (med: MedicineCatalogItem | CartItem) => number;
   getOldEditedQtyForMed: (med: MedicineCatalogItem | CartItem) => number;
@@ -186,6 +187,7 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
   saleSearchInputRef,
   onOpenScanner,
   quickSearchSaleMedicines,
+  medexSaleSearching = false,
   getStockForMed,
   getMedPurchasePrice,
   getOldEditedQtyForMed,
@@ -1084,6 +1086,13 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                     )}
                   </div>
 
+                  {medexSaleSearching && medSearch.trim().length >= 2 && (
+                    <div className="text-[11px] font-medium text-teal-800 bg-teal-50 border border-teal-200 rounded px-2.5 py-1 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-teal-600 animate-ping" />
+                      <span>medex.com.bd থেকে সরাসরি অনুসন্ধান ও লাইভ বিক্রয়মূল্য যাচাই হচ্ছে...</span>
+                    </div>
+                  )}
+
                   {/* Search Results Grid */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-[260px] overflow-y-auto pr-1">
                     {quickSearchSaleMedicines.map((med) => {
@@ -1105,9 +1114,16 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                                   </span>
                                 )}
                               </span>
-                              <span className="font-mono text-xs font-bold text-teal-800 shrink-0">
-                                ৳{formatCleanMoney(med.unitPrice)}
-                              </span>
+                              <div className="flex items-center gap-1 shrink-0">
+                                {med.source === 'medex' && (
+                                  <span className="text-[9px] font-bold px-1 py-0.2 bg-teal-100 text-teal-800 rounded">
+                                    MedEx
+                                  </span>
+                                )}
+                                <span className="font-mono text-xs font-bold text-teal-800">
+                                  ৳{formatCleanMoney(med.unitPrice)}
+                                </span>
+                              </div>
                             </div>
                             <div className="text-[11px] text-slate-500 truncate flex items-center justify-between">
                               <span>
@@ -1868,6 +1884,12 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                   </button>
                 )}
               </div>
+              {medexSaleSearching && medSearch.trim().length >= 2 && (
+                <div className="text-[11px] font-medium text-teal-800 bg-teal-50 border border-teal-200 rounded px-2.5 py-1 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-teal-600 animate-ping" />
+                  <span>medex.com.bd থেকে সরাসরি অনুসন্ধান ও লাইভ বিক্রয়মূল্য যাচাই হচ্ছে...</span>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[340px] overflow-y-auto pr-1">
