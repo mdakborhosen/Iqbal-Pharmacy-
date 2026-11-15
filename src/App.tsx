@@ -88,7 +88,9 @@ import {
   getInvoiceFormPrefix,
   getShortDosageForm,
   isCoreDatabaseMedicineId,
+  isOfficialPharmaCompanyName,
   parseTransactionItemsDetailed,
+  resolveCanonicalMedicineCompany,
 } from './data/bdMedicines';
 import {
   DEFAULT_SHOP_PROFILE,
@@ -2421,11 +2423,15 @@ export default function App() {
           ? override.purchasePrice
           : Number((override.unitPrice * 0.88).toFixed(2));
       const cleanVariants = sanitizeMedicineVariants(override.variants);
+      const resolvedBaseCompany =
+        isOfficialPharmaCompanyName(override.companyName) || !isOfficialPharmaCompanyName(baseMed.companyName)
+          ? override.companyName
+          : baseMed.companyName;
       return {
         ...baseMed,
         brandName: override.brandName,
         genericName: override.genericName,
-        companyName: override.companyName,
+        companyName: resolvedBaseCompany,
         strength: override.strength,
         dosageForm: (override.dosageForm as MedicineCatalogItem['dosageForm']) || baseMed.dosageForm,
         packSize: override.packSize,
@@ -2456,11 +2462,19 @@ export default function App() {
           ? cm.purchasePrice
           : Number((cm.unitPrice * 0.88).toFixed(2));
       const cleanVariants = sanitizeMedicineVariants(cm.variants);
+      const resolvedStandaloneCompany = resolveCanonicalMedicineCompany({
+        catalog: baseList,
+        medicineId: cm.id,
+        brandName: cm.brandName,
+        strength: cm.strength,
+        dosageForm: cm.dosageForm,
+        candidateCompany: cm.companyName,
+      });
       standaloneCustoms.push({
         id: cm.id,
         brandName: cm.brandName,
         genericName: cm.genericName,
-        companyName: cm.companyName,
+        companyName: resolvedStandaloneCompany,
         strength: cm.strength,
         dosageForm: (cm.dosageForm as MedicineCatalogItem['dosageForm']) || 'Tablet',
         packSize: cm.packSize,
@@ -4198,6 +4212,22 @@ export default function App() {
     });
     const currentStock = invMatch ? invMatch.stockQty : 100;
 
+    const existingCatalogForSale = fullCatalog.find(
+      (m) =>
+        m.brandName.trim().toLowerCase() === cleanBrand.toLowerCase() &&
+        m.strength.trim().toLowerCase() === cleanStrength.toLowerCase() &&
+        m.dosageForm.trim().toLowerCase() === cleanForm.toLowerCase()
+    );
+    const resolvedSaleCompany = resolveCanonicalMedicineCompany({
+      catalog: fullCatalog,
+      medicineId: existingCatalogForSale?.id,
+      brandName: cleanBrand,
+      strength: cleanStrength,
+      dosageForm: cleanForm,
+      candidateCompany: existingCatalogForSale?.companyName || cleanCompany,
+      invoiceSupplierCompany: cleanCompany,
+    });
+
     setPosCart((prev) => {
       const existing = prev.find(
         (item) =>
@@ -4221,11 +4251,11 @@ export default function App() {
         : [
             ...prev,
             {
-              medicineId: invMatch?.medicineId || customMedId,
+              medicineId: existingCatalogForSale?.id || invMatch?.medicineId || customMedId,
               inventoryId: invMatch?.id,
               brandName: cleanBrand,
               genericName: cleanGeneric,
-              companyName: cleanCompany,
+              companyName: resolvedSaleCompany,
               strength: cleanStrength,
               dosageForm: cleanForm,
               unitPrice,
@@ -4242,27 +4272,21 @@ export default function App() {
     });
 
     if (params.saveToCatalog) {
-      const existingCatalogMed = fullCatalog.find(
-        (m) =>
-          m.brandName.trim().toLowerCase() === cleanBrand.toLowerCase() &&
-          m.strength.trim().toLowerCase() === cleanStrength.toLowerCase() &&
-          m.dosageForm.trim().toLowerCase() === cleanForm.toLowerCase()
-      );
       await handleSaveMedicineCatalog(
         {
           brandName: cleanBrand,
-          genericName: cleanGeneric,
-          companyName: cleanCompany,
+          genericName: existingCatalogForSale?.genericName || cleanGeneric,
+          companyName: resolvedSaleCompany,
           strength: cleanStrength || 'Standard',
           dosageForm: cleanForm,
-          packSize: '10 × 10 (100 pcs)',
+          packSize: existingCatalogForSale?.packSize || '10 × 10 (100 pcs)',
           purchasePrice,
           unitPrice,
           stripPrice: Number((unitPrice * 10).toFixed(2)),
-          therapeuticClass: 'Custom Product',
-          indication: 'কাস্টম প্রডাক্ট / সাধারণ ব্যবহার্য',
+          therapeuticClass: existingCatalogForSale?.therapeuticClass || 'Custom Product',
+          indication: existingCatalogForSale?.indication || 'কাস্টম প্রডাক্ট / সাধারণ ব্যবহার্য',
         },
-        existingCatalogMed
+        existingCatalogForSale
       );
     }
 
@@ -4458,13 +4482,29 @@ export default function App() {
             item.strength.trim().toLowerCase() === cleanStrength.toLowerCase() &&
             item.dosageForm.trim().toLowerCase() === cleanForm.toLowerCase())
       );
+      const matchedPurCatalogMed = fullCatalog.find(
+        (m) =>
+          m.brandName.trim().toLowerCase() === cleanBrand.toLowerCase() &&
+          m.strength.trim().toLowerCase() === cleanStrength.toLowerCase() &&
+          m.dosageForm.trim().toLowerCase() === cleanForm.toLowerCase()
+      );
+      const resolvedPurItemCompany = resolveCanonicalMedicineCompany({
+        catalog: fullCatalog,
+        medicineId: matchedPurCatalogMed?.id,
+        brandName: cleanBrand,
+        strength: cleanStrength,
+        dosageForm: cleanForm,
+        candidateCompany: matchedPurCatalogMed?.companyName || cleanCompany,
+        invoiceSupplierCompany: cleanCompany,
+      });
+
       let next: PurchaseCartItem[];
       const newItem: PurchaseCartItem = {
-        medicineId: invMatch?.medicineId || customMedId,
+        medicineId: matchedPurCatalogMed?.id || invMatch?.medicineId || customMedId,
         inventoryId: invMatch?.id,
         brandName: cleanBrand,
-        genericName: cleanGeneric,
-        companyName: cleanCompany,
+        genericName: matchedPurCatalogMed?.genericName || cleanGeneric,
+        companyName: resolvedPurItemCompany,
         strength: cleanStrength,
         dosageForm: cleanForm,
         packSize: params.packDetailFormula || '10 × 10 (100 pcs)',
@@ -4554,20 +4594,29 @@ export default function App() {
           m.strength.trim().toLowerCase() === cleanStrength.toLowerCase() &&
           m.dosageForm.trim().toLowerCase() === cleanForm.toLowerCase()
       );
+      const resolvedSaveCompany = resolveCanonicalMedicineCompany({
+        catalog: fullCatalog,
+        medicineId: existingCatalogMed?.id,
+        brandName: cleanBrand,
+        strength: cleanStrength,
+        dosageForm: cleanForm,
+        candidateCompany: existingCatalogMed?.companyName || cleanCompany,
+        invoiceSupplierCompany: cleanCompany,
+      });
       if (!existingCatalogMed || params.saveToCatalog) {
         await handleSaveMedicineCatalog(
           {
             brandName: cleanBrand,
-            genericName: cleanGeneric,
-            companyName: cleanCompany,
+            genericName: existingCatalogMed?.genericName || cleanGeneric,
+            companyName: resolvedSaveCompany,
             strength: cleanStrength || 'Standard',
             dosageForm: cleanForm,
-            packSize: params.packDetailFormula || '10 × 10 (100 pcs)',
+            packSize: existingCatalogMed?.packSize || params.packDetailFormula || '10 × 10 (100 pcs)',
             purchasePrice,
             unitPrice,
             stripPrice: Number((unitPrice * 10).toFixed(2)),
-            therapeuticClass: 'Custom Product',
-            indication: 'কাস্টম প্রডাক্ট / সাধারণ ব্যবহার্য',
+            therapeuticClass: existingCatalogMed?.therapeuticClass || 'Custom Product',
+            indication: existingCatalogMed?.indication || 'কাস্টম প্রডাক্ট / সাধারণ ব্যবহার্য',
           },
           existingCatalogMed
         );
@@ -5219,7 +5268,7 @@ export default function App() {
       // Single piece price including VAT (Tp + Vat = Product Price)
       const effectiveSinglePiecePurchasePrice = Number(((itemLineCost + totalItemVat) / productUnits).toFixed(4));
 
-      // 1. Always ensure new products are saved to the database catalog so they are suggested in future searches
+      // 1. Always preserve the medicine's real manufacturer companyName (NEVER overwrite with custom invoice supplier name like Belal Pharmacy)
       const baseMed = fullCatalog.find(
         (m) =>
           m.id === purItem.medicineId ||
@@ -5227,6 +5276,16 @@ export default function App() {
             m.strength.trim().toLowerCase() === purItem.strength.trim().toLowerCase() &&
             m.dosageForm.trim().toLowerCase() === purItem.dosageForm.trim().toLowerCase())
       );
+
+      const canonicalCompanyName = resolveCanonicalMedicineCompany({
+        catalog: fullCatalog,
+        medicineId: baseMed?.id || purItem.medicineId,
+        brandName: purItem.brandName,
+        strength: purItem.strength,
+        dosageForm: purItem.dosageForm,
+        candidateCompany: baseMed?.companyName || purItem.companyName,
+        invoiceSupplierCompany: params.supplierCompany,
+      });
 
       if (!baseMed && purItem.brandName.trim()) {
         const fallbackRetail =
@@ -5239,7 +5298,7 @@ export default function App() {
           handleSaveMedicineCatalog({
             brandName: purItem.brandName.trim(),
             genericName: (purItem.genericName || purItem.brandName).trim(),
-            companyName: (params.supplierCompany || purItem.companyName || 'Custom / General').trim(),
+            companyName: canonicalCompanyName,
             strength: (purItem.strength || 'Standard').trim(),
             dosageForm: (purItem.dosageForm || 'Tablet').trim(),
             packSize: purItem.packDetailFormula || purItem.packSize || '10 × 10 (100 pcs)',
@@ -5264,7 +5323,7 @@ export default function App() {
               {
                 brandName: purItem.brandName || baseMed.brandName,
                 genericName: purItem.genericName || baseMed.genericName,
-                companyName: params.supplierCompany || baseMed.companyName,
+                companyName: canonicalCompanyName,
                 strength: purItem.strength || baseMed.strength,
                 dosageForm: purItem.dosageForm || baseMed.dosageForm,
                 packSize: baseMed.packSize,
@@ -5298,6 +5357,7 @@ export default function App() {
       if (existingInv) {
         existingInv.id = getCanonicalDocId(existingInv.id, effectiveShopId);
         existingInv.shopId = effectiveShopId;
+        existingInv.companyName = canonicalCompanyName;
         existingInv.stockQty = existingInv.stockQty + totalUnitsToAdd;
         existingInv.purchasePrice = effectiveSinglePiecePurchasePrice;
         existingInv.unitPrice = purItem.unitPrice;
@@ -5317,7 +5377,7 @@ export default function App() {
           medicineId: purItem.medicineId,
           brandName: purItem.brandName,
           genericName: purItem.genericName,
-          companyName: params.supplierCompany || purItem.companyName,
+          companyName: canonicalCompanyName,
           strength: purItem.strength,
           dosageForm: purItem.dosageForm,
           packSize: purItem.packSize || '10 × 10 (100 pcs)',
@@ -5736,12 +5796,21 @@ export default function App() {
     const newInvId = existingInv ? getCanonicalDocId(existingInv.id, effectiveShopId) : `inv_${nowMs}`;
 
     const baseMed = fullCatalog.find((m) => m.id === params.medicineId);
+    const canonicalPurCompany = resolveCanonicalMedicineCompany({
+      catalog: fullCatalog,
+      medicineId: params.medicineId,
+      brandName: params.brandName,
+      strength: params.strength,
+      dosageForm: params.dosageForm,
+      candidateCompany: baseMed?.companyName,
+      invoiceSupplierCompany: params.supplierCompany,
+    });
     if (baseMed && Math.abs(baseMed.unitPrice - params.unitPrice) > 0.001) {
       await triggerPriceChangeAlert({
         medicineId: baseMed.id,
         brandName: baseMed.brandName,
         genericName: baseMed.genericName,
-        companyName: params.supplierCompany,
+        companyName: canonicalPurCompany,
         strength: baseMed.strength,
         oldUnitPrice: baseMed.unitPrice,
         newUnitPrice: params.unitPrice,
@@ -5765,6 +5834,7 @@ export default function App() {
           ...existingInv,
           id: newInvId,
           shopId: effectiveShopId,
+          companyName: canonicalPurCompany,
           stockQty: existingInv.stockQty + params.qty,
           purchasePrice: params.purchasePrice,
           unitPrice: params.unitPrice,
@@ -5780,7 +5850,7 @@ export default function App() {
           medicineId: params.medicineId,
           brandName: params.brandName,
           genericName: params.genericName,
-          companyName: params.supplierCompany,
+          companyName: canonicalPurCompany,
           strength: params.strength,
           dosageForm: params.dosageForm,
           packSize: params.packSize,

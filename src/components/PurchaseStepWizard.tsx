@@ -26,6 +26,7 @@ import {
   expandCatalogWithVariantsForSearch,
   formatCleanMoney,
   matchesMedicineQuery,
+  resolveCanonicalMedicineCompany,
   searchAndRankMedicines,
   searchCatalogVariantsForInvoice,
 } from '../data/bdMedicines';
@@ -443,7 +444,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
     const q = productSearch.trim();
     if (!q) return [];
     const filteredCatalog =
-      supplierCompany && supplierCompany !== 'সকল কোম্পানি'
+      !isCustomCompanyMode && supplierCompany && supplierCompany !== 'সকল কোম্পানি'
         ? expandedCatalog.filter(
             (m) => m.companyName.toLowerCase().trim() === supplierCompany.toLowerCase().trim()
           )
@@ -569,11 +570,19 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
     const parsedTp = Math.max(0.01, parseFloat(customTpPrice) || 1);
     const parsedMrp = Math.max(0.1, parseFloat(customMrpPrice) || parsedTp * 1.15);
     const parsedQty = Math.max(1, parseInt(customQty, 10) || 1);
+    const resolvedCompany = resolveCanonicalMedicineCompany({
+      catalog,
+      brandName: customBrand.trim(),
+      strength: customStrength.trim(),
+      dosageForm: customForm,
+      candidateCompany: customCompany.trim() === supplierCompany.trim() && isCustomCompanyMode ? '' : customCompany.trim(),
+      invoiceSupplierCompany: supplierCompany,
+    });
 
     await onAddCustomToPurchaseCart({
       brandName: customBrand.trim(),
       genericName: customGeneric.trim() || undefined,
-      companyName: customCompany.trim() || supplierCompany,
+      companyName: resolvedCompany,
       strength: customStrength.trim(),
       dosageForm: customForm,
       purchasePrice: parsedTp,
@@ -765,14 +774,19 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                 </div>
 
                 {isCustomCompanyMode ? (
-                  <input
-                    type="text"
-                    required
-                    value={supplierCompany}
-                    onChange={(e) => setSupplierCompany(e.target.value)}
-                    placeholder="যেমন: অপসোনিন ফার্মা লিমিটেড / লোকাল ডিপো"
-                    className="w-full px-3 py-2 text-xs border border-indigo-300 rounded-md bg-white font-semibold text-indigo-950 focus:border-indigo-600 focus:outline-none"
-                  />
+                  <div className="space-y-1">
+                    <input
+                      type="text"
+                      required
+                      value={supplierCompany}
+                      onChange={(e) => setSupplierCompany(e.target.value)}
+                      placeholder="যেমন: Belal Pharmacy / লোকাল ডিপো"
+                      className="w-full px-3 py-2 text-xs border border-indigo-300 rounded-md bg-white font-semibold text-indigo-950 focus:border-indigo-600 focus:outline-none"
+                    />
+                    <p className="text-[10.5px] text-indigo-700 font-medium">
+                      কাস্টম নাম শুধুমাত্র এই ইনভয়েসের সরবরাহকারী হিসেবে থাকবে; ঔষধের মূল প্রস্তুতকারক কোম্পানি পরিবর্তন হবে না।
+                    </p>
+                  </div>
                 ) : (
                   <select
                     value={supplierCompany}

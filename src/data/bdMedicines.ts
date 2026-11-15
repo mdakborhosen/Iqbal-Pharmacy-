@@ -5559,6 +5559,123 @@ export function formatPurchaseItemInvoiceLine(
   return `${index + 1}.${prefix}.${nameAndStrength}${packDetail}${bonusTag}${bonusVatTag}${productVatTag} (৳${unitStr}) × ${qty}=${totalStr}${stockTag}`;
 }
 
+const OFFICIAL_PHARMA_COMPANY_SET = new Set(
+  BD_PHARMA_COMPANIES.map((c) => c.toLowerCase().trim())
+);
+
+export function isOfficialPharmaCompanyName(companyName?: string | null): boolean {
+  const clean = (companyName || '').trim().toLowerCase();
+  if (!clean) return false;
+  if (OFFICIAL_PHARMA_COMPANY_SET.has(clean)) return true;
+  if (
+    /\bpharmacy\b/i.test(clean) ||
+    /\bdrug\s*house\b/i.test(clean) ||
+    /\bmedical\s*(hall|store)\b/i.test(clean) ||
+    /\b(store|depot|traders|enterprise)\b/i.test(clean) ||
+    clean.includes('ফার্মেস') ||
+    clean.includes('ডিপো')
+  ) {
+    return false;
+  }
+  return (
+    /\bpharmaceuticals?\b/i.test(clean) ||
+    /\bpharma\s+(plc|ltd|limited)\b/i.test(clean) ||
+    /\blaboratories\b/i.test(clean) ||
+    /\bhealthcare\b/i.test(clean) ||
+    /\bbiotech\b/i.test(clean) ||
+    /\bremedies\b/i.test(clean) ||
+    /\bmedimpex\b/i.test(clean) ||
+    /\bchemical\b/i.test(clean) ||
+    /\bsaline\b/i.test(clean)
+  );
+}
+
+export function resolveCanonicalMedicineCompany(params: {
+  catalog: MedicineCatalogItem[];
+  medicineId?: string;
+  brandName?: string;
+  strength?: string;
+  dosageForm?: string;
+  candidateCompany?: string;
+  invoiceSupplierCompany?: string;
+}): string {
+  const {
+    catalog,
+    medicineId,
+    brandName = '',
+    strength = '',
+    dosageForm = '',
+    candidateCompany = '',
+    invoiceSupplierCompany = '',
+  } = params;
+
+  const cleanBrand = brandName.trim().toLowerCase();
+  const cleanStrength = strength.trim().toLowerCase();
+  const cleanForm = dosageForm.trim().toLowerCase();
+  const cleanCandidate = candidateCompany.trim();
+  const cleanSupplier = invoiceSupplierCompany.trim();
+
+  const idMatch =
+    (medicineId && (CATALOG_BY_ID.get(medicineId) || catalog.find((m) => m.id === medicineId))) ||
+    null;
+  if (idMatch?.companyName && isOfficialPharmaCompanyName(idMatch.companyName)) {
+    return idMatch.companyName;
+  }
+
+  if (cleanBrand) {
+    const exactMatch =
+      BD_MEDICINES_CATALOG.find(
+        (m) =>
+          m.brandName.trim().toLowerCase() === cleanBrand &&
+          (!cleanStrength || m.strength.trim().toLowerCase() === cleanStrength) &&
+          (!cleanForm || m.dosageForm.trim().toLowerCase() === cleanForm)
+      ) ||
+      catalog.find(
+        (m) =>
+          m.brandName.trim().toLowerCase() === cleanBrand &&
+          (!cleanStrength || m.strength.trim().toLowerCase() === cleanStrength) &&
+          (!cleanForm || m.dosageForm.trim().toLowerCase() === cleanForm)
+      );
+    if (exactMatch?.companyName && isOfficialPharmaCompanyName(exactMatch.companyName)) {
+      return exactMatch.companyName;
+    }
+
+    const brandMatch =
+      BD_MEDICINES_CATALOG.find((m) => m.brandName.trim().toLowerCase() === cleanBrand) ||
+      catalog.find(
+        (m) =>
+          m.brandName.trim().toLowerCase() === cleanBrand &&
+          isOfficialPharmaCompanyName(m.companyName)
+      );
+    if (
+      brandMatch?.companyName &&
+      (!isOfficialPharmaCompanyName(cleanCandidate) ||
+        (cleanSupplier && cleanCandidate.toLowerCase() === cleanSupplier.toLowerCase()))
+    ) {
+      return brandMatch.companyName;
+    }
+    if (idMatch?.companyName) return idMatch.companyName;
+    if (exactMatch?.companyName) return exactMatch.companyName;
+  }
+
+  if (
+    cleanCandidate &&
+    cleanCandidate !== 'Custom / General' &&
+    cleanCandidate !== 'সকল কোম্পানি' &&
+    cleanCandidate !== 'All Companies'
+  ) {
+    return cleanCandidate;
+  }
+  if (
+    cleanSupplier &&
+    cleanSupplier !== 'সকল কোম্পানি' &&
+    cleanSupplier !== 'All Companies'
+  ) {
+    return cleanSupplier;
+  }
+  return 'Custom / General';
+}
+
 export interface ParsedInvoiceItem {
   serial: number;
   formPrefix: string;

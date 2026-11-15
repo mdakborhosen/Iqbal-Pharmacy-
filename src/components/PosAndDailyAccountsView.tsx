@@ -41,6 +41,7 @@ import {
   matchesMedicineQuery,
   numberToBanglaWords,
   parseTransactionItemsDetailed,
+  resolveCanonicalMedicineCompany,
   searchAndRankMedicines,
   searchCatalogVariantsForInvoice,
 } from '../data/bdMedicines';
@@ -733,12 +734,13 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     return matches.length > 0 ? matches : baseList;
   }, [purCompanySearch, supplierCompany]);
 
-  // Strict company-filtered catalog for purchase entries (outside companies will never appear)
+  // Strict company-filtered catalog for purchase entries (falls back to full catalog for custom depots/pharmacies)
   const companyFilteredCatalog = useMemo(() => {
     if (!supplierCompany || supplierCompany === 'সকল কোম্পানি' || supplierCompany === 'All Companies') {
       return catalog;
     }
-    return catalog.filter((m) => matchesCompany(m.companyName, supplierCompany));
+    const matches = catalog.filter((m) => matchesCompany(m.companyName, supplierCompany));
+    return matches.length > 0 ? matches : catalog;
   }, [catalog, supplierCompany]);
 
   // Sale calculations
@@ -1408,9 +1410,19 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     const unitsPerPack = isSolid ? 10 : isLiquid ? 48 : 1;
     const formulaStr = isSolid ? '1*10' : isLiquid ? '1*48' : '১ পিস';
 
+    const resolvedCompany = resolveCanonicalMedicineCompany({
+      catalog,
+      brandName: customName.trim(),
+      strength: rowItem.strength || '',
+      dosageForm: chosenForm,
+      candidateCompany: rowItem.companyName === supplierCompany ? '' : rowItem.companyName,
+      invoiceSupplierCompany: supplierCompany,
+    });
+
     onUpdatePurchaseCartItemDetails(rowItem.medicineId, {
       brandName: customName.trim(),
       dosageForm: chosenForm,
+      companyName: resolvedCompany,
       packUnit,
       packCount: 1,
       unitsPerPack,
@@ -1425,7 +1437,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
       onSaveMedicineCatalog({
         brandName: customName.trim(),
         genericName: customName.trim(),
-        companyName: supplierCompany || 'Custom / General',
+        companyName: resolvedCompany,
         strength: rowItem.strength || 'Standard',
         dosageForm: chosenForm,
         packSize: formulaStr,
