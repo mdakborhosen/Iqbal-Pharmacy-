@@ -52,11 +52,11 @@ export async function searchMedexLiveFromApi(
   const cleanQ = query.trim();
   if (cleanQ.length < 2) return [];
 
-  const limit = options.limit ?? 8;
+  const limit = options.limit ?? 20;
   const refreshParam = options.refresh ? '&refresh=1' : '';
   const url = `${getApiBaseUrl()}/api/medex/search?q=${encodeURIComponent(cleanQ)}&limit=${limit}${refreshParam}`;
 
-  const { signal, cleanup } = combineSignals(options.signal, 11000);
+  const { signal, cleanup } = combineSignals(options.signal, 15000);
   try {
     const resp = await fetch(url, {
       method: 'GET',

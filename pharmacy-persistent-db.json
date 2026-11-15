@@ -1,5 +1,5 @@
 {
-  "updatedAtMs": 1794129120044,
+  "updatedAtMs": 1794730654429,
   "state": {
     "shopProfile": {
       "id": "shop-default",
@@ -1217,5 +1217,6 @@
       "role": "owner",
       "updatedAtMs": 1794129120044
     }
-  ]
+  ],
+  "shopRegistrations": []
 }

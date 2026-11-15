@@ -78,6 +78,7 @@ import {
   buildSaleCartFromTransaction,
   CATALOG_BY_BRAND_STRENGTH,
   CATALOG_BY_ID,
+  computePurchaseCartTotals,
   findMatchingInventoryRecord,
   formatCartItemInvoiceLine,
   formatCleanMoney,
@@ -134,6 +135,7 @@ import {
   PurchaseCartItem,
   PurchasePackUnit,
   isMandatoryOwner,
+  isMasterAppOwner,
   ShopNotice,
   ShopProfile,
   ShopRegistration,
@@ -144,6 +146,7 @@ import {
   downloadPharmacyBackupJson,
   fetchGlobalCloudUsers,
   fetchServerPharmacyState,
+  fetchServerShopRegistrations,
   loadIndexedDbSnapshot,
   loginViaServerApi,
   parsePharmacyBackupJson,
@@ -151,6 +154,8 @@ import {
   pushServerPharmacyState,
   registerGlobalCloudUser,
   saveIndexedDbSnapshot,
+  updateServerShopRegistrationStatus,
+  upsertServerShopRegistration,
 } from './utils/persistentStorage';
 import { AppLanguage, getSavedLanguage, saveLanguage, t } from './i18n';
 
@@ -199,11 +204,7 @@ export function computeCurrentShopId(
   }
   const ident = session?.email || session?.phone || user?.email || '';
   const digits = ident.replace(/[^0-9]/g, '');
-  const isMaster =
-    ident.toLowerCase() === 'mhakbor2001@gmail.com' ||
-    ident.toLowerCase() === 'iqbalmahmud498@gmail.com' ||
-    digits === '01812358839' ||
-    digits.endsWith('1812358839');
+  const isMaster = isMasterAppOwner({ email: ident, phone: ident });
   if (isMaster) return 'shop_iqbal_pharmacy';
   if (digits.length >= 6) {
     const bd11 = digits.length >= 10 ? '0' + digits.slice(-10) : digits;
@@ -2308,18 +2309,47 @@ export default function App() {
       (err) => handleFirestoreError(err, OperationType.LIST, 'price_alerts')
     );
 
+    const mergeShopRegistrations = (fsList: ShopRegistration[], remoteList: ShopRegistration[]) => {
+      const merged = new Map<string, ShopRegistration>();
+      for (const r of [...fsList, ...remoteList]) {
+        if (!r || !r.id) continue;
+        const prev = merged.get(r.id);
+        const rTs = r.updatedAtMs || r.approvedAtMs || r.cancelledAtMs || r.registeredAtMs || 0;
+        const pTs = prev?.updatedAtMs || prev?.approvedAtMs || prev?.cancelledAtMs || prev?.registeredAtMs || 0;
+        if (!prev || rTs >= pTs) {
+          merged.set(r.id, r);
+        }
+      }
+      return Array.from(merged.values()).sort((a, b) => (b.registeredAtMs || 0) - (a.registeredAtMs || 0));
+    };
+
     const unsubShopRegs = onSnapshot(
       collection(db, 'shop_registrations'),
       (snap) => {
-        const list: ShopRegistration[] = snap.docs.map((d) => ({
+        const fsList: ShopRegistration[] = snap.docs.map((d) => ({
           id: d.id,
           ...(d.data() as Omit<ShopRegistration, 'id'>),
         }));
-        setShopRegistrations(list);
-        saveLocal('shop_registrations_cache', list);
+        setShopRegistrations((prev) => {
+          const next = mergeShopRegistrations(prev, fsList);
+          saveLocal('shop_registrations_cache', next);
+          return next;
+        });
       },
       (err) => handleFirestoreError(err, OperationType.LIST, 'shop_registrations')
     );
+
+    fetchServerShopRegistrations()
+      .then((remoteRegs) => {
+        if (Array.isArray(remoteRegs) && remoteRegs.length > 0) {
+          setShopRegistrations((prev) => {
+            const next = mergeShopRegistrations(prev, remoteRegs as ShopRegistration[]);
+            saveLocal('shop_registrations_cache', next);
+            return next;
+          });
+        }
+      })
+      .catch(() => {});
 
     return () => {
       unsubShops();
@@ -2829,30 +2859,43 @@ export default function App() {
       }
 
       // Do NOT clear logout flags until authentication & approval are confirmed
-      // 1. Direct Master Owner Credentials Check: 01812358839 & 01822487909 with 000000 or IqbalPharmacy#2026
+      // 1. Direct Master Owner Credentials Check: 01629845006, mhakbor2001@gmail.com, 01812358839, 01822487909
       const isDefaultOwnerIdent =
         cleanIdent.toLowerCase() === 'mhakbor2001@gmail.com' ||
         cleanIdent.toLowerCase() === 'iqbalmahmud498@gmail.com' ||
+        cleanDigits.endsWith('01629845006') ||
+        cleanDigits.endsWith('1629845006') ||
         cleanDigits.endsWith('01812358839') ||
         cleanDigits.endsWith('1812358839') ||
         cleanDigits.endsWith('01822487909') ||
         cleanDigits.endsWith('1822487909') ||
+        cleanIdent.replace(/[^0-9]/g, '') === '01629845006' ||
         cleanIdent.replace(/[^0-9]/g, '') === '01812358839' ||
         cleanIdent.replace(/[^0-9]/g, '') === '01822487909' ||
+        cleanIdent === '01629-845006' ||
         cleanIdent === '01812-358839' ||
         cleanIdent === '01822-487909' ||
         cleanIdent.toLowerCase() === 'owner' ||
         cleanIdent === 'মালিক';
 
       if (isDefaultOwnerIdent && (cleanPass === '000000' || cleanPass === 'IqbalPharmacy#2026' || cleanPass.length >= 4)) {
+        const is01629 =
+          cleanIdent.toLowerCase() === 'mhakbor2001@gmail.com' ||
+          cleanDigits.endsWith('01629845006') ||
+          cleanDigits.endsWith('1629845006') ||
+          cleanIdent === '01629-845006';
         const is01822 = cleanDigits.endsWith('01822487909') || cleanDigits.endsWith('1822487909') || cleanIdent.includes('01822');
         const targetShopId = 'shop_iqbal_pharmacy';
-        const sessionPhone = is01822 ? '01822-487909' : '01812-358839';
-        const sessionEmail = is01822 ? '01822487909@iqbalpharmacy.bd' : (cleanIdent.includes('@') ? cleanIdent.toLowerCase() : 'iqbalmahmud498@gmail.com');
+        const sessionPhone = is01822 ? '01822-487909' : is01629 ? '01629845006' : '01812-358839';
+        const sessionEmail = is01822
+          ? '01822487909@iqbalpharmacy.bd'
+          : is01629
+          ? 'mhakbor2001@gmail.com'
+          : (cleanIdent.includes('@') ? cleanIdent.toLowerCase() : 'iqbalmahmud498@gmail.com');
         const sessionStaffId = is01822 ? 'staff-owner-2' : 'staff-owner-1';
         const sessionUid = is01822 ? 'shop_owner_01822487909' : 'shop_owner_default';
         const assignedRole: StaffMember['roleTitle'] = is01822 ? 'sub_owner' : 'owner';
-        const assignedName = is01822 ? 'ইকবাল মাহমুদ (সাব-মালিক)' : 'Owner';
+        const assignedName = is01822 ? 'ইকবাল মাহমুদ (সাব-মালিক)' : is01629 ? 'অ্যাডমিন (01629845006)' : 'Owner';
 
         const scopedShop = loadLocal<ShopProfile | null>(
           getScopedStorageKey(STORAGE_KEYS.SHOP, targetShopId),
@@ -2869,7 +2912,7 @@ export default function App() {
           uid: sessionUid,
           shopId: targetShopId,
           email: sessionEmail,
-          displayName: is01822 ? assignedName : 'ইকবাল মাহমুদ (Owner)',
+          displayName: is01822 ? assignedName : is01629 ? 'অ্যাডমিন (01629845006)' : 'ইকবাল মাহমুদ (Owner)',
           shopName: restoredShop.shopName || 'ইকবাল ফার্মেসী',
           phone: sessionPhone,
           operatorRole: assignedRole,
@@ -3002,6 +3045,25 @@ export default function App() {
             }).catch(() => {});
 
             await syncAllDataFromFirestore({ silent: true, shopIdOverride: targetShopId });
+            fetchServerShopRegistrations()
+              .then((remoteRegs) => {
+                if (Array.isArray(remoteRegs) && remoteRegs.length > 0) {
+                  setShopRegistrations((prev) => {
+                    const merged = new Map<string, ShopRegistration>();
+                    for (const r of [...prev, ...(remoteRegs as ShopRegistration[])]) {
+                      if (!r || !r.id) continue;
+                      const old = merged.get(r.id);
+                      const rTs = r.updatedAtMs || r.approvedAtMs || r.cancelledAtMs || r.registeredAtMs || 0;
+                      const pTs = old?.updatedAtMs || old?.approvedAtMs || old?.cancelledAtMs || old?.registeredAtMs || 0;
+                      if (!old || rTs >= pTs) merged.set(r.id, r);
+                    }
+                    const next = Array.from(merged.values()).sort((a, b) => (b.registeredAtMs || 0) - (a.registeredAtMs || 0));
+                    saveLocal('shop_registrations_cache', next);
+                    return next;
+                  });
+                }
+              })
+              .catch(() => {});
             const cloudSnap = await fetchServerPharmacyState();
             if (cloudSnap.hasData && cloudSnap.state) {
               const rem = cloudSnap.state;
@@ -3054,8 +3116,17 @@ export default function App() {
           matchedCloudUser = srvUser;
         }
       } catch (srvErr) {
-        if (srvErr instanceof Error && srvErr.message.includes('ভুল পাসওয়ার্ড')) {
+        if (
+          srvErr instanceof Error &&
+          (srvErr.message.includes('ভুল পাসওয়ার্ড') ||
+            srvErr.message.includes('পেন্ডিং') ||
+            srvErr.message.includes('বাতিল') ||
+            srvErr.message.includes('স্থগিত') ||
+            srvErr.message.includes('অনুমোদন'))
+        ) {
           setLoginErrorMessage(srvErr.message);
+          showToast(srvErr.message);
+          setCloudLoginLoading(false);
           return;
         }
       }
@@ -3207,28 +3278,70 @@ export default function App() {
         return;
       }
 
-      // App Owner / Super Admin check
+      // App Owner / Super Admin check (01629845006 / mhakbor2001@gmail.com / 01812358839)
       const isMasterAdmin =
-        cleanIdent.toLowerCase() === 'mhakbor2001@gmail.com' ||
-        (targetUser.email && targetUser.email.toLowerCase() === 'mhakbor2001@gmail.com') ||
-        cleanDigits === '01812358839' ||
-        cleanDigits.endsWith('1812358839');
+        isMasterAppOwner({ email: cleanIdent, phone: cleanIdent }) ||
+        isMasterAppOwner({ email: targetUser.email, phone: targetUser.phone });
 
-      // Check registration approval status
-      const matchingReg = shopRegistrations.find((r) => {
+      // Check registration approval status across local state + live server/global cloud + Firestore
+      let liveRegs: ShopRegistration[] = [...shopRegistrations];
+      if (!isMasterAdmin) {
+        try {
+          const [remoteRegs, fsRegsSnap] = await Promise.all([
+            fetchServerShopRegistrations().catch(() => []),
+            withAsyncTimeout(getDocs(collection(db, 'shop_registrations')), 2000, null),
+          ]);
+          const fsRegs: ShopRegistration[] = fsRegsSnap
+            ? fsRegsSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<ShopRegistration, 'id'>) }))
+            : [];
+          const regMap = new Map<string, ShopRegistration>();
+          for (const r of [...liveRegs, ...(remoteRegs as ShopRegistration[]), ...fsRegs]) {
+            if (!r || !r.id) continue;
+            const old = regMap.get(r.id);
+            const rTs = r.updatedAtMs || r.approvedAtMs || r.cancelledAtMs || r.registeredAtMs || 0;
+            const pTs = old?.updatedAtMs || old?.approvedAtMs || old?.cancelledAtMs || old?.registeredAtMs || 0;
+            if (!old || rTs >= pTs) regMap.set(r.id, r);
+          }
+          liveRegs = Array.from(regMap.values());
+        } catch {
+          // ignore network errors
+        }
+      }
+
+      const matchingReg = liveRegs.find((r) => {
         const rDigits = (r.phone || '').replace(/[^0-9]/g, '');
-        return (
-          (cleanDigits.length >= 6 && (rDigits === cleanDigits || rDigits.endsWith(cleanDigits))) ||
-          (r.email && r.email.toLowerCase() === cleanIdent.toLowerCase())
-        );
+        const phoneHit =
+          cleanDigits.length >= 6 &&
+          (rDigits === cleanDigits ||
+            (cleanDigits.length >= 10 && rDigits.endsWith(cleanDigits.slice(-10))) ||
+            (rDigits.length >= 10 && cleanDigits.endsWith(rDigits.slice(-10))));
+        const emailHit = Boolean(r.email && cleanIdent.includes('@') && r.email.toLowerCase() === cleanIdent.toLowerCase());
+        return phoneHit || emailHit;
       });
+
+      const resolvedApprovalStatus =
+        matchingReg?.status ||
+        (targetUser.status as string | undefined) ||
+        (targetUser.isApproved === false ? 'pending_approval' : undefined);
+
+      if (!isMasterAdmin && resolvedApprovalStatus === 'rejected') {
+        const err = 'আপনার শপ একাউন্টটি অ্যাপস মালিক (01629845006 / mhakbor2001@gmail.com) কর্তৃক ক্যানসেল / বাতিল করা হয়েছে।';
+        setLoginErrorMessage(err);
+        showToast(err);
+        setCloudLoginLoading(false);
+        return;
+      }
 
       const isAccountApproved =
         isMasterAdmin ||
-        (matchingReg ? matchingReg.isApproved || matchingReg.status === 'approved' : targetUser.isApproved !== false && targetUser.status !== 'pending_approval');
+        (matchingReg
+          ? matchingReg.isApproved === true || matchingReg.status === 'approved'
+          : targetUser.isApproved !== false &&
+            targetUser.status !== 'pending_approval' &&
+            targetUser.status !== 'rejected');
 
       if (!isAccountApproved) {
-        const err = 'আপনার শপ একাউন্টটি এখনও অ্যাপস মালিক কর্তৃক অনুমোদিত হয়নি। অনুগ্রহ করে অ্যাপস মালিকের (mhakbor2001@gmail.com / 01812-358839) অনুমোদনের জন্য অপেক্ষা করুন।';
+        const err = 'আপনার শপ একাউন্টটি এখনও পেন্ডিং অবস্থায় আছে। 01629845006 / mhakbor2001@gmail.com একাউন্টে লগইন করে এপ্রুভ না করা পর্যন্ত লগইন করা যাবে না।';
         setLoginErrorMessage(err);
         showToast(err);
         setCloudLoginLoading(false);
@@ -3450,13 +3563,9 @@ export default function App() {
         ? rawEmail.toLowerCase()
         : `${phoneDigits || 'owner'}@iqbalpharmacy.bd`;
 
-      const isMasterAppOwner =
-        cleanEmail.toLowerCase() === 'mhakbor2001@gmail.com' ||
-        cleanEmail.toLowerCase() === 'iqbalmahmud498@gmail.com' ||
-        phoneDigits === '01812358839' ||
-        phoneDigits.endsWith('1812358839');
+      const isAppAdminOwner = isMasterAppOwner({ email: cleanEmail, phone: phoneDigits });
 
-      if (isMasterAppOwner) {
+      if (isAppAdminOwner) {
         try {
           localStorage.removeItem(LOGGED_OUT_FLAG_KEY);
           sessionStorage.removeItem(EXPLICIT_LOGOUT_KEY);
@@ -3480,7 +3589,7 @@ export default function App() {
         email: cleanEmail,
         phone: registerPhone.trim(),
         password: registerPassword.trim(),
-        autoSaveSession: isMasterAppOwner,
+        autoSaveSession: isAppAdminOwner,
       });
 
       const targetShopId = session.shopId || computeCurrentShopId(session);
@@ -3587,11 +3696,13 @@ export default function App() {
         shopName: session.shopName,
         role: assignedRole,
         roleTitle: assignedRole,
+        status: isAppAdminOwner ? 'approved' : 'pending_approval',
+        isApproved: isAppAdminOwner,
         updatedAtMs: Date.now(),
       }).catch(() => {});
 
       const registrationPayload: ShopRegistration = {
-        id: `shop_reg_${phoneDigits || Date.now()}`,
+        id: `shop_reg_${bd11 || phoneDigits || Date.now()}`,
         shopId: targetShopId,
         shopName: registerShopName.trim() || 'ফার্মেসী',
         ownerName: registerOwnerName.trim(),
@@ -3599,12 +3710,14 @@ export default function App() {
         email: cleanEmail,
         password: registerPassword.trim(),
         address: '',
-        status: isMasterAppOwner ? 'approved' : 'pending_approval',
-        isApproved: isMasterAppOwner,
+        status: isAppAdminOwner ? 'approved' : 'pending_approval',
+        isApproved: isAppAdminOwner,
         registeredAtMs: Date.now(),
+        updatedAtMs: Date.now(),
       };
 
-      // Write registration to Firestore with 2s timeout
+      // Write registration to Server, Global Cloud & Firestore
+      upsertServerShopRegistration(registrationPayload).catch(() => {});
       Promise.race([
         setDoc(doc(db, 'shop_registrations', registrationPayload.id), registrationPayload, { merge: true }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000)),
@@ -3619,16 +3732,16 @@ export default function App() {
         ...shopRegistrations.filter((r) => r.id !== registrationPayload.id),
       ]);
 
-      if (!isMasterAppOwner) {
+      if (!isAppAdminOwner) {
         // Do NOT overwrite currently logged-in shop session or staffList while awaiting approval
         saveShopCloudSession(cloudSession);
         setCloudLoginLoading(false);
         setCloudAuthTab('login');
         setCloudLoginEmail(session.phone || cleanEmail);
         setCloudLoginPassword(registerPassword.trim());
-        const msg = `আপনার শপ একাউন্ট (${session.shopName}) তৈরি হয়েছে! এটি অ্যাপস মালিকের অনুমোদনের অপেক্ষায় আছে। অ্যাপস মালিক (mhakbor2001@gmail.com / 01812-358839) কর্তৃক অনুমোদন সম্পন্ন হলে আপনি লগইন করতে পারবেন।`;
+        const msg = `আপনার শপ একাউন্ট (${session.shopName}) তৈরি হয়েছে এবং পেন্ডিং অবস্থায় আছে! 01629845006 / mhakbor2001@gmail.com কর্তৃক এপ্রুভ করা হলে আপনি লগইন করতে পারবেন।`;
         setLoginErrorMessage(msg);
-        showToast('রেজিস্ট্রেশন সফল! অ্যাপস মালিকের অনুমোদনের পর লগইন কার্যকর হবে।');
+        showToast('শপ একাউন্ট পেন্ডিং অবস্থায় জমা হয়েছে! অনুমোদনের পর লগইন করা যাবে।');
         return;
       }
 
@@ -4481,7 +4594,9 @@ export default function App() {
 
   const handleUpdatePurchaseCartQty = (medId: string, newQty: number) => {
     setPurchaseCart((prev) => {
-      const next = prev.map((item) => (item.medicineId === medId ? { ...item, qty: newQty } : item));
+      const next = prev.map((item) =>
+        item.medicineId === medId ? { ...item, qty: newQty, customLineTotal: undefined } : item
+      );
       saveLocal(STORAGE_KEYS.PURCHASE_CART, next);
       return next;
     });
@@ -4489,9 +4604,16 @@ export default function App() {
 
   const handleUpdatePurchaseCartCost = (medId: string, newPurchasePrice: number) => {
     setPurchaseCart((prev) => {
-      const next = prev.map((item) =>
-        item.medicineId === medId ? { ...item, purchasePrice: newPurchasePrice } : item
-      );
+      const next = prev.map((item) => {
+        if (item.medicineId !== medId) return item;
+        const upp = Math.max(1, item.unitsPerPack || 1);
+        return {
+          ...item,
+          purchasePrice: newPurchasePrice,
+          packRate: Number((newPurchasePrice * upp).toFixed(4)),
+          customLineTotal: undefined,
+        };
+      });
       saveLocal(STORAGE_KEYS.PURCHASE_CART, next);
       return next;
     });
@@ -4939,28 +5061,18 @@ export default function App() {
       ? transactions.find((t) => getCanonicalDocId(t.id, effectiveShopId) === getCanonicalDocId(params.editingTxId!, effectiveShopId))
       : undefined;
 
-    const subTotal = sanitizeNumber(
-      validPurchaseCart.reduce((acc, i) => {
-        const effPackRate =
-          i.packRate && i.packRate > 0
-            ? i.packRate
-            : i.purchasePrice > 0
-            ? Number((i.purchasePrice * (i.unitsPerPack || 1)).toFixed(2))
-            : 0;
-        const count = Math.max(1, i.packCount || 1);
-        const isPack = Boolean(i.packUnit && i.packUnit !== 'piece' && effPackRate > 0);
-        const lineCost = isPack
-          ? Number((effPackRate * count).toFixed(2))
-          : Number((i.purchasePrice * i.qty).toFixed(2));
-        return acc + lineCost;
-      }, 0)
-    );
-    const vatAmount = sanitizeNumber(params.vat || 0, 0);
-    const discount = sanitizeNumber(params.discount, 0, subTotal + vatAmount);
-    const grandTotal = sanitizeNumber(subTotal + vatAmount - discount);
-    const paidAmount = sanitizeNumber(params.paidAmount, 0, grandTotal);
-    const dueAmount = sanitizeNumber(grandTotal - paidAmount);
-    const totalCount = validPurchaseCart.reduce((acc, i) => acc + i.qty, 0);
+    const cartTotals = computePurchaseCartTotals(validPurchaseCart, {
+      discount: params.discount,
+      vatOverride: params.vat !== undefined ? params.vat : undefined,
+      paidAmount: params.paidAmount,
+    });
+    const subTotal = sanitizeNumber(cartTotals.subTotalTp);
+    const vatAmount = sanitizeNumber(cartTotals.totalVat, 0);
+    const discount = sanitizeNumber(cartTotals.discount, 0, subTotal + vatAmount);
+    const grandTotal = sanitizeNumber(cartTotals.grandTotal);
+    const paidAmount = sanitizeNumber(cartTotals.paidAmount, 0, grandTotal);
+    const dueAmount = sanitizeNumber(cartTotals.dueAmount);
+    const totalCount = cartTotals.totalPcs;
 
     const summaryText = sanitizeString(
       validPurchaseCart
@@ -7188,15 +7300,46 @@ export default function App() {
     showToast('দোকানের একাউন্ট তথ্য সংরক্ষিত হয়েছে!');
   };
 
-  const handleApproveShopRegistration = async (regId: string) => {
-    const nowMs = Date.now();
-    setShopRegistrations((prev) =>
-      prev.map((r) =>
-        r.id === regId
-          ? { ...r, status: 'approved', isApproved: true, approvedAtMs: nowMs, approvedBy: 'mhakbor2001@gmail.com' }
-          : r
+  const syncRegistrationUserApprovalFirestore = async (
+    reg: ShopRegistration | undefined,
+    status: 'approved' | 'rejected',
+    nowMs: number
+  ) => {
+    if (!reg) return;
+    const isApproved = status === 'approved';
+    const rDigits = (reg.phone || '').replace(/[^0-9]/g, '');
+    const keys = [
+      rDigits ? `user_phone_${rDigits}` : null,
+      rDigits.length >= 10 ? `user_phone_0${rDigits.slice(-10)}` : null,
+      rDigits.length >= 10 ? `user_phone_${rDigits.slice(-10)}` : null,
+      reg.email ? `user_email_${reg.email.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_')}` : null,
+    ].filter(Boolean) as string[];
+    await Promise.all(
+      keys.map((k) =>
+        setDoc(
+          doc(db, 'registered_users', k),
+          { status, isApproved, updatedAtMs: nowMs },
+          { merge: true }
+        ).catch(() => {})
       )
     );
+  };
+
+  const handleApproveShopRegistration = async (regId: string) => {
+    const nowMs = Date.now();
+    const actionBy = cloudSession?.phone || cloudSession?.email || '01629845006 / mhakbor2001@gmail.com';
+    const targetReg = shopRegistrations.find((r) => r.id === regId);
+    setShopRegistrations((prev) => {
+      const next = prev.map((r) =>
+        r.id === regId
+          ? { ...r, status: 'approved' as const, isApproved: true, approvedAtMs: nowMs, approvedBy: actionBy, updatedAtMs: nowMs }
+          : r
+      );
+      saveLocal('shop_registrations_cache', next);
+      return next;
+    });
+    updateServerShopRegistrationStatus(regId, 'approved', actionBy).catch(() => {});
+    syncRegistrationUserApprovalFirestore(targetReg, 'approved', nowMs).catch(() => {});
     await fireAndRaceFirestoreWrite(
       setDoc(
         doc(db, 'shop_registrations', regId),
@@ -7204,7 +7347,8 @@ export default function App() {
           status: 'approved',
           isApproved: true,
           approvedAtMs: nowMs,
-          approvedBy: 'mhakbor2001@gmail.com',
+          approvedBy: actionBy,
+          updatedAtMs: nowMs,
         },
         { merge: true }
       ),
@@ -7212,19 +7356,33 @@ export default function App() {
       `shop_registrations/${regId}`,
       1200
     );
-    showToast('শপ একাউন্টটি সফলভাবে অনুমোদন দেওয়া হয়েছে!');
+    showToast('শপ একাউন্টটি সফলভাবে এপ্রুভ করা হয়েছে!');
   };
 
   const handleRejectShopRegistration = async (regId: string) => {
-    setShopRegistrations((prev) =>
-      prev.map((r) => (r.id === regId ? { ...r, status: 'rejected', isApproved: false } : r))
-    );
+    const nowMs = Date.now();
+    const actionBy = cloudSession?.phone || cloudSession?.email || '01629845006 / mhakbor2001@gmail.com';
+    const targetReg = shopRegistrations.find((r) => r.id === regId);
+    setShopRegistrations((prev) => {
+      const next = prev.map((r) =>
+        r.id === regId
+          ? { ...r, status: 'rejected' as const, isApproved: false, cancelledAtMs: nowMs, cancelledBy: actionBy, updatedAtMs: nowMs }
+          : r
+      );
+      saveLocal('shop_registrations_cache', next);
+      return next;
+    });
+    updateServerShopRegistrationStatus(regId, 'rejected', actionBy).catch(() => {});
+    syncRegistrationUserApprovalFirestore(targetReg, 'rejected', nowMs).catch(() => {});
     await fireAndRaceFirestoreWrite(
       setDoc(
         doc(db, 'shop_registrations', regId),
         {
           status: 'rejected',
           isApproved: false,
+          cancelledAtMs: nowMs,
+          cancelledBy: actionBy,
+          updatedAtMs: nowMs,
         },
         { merge: true }
       ),
@@ -7232,7 +7390,7 @@ export default function App() {
       `shop_registrations/${regId}`,
       1200
     );
-    showToast('শপ একাউন্টটি স্থগিত করা হয়েছে');
+    showToast('শপ একাউন্টটি ক্যানসেল / বাতিল করা হয়েছে');
   };
 
   const handleUpdateNotice = async (notice: ShopNotice | null) => {
@@ -8371,6 +8529,28 @@ export default function App() {
               </div>
             </div>
           )}
+
+          {/* Master Admin Pending Shop Registrations Alert */}
+          {isCloudLoggedIn &&
+            (isMasterAppOwner(cloudSession) || isMasterAppOwner(activeStaff)) &&
+            shopRegistrations.filter((r) => r.status === 'pending_approval').length > 0 && (
+              <div className="mb-4 px-4 py-2.5 bg-rose-50 border border-rose-300 text-rose-950 text-xs font-medium rounded-md flex flex-wrap items-center justify-between gap-2 no-print">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-rose-700 shrink-0" />
+                  <span>
+                    <strong>নতুন শপ অনুমোদন:</strong>{' '}
+                    {shopRegistrations.filter((r) => r.status === 'pending_approval').length}টি নতুন শপ একাউন্ট এপ্রুভ/ক্যানসেল করার অপেক্ষায় আছে।
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveSection('staff_shop')}
+                  className="px-3 py-1 bg-rose-700 hover:bg-rose-800 text-white font-bold rounded text-xs cursor-pointer"
+                >
+                  এপ্রুভ / ক্যানসেল প্যানেলে যান
+                </button>
+              </div>
+            )}
 
           {/* Toast Feedback Banner */}
           {toastMessage && (

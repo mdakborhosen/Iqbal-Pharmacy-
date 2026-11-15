@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import {
   BD_PHARMA_COMPANIES,
+  computePurchaseCartTotals,
   expandCatalogWithVariantsForSearch,
   formatCartItemInvoiceLine,
   formatCleanMoney,
@@ -653,7 +654,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     const timer = setTimeout(async () => {
       setMedexSaleSearching(true);
       try {
-        const items = await onSearchMedexLive(q, { limit: 8, signal: controller.signal });
+        const items = await onSearchMedexLive(q, { limit: 20, signal: controller.signal });
         if (!controller.signal.aborted) {
           setMedexLiveSaleResults(items);
         }
@@ -777,100 +778,24 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
 
   const dueAmount = Math.max(0, grandTotal - effectivePaidAmount);
 
-  // Purchase Invoice calculations
-  const purchaseSubTotal = useMemo(() => {
-    return purchaseCart
-      .filter((item) => item.brandName.trim().length > 0)
-      .reduce((acc, item) => {
-        const effPackRate =
-          item.packRate && item.packRate > 0
-            ? item.packRate
-            : item.purchasePrice > 0
-            ? Number((item.purchasePrice * (item.unitsPerPack || 1)).toFixed(2))
-            : 0;
-        const count = Math.max(1, item.packCount || 1);
-        const isPack = Boolean(item.packUnit && item.packUnit !== 'piece' && effPackRate > 0);
-        const lineCost = isPack
-          ? Number((effPackRate * count).toFixed(2))
-          : Number((item.purchasePrice * item.qty).toFixed(2));
-        return acc + lineCost;
-      }, 0);
-  }, [purchaseCart]);
-
-  const totalPurchaseUnits = useMemo(() => {
-    return purchaseCart
-      .filter((item) => item.brandName.trim().length > 0)
-      .reduce((acc, item) => acc + item.qty, 0);
-  }, [purchaseCart]);
-
-  const totalBonusUnits = useMemo(() => {
-    return purchaseCart
-      .filter((item) => item.brandName.trim().length > 0)
-      .reduce((acc, item) => acc + (item.bonusQty || 0), 0);
-  }, [purchaseCart]);
-
-  const purchaseItemsVatTotal = useMemo(() => {
-    return purchaseCart
-      .filter((item) => item.brandName.trim().length > 0)
-      .reduce((acc, item) => {
-        const effPackRate =
-          item.packRate && item.packRate > 0
-            ? item.packRate
-            : item.purchasePrice > 0
-            ? Number((item.purchasePrice * (item.unitsPerPack || 1)).toFixed(2))
-            : 0;
-        const count = Math.max(1, item.packCount || 1);
-        const isPack = Boolean(item.packUnit && item.packUnit !== 'piece' && effPackRate > 0);
-        const lineCost = isPack
-          ? Number((effPackRate * count).toFixed(2))
-          : Number((item.purchasePrice * item.qty).toFixed(2));
-
-        // 1. Product price VAT (piece_vat: single piece ৳, ৳/fixed: direct line total, %: percentage)
-        const pMode = item.productVatMode || (item.pieceVatAmount !== undefined && item.pieceVatAmount > 0 ? 'piece_vat' : item.vatAmount && item.vatAmount > 0 ? '৳' : '%');
-        let productVat = 0;
-        if (pMode === 'piece_vat' && item.pieceVatAmount !== undefined && item.pieceVatAmount > 0) {
-          productVat = Number((item.pieceVatAmount * item.qty).toFixed(2));
-        } else if (pMode === '৳' || pMode === 'fixed') {
-          productVat = Math.max(0, item.vatAmount || 0);
-        } else if (item.vatPercent && item.vatPercent > 0) {
-          productVat = Number(((lineCost * item.vatPercent) / 100).toFixed(2));
-        } else if (item.vatAmount && item.vatAmount > 0) {
-          productVat = item.vatAmount;
-        }
-
-        // 2. Bonus item VAT: multiplied by its quantity (bonusQty × rate) or fixed money
-        const bQty = Math.max(0, item.bonusQty || 0);
-        const bMode = item.bonusVatMode || '৳';
-        const bRate = Math.max(0, item.bonusVatRate || 0);
-        let bonusVat = 0;
-        if (bQty > 0 && bRate > 0) {
-          if (bMode === '৳') {
-            bonusVat = Number((bQty * bRate).toFixed(2));
-          } else if (bMode === 'fixed') {
-            bonusVat = Number(bRate.toFixed(2));
-          } else {
-            const unitP = item.purchasePrice > 0 ? item.purchasePrice : 0;
-            bonusVat = Number((bQty * ((unitP * bRate) / 100)).toFixed(2));
-          }
-        } else if (item.bonusVatAmount && item.bonusVatAmount > 0) {
-          bonusVat = Number(item.bonusVatAmount.toFixed(2));
-        }
-
-        return acc + productVat + bonusVat;
-      }, 0);
-  }, [purchaseCart]);
-
+  // Purchase Invoice calculations (Unified with PurchaseStepWizard & handleCompletePurchaseInvoice)
   const purDiscountVal = Math.max(0, parseFloat(purDiscountStr) || 0);
-  const purVatVal =
-    purVatStr.trim() !== '' ? Math.max(0, parseFloat(purVatStr) || 0) : purchaseItemsVatTotal;
-  const purGrandTotal = Math.max(0, purchaseSubTotal + purVatVal - purDiscountVal);
+  const purComputedTotals = useMemo(() => {
+    return computePurchaseCartTotals(purchaseCart, {
+      discount: purDiscountVal,
+      vatOverrideStr: purVatStr,
+      paidAmountStr: purPaidStr,
+    });
+  }, [purchaseCart, purDiscountVal, purVatStr, purPaidStr]);
 
-  const effectivePurPaidAmount =
-    purPaidStr.trim() === ''
-      ? purGrandTotal
-      : Math.max(0, Math.min(purGrandTotal, parseFloat(purPaidStr) || 0));
-
-  const purDueAmount = Math.max(0, purGrandTotal - effectivePurPaidAmount);
+  const purchaseSubTotal = purComputedTotals.subTotalTp;
+  const totalPurchaseUnits = purComputedTotals.totalPcs;
+  const totalBonusUnits = purComputedTotals.totalBonusPcs;
+  const purchaseItemsVatTotal = purComputedTotals.itemsVatTotal;
+  const purVatVal = purComputedTotals.totalVat;
+  const purGrandTotal = purComputedTotals.grandTotal;
+  const effectivePurPaidAmount = purComputedTotals.paidAmount;
+  const purDueAmount = purComputedTotals.dueAmount;
 
   const formatOperatorDisplay = (staff: StaffMember) => {
     return staff.roleTitle === 'owner' ? 'Owner' : staff.name;

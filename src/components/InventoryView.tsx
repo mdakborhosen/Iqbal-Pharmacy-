@@ -204,7 +204,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       setMedexLiveSearching(true);
       try {
         const items = await onSearchMedexLive(activeMedexInvQuery, {
-          limit: 8,
+          limit: 20,
           signal: controller.signal,
         });
         if (!controller.signal.aborted) {

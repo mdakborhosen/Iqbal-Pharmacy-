@@ -41,6 +41,8 @@ export interface GlobalCloudUser {
   shopName?: string;
   role?: string;
   roleTitle?: string;
+  status?: string;
+  isApproved?: boolean;
   updatedAtMs: number;
 }
 
@@ -305,19 +307,159 @@ export async function loginViaServerApi(ident: string, password: string): Promis
     }, 2500);
     if (!res.ok) {
       const errData = await res.json().catch(() => null);
-      if (res.status === 401) {
-        throw new Error(errData?.error || 'ভুল পাসওয়ার্ড! অনুগ্রহ করে সঠিক পাসওয়ার্ড দিন।');
+      if (res.status === 401 || res.status === 403) {
+        throw new Error(errData?.error || 'লগইন অনুমোদিত নয়! অনুগ্রহ করে সঠিক তথ্য দিন।');
       }
       return null;
     }
     const json = await res.json();
     return (json?.user as GlobalCloudUser) || null;
   } catch (err) {
-    if (err instanceof Error && err.message.includes('ভুল পাসওয়ার্ড')) {
+    if (
+      err instanceof Error &&
+      (err.message.includes('ভুল পাসওয়ার্ড') ||
+        err.message.includes('পেন্ডিং') ||
+        err.message.includes('বাতিল') ||
+        err.message.includes('স্থগিত') ||
+        err.message.includes('অনুমোদন'))
+    ) {
       throw err;
     }
     return null;
   }
+}
+
+export async function fetchServerShopRegistrations(): Promise<any[]> {
+  const merged = new Map<string, any>();
+  const addItems = (list: any[]) => {
+    if (!Array.isArray(list)) return;
+    for (const r of list) {
+      if (!r || !r.id) continue;
+      const prev = merged.get(r.id);
+      const rTs = r.updatedAtMs || r.approvedAtMs || r.cancelledAtMs || r.registeredAtMs || 0;
+      const pTs = prev?.updatedAtMs || prev?.approvedAtMs || prev?.cancelledAtMs || prev?.registeredAtMs || 0;
+      if (!prev || rTs >= pTs) {
+        merged.set(r.id, r);
+      }
+    }
+  };
+
+  try {
+    const srvRes = await fetchWithTimeout(`${getApiBaseUrl()}/api/shop-registrations`, { cache: 'no-store' }, 2500);
+    if (srvRes.ok) {
+      const json = await srvRes.json();
+      addItems(json?.registrations || []);
+    }
+  } catch {}
+
+  try {
+    const gRes = await fetchWithTimeout(GLOBAL_CLOUD_URL, { cache: 'no-store' }, 2500);
+    if (gRes.ok) {
+      const gJson = await gRes.json();
+      addItems(gJson?.data?.shopRegistrations || []);
+    }
+  } catch {}
+
+  return Array.from(merged.values()).sort((a, b) => (b.registeredAtMs || 0) - (a.registeredAtMs || 0));
+}
+
+export async function upsertServerShopRegistration(reg: any): Promise<void> {
+  try {
+    await fetchWithTimeout(`${getApiBaseUrl()}/api/shop-registrations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ registration: reg }),
+    }, 2500).catch(() => {});
+  } catch {}
+
+  try {
+    const gRes = await fetchWithTimeout(GLOBAL_CLOUD_URL, { cache: 'no-store' }, 2500);
+    let existingData: Record<string, any> = {};
+    if (gRes.ok) {
+      const gJson = await gRes.json();
+      existingData = gJson?.data || {};
+    }
+    const existingRegs: any[] = Array.isArray(existingData.shopRegistrations) ? [...existingData.shopRegistrations] : [];
+    const idx = existingRegs.findIndex((r) => r.id === reg.id);
+    if (idx >= 0) {
+      existingRegs[idx] = { ...existingRegs[idx], ...reg };
+    } else {
+      existingRegs.unshift(reg);
+    }
+    await fetchWithTimeout(GLOBAL_CLOUD_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'iqbal_pharmacy_global_db_v1',
+        data: {
+          ...existingData,
+          shopRegistrations: existingRegs,
+          updatedAtMs: Date.now(),
+        },
+      }),
+    }, 2500).catch(() => {});
+  } catch {}
+}
+
+export async function updateServerShopRegistrationStatus(
+  regId: string,
+  status: 'approved' | 'rejected' | 'pending_approval',
+  actionBy = '01629845006 / mhakbor2001@gmail.com'
+): Promise<void> {
+  const nowMs = Date.now();
+  const isApproved = status === 'approved';
+  try {
+    await fetchWithTimeout(`${getApiBaseUrl()}/api/shop-registrations/${encodeURIComponent(regId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status, actionBy }),
+    }, 2500).catch(() => {});
+  } catch {}
+
+  try {
+    const gRes = await fetchWithTimeout(GLOBAL_CLOUD_URL, { cache: 'no-store' }, 2500);
+    if (gRes.ok) {
+      const gJson = await gRes.json();
+      const existingData = gJson?.data || {};
+      const existingRegs: any[] = Array.isArray(existingData.shopRegistrations) ? [...existingData.shopRegistrations] : [];
+      const existingUsers: any[] = Array.isArray(existingData.users) ? [...existingData.users] : [];
+      let matchedReg: any = null;
+      const nextRegs = existingRegs.map((r) => {
+        if (r.id !== regId) return r;
+        matchedReg = {
+          ...r,
+          status,
+          isApproved,
+          ...(isApproved ? { approvedAtMs: nowMs, approvedBy: actionBy } : { cancelledAtMs: nowMs, cancelledBy: actionBy }),
+          updatedAtMs: nowMs,
+        };
+        return matchedReg;
+      });
+      const nextUsers = matchedReg
+        ? existingUsers.map((u) => {
+            const uD = String(u.phone || '').replace(/[^0-9]/g, '');
+            const rD = String(matchedReg.phone || '').replace(/[^0-9]/g, '');
+            const pMatch = rD.length >= 6 && (uD === rD || uD.endsWith(rD.slice(-10)));
+            const eMatch = matchedReg.email && String(u.email || '').toLowerCase() === String(matchedReg.email).toLowerCase();
+            return pMatch || eMatch ? { ...u, status, isApproved, updatedAtMs: nowMs } : u;
+          })
+        : existingUsers;
+
+      await fetchWithTimeout(GLOBAL_CLOUD_URL, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'iqbal_pharmacy_global_db_v1',
+          data: {
+            ...existingData,
+            shopRegistrations: nextRegs,
+            users: nextUsers,
+            updatedAtMs: nowMs,
+          },
+        }),
+      }, 2500).catch(() => {});
+    }
+  } catch {}
 }
 
 /**

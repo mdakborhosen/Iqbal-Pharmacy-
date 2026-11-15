@@ -104,6 +104,9 @@ export interface ShopRegistration {
   registeredAtMs: number;
   approvedAtMs?: number;
   approvedBy?: string;
+  cancelledAtMs?: number;
+  cancelledBy?: string;
+  updatedAtMs?: number;
 }
 
 export interface ShopProfile {
@@ -264,6 +267,46 @@ export function isMandatoryOwner(st?: Partial<StaffMember> | null): boolean {
     return true;
   }
   return false;
+}
+
+export function isMasterAppOwner(target?: {
+  email?: string | null;
+  phone?: string | null;
+  id?: string | null;
+  staffId?: string | null;
+  ident?: string | null;
+} | string | null): boolean {
+  if (!target) return false;
+  if (typeof target === 'string') {
+    const clean = target.trim().toLowerCase();
+    const digits = clean.replace(/[^0-9]/g, '');
+    return (
+      clean === 'mhakbor2001@gmail.com' ||
+      clean === 'iqbalmahmud498@gmail.com' ||
+      digits.endsWith('01629845006') ||
+      digits.endsWith('1629845006') ||
+      digits.endsWith('01812358839') ||
+      digits.endsWith('1812358839')
+    );
+  }
+  const email = (target.email || '').trim().toLowerCase();
+  const ident = (target.ident || '').trim().toLowerCase();
+  const digits = `${target.phone || ''} ${target.ident || ''}`.replace(/[^0-9]/g, '');
+  const phoneDigits = (target.phone || '').replace(/[^0-9]/g, '');
+  const identDigits = (target.ident || '').replace(/[^0-9]/g, '');
+  return (
+    email === 'mhakbor2001@gmail.com' ||
+    email === 'iqbalmahmud498@gmail.com' ||
+    ident === 'mhakbor2001@gmail.com' ||
+    ident === 'iqbalmahmud498@gmail.com' ||
+    phoneDigits.endsWith('1629845006') ||
+    identDigits.endsWith('1629845006') ||
+    phoneDigits.endsWith('1812358839') ||
+    identDigits.endsWith('1812358839') ||
+    digits.endsWith('1629845006') ||
+    target.id === 'staff-owner-1' ||
+    target.staffId === 'staff-owner-1'
+  );
 }
 
 export interface CustomMedicine {

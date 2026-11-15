@@ -79,10 +79,28 @@ function deduplicateStaffArray(staffList: any[]): any[] {
   return Array.from(byIdentity.values());
 }
 
+function isSuperAdminServerIdent(ident: string): boolean {
+  const clean = String(ident || '').trim().toLowerCase();
+  const digits = clean.replace(/[^0-9]/g, '');
+  return (
+    clean === 'mhakbor2001@gmail.com' ||
+    clean === 'iqbalmahmud498@gmail.com' ||
+    digits.endsWith('01629845006') ||
+    digits.endsWith('1629845006') ||
+    digits.endsWith('01812358839') ||
+    digits.endsWith('1812358839') ||
+    digits.endsWith('01822487909') ||
+    digits.endsWith('1822487909') ||
+    clean === 'owner' ||
+    ident.trim() === 'মালিক'
+  );
+}
+
 function readPersistentDb(): {
   updatedAtMs?: number;
   state?: Record<string, any>;
   registeredUsers?: any[];
+  shopRegistrations?: any[];
 } | null {
   for (const filePath of [DB_FILE_PATH, DB_BACKUP_FILE_PATH]) {
     try {
@@ -90,7 +108,7 @@ function readPersistentDb(): {
         const raw = fs.readFileSync(filePath, 'utf-8');
         if (raw && raw.trim()) {
           const parsed = JSON.parse(raw);
-          if (parsed && typeof parsed === 'object' && parsed.state) {
+          if (parsed && typeof parsed === 'object' && (parsed.state || parsed.registeredUsers || parsed.shopRegistrations)) {
             return parsed;
           }
         }
@@ -211,9 +229,38 @@ async function startServer() {
 
       const record = readPersistentDb() || { updatedAtMs: Date.now(), state: {} };
       const users: any[] = Array.isArray(record.registeredUsers) ? [...record.registeredUsers] : [];
+      const regs: any[] = Array.isArray(record.shopRegistrations) ? [...record.shopRegistrations] : [];
       const bd11 = cleanDigits.length >= 10 ? '0' + cleanDigits.slice(-10) : cleanDigits;
       const autoId = cleanDigits.length >= 6 ? `staff_owner_${bd11}` : `staff_owner_${cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-      const cleanShopId = typeof shopId === 'string' && shopId.trim() ? shopId.trim() : undefined;
+      const cleanShopId = typeof shopId === 'string' && shopId.trim() ? shopId.trim() : (cleanDigits.length >= 6 ? `shop_${bd11}` : undefined);
+
+      const isMasterAccount =
+        isSuperAdminServerIdent(cleanEmail) || isSuperAdminServerIdent(cleanPhone);
+      const requestedRole = role || 'owner';
+
+      // Preserve already-approved status if exists, otherwise new owners start pending_approval unless master owner
+      const existingUser = users.find((u) => {
+        const uDigits = (u.phone || '').replace(/[^0-9]/g, '');
+        return (
+          (cleanDigits.length >= 6 && (uDigits === cleanDigits || (cleanDigits.length >= 10 && uDigits.endsWith(cleanDigits.slice(-10))))) ||
+          (cleanEmail && u.email && u.email.toLowerCase() === cleanEmail)
+        );
+      });
+      const existingReg = regs.find((r) => {
+        const rDigits = (r.phone || '').replace(/[^0-9]/g, '');
+        return (
+          (cleanDigits.length >= 6 && (rDigits === cleanDigits || (cleanDigits.length >= 10 && rDigits.endsWith(cleanDigits.slice(-10))))) ||
+          (cleanEmail && r.email && r.email.toLowerCase() === cleanEmail) ||
+          (cleanShopId && r.shopId === cleanShopId)
+        );
+      });
+
+      const resolvedStatus = isMasterAccount
+        ? 'approved'
+        : requestedRole !== 'owner'
+        ? 'approved'
+        : existingReg?.status || existingUser?.status || 'pending_approval';
+      const resolvedApproved = resolvedStatus === 'approved';
 
       const newRecord = {
         id: autoId,
@@ -227,11 +274,12 @@ async function startServer() {
         name: cleanName,
         ownerName: cleanName,
         shopName: cleanShop,
-        role: role || 'owner',
+        role: requestedRole,
+        status: resolvedStatus,
+        isApproved: resolvedApproved,
         updatedAtMs: Date.now(),
       };
 
-      // Deduplicate: If user exists with this phone or email, update in-place
       const existingIdx = users.findIndex((u) => {
         const uDigits = (u.phone || '').replace(/[^0-9]/g, '');
         return (
@@ -246,7 +294,32 @@ async function startServer() {
         users.push(newRecord);
       }
 
+      if (requestedRole === 'owner' && !isMasterAccount) {
+        const regId = existingReg?.id || `shop_reg_${cleanDigits || Date.now()}`;
+        const regEntry = {
+          id: regId,
+          shopId: cleanShopId || `shop_${bd11 || Date.now()}`,
+          shopName: cleanShop,
+          ownerName: cleanName,
+          phone: cleanPhone,
+          email: cleanEmail,
+          password: cleanPass,
+          address: '',
+          status: resolvedStatus,
+          isApproved: resolvedApproved,
+          registeredAtMs: existingReg?.registeredAtMs || Date.now(),
+          updatedAtMs: Date.now(),
+        };
+        const regIdx = regs.findIndex((r) => r.id === regId);
+        if (regIdx >= 0) {
+          regs[regIdx] = { ...regs[regIdx], ...regEntry };
+        } else {
+          regs.unshift(regEntry);
+        }
+      }
+
       record.registeredUsers = users;
+      record.shopRegistrations = regs;
       record.updatedAtMs = Date.now();
       writePersistentDb(record);
 
@@ -254,6 +327,117 @@ async function startServer() {
     } catch (e) {
       console.error('Error in /api/auth/register:', e);
       res.status(500).json({ ok: false, error: 'Failed to register account' });
+    }
+  });
+
+  // Shop Registration Approval Management (01629845006 / mhakbor2001@gmail.com)
+  app.get('/api/shop-registrations', (_req, res) => {
+    const record = readPersistentDb() || {};
+    const regs = Array.isArray(record.shopRegistrations) ? record.shopRegistrations : [];
+    res.json({ ok: true, registrations: regs });
+  });
+
+  app.post('/api/shop-registrations', (req, res) => {
+    try {
+      const reg = req.body?.registration || req.body || {};
+      if (!reg || (!reg.phone && !reg.email && !reg.id)) {
+        res.status(400).json({ ok: false, error: 'Invalid shop registration payload' });
+        return;
+      }
+      const record = readPersistentDb() || { updatedAtMs: Date.now(), state: {} };
+      const regs: any[] = Array.isArray(record.shopRegistrations) ? [...record.shopRegistrations] : [];
+      const cleanDigits = String(reg.phone || '').replace(/[^0-9]/g, '');
+      const cleanEmail = String(reg.email || '').trim().toLowerCase();
+      const regId = reg.id || `shop_reg_${cleanDigits || Date.now()}`;
+
+      const isMaster = isSuperAdminServerIdent(cleanEmail) || isSuperAdminServerIdent(reg.phone || '');
+      const existingIdx = regs.findIndex(
+        (r) =>
+          r.id === regId ||
+          (cleanDigits.length >= 6 && String(r.phone || '').replace(/[^0-9]/g, '').endsWith(cleanDigits.slice(-10))) ||
+          (cleanEmail && String(r.email || '').toLowerCase() === cleanEmail)
+      );
+      const existing = existingIdx >= 0 ? regs[existingIdx] : null;
+      const nextStatus = isMaster
+        ? 'approved'
+        : existing?.status === 'approved' || existing?.status === 'rejected'
+        ? existing.status
+        : reg.status || 'pending_approval';
+      const entry = {
+        ...existing,
+        ...reg,
+        id: existing?.id || regId,
+        status: nextStatus,
+        isApproved: nextStatus === 'approved',
+        registeredAtMs: existing?.registeredAtMs || reg.registeredAtMs || Date.now(),
+        updatedAtMs: Date.now(),
+      };
+      if (existingIdx >= 0) {
+        regs[existingIdx] = entry;
+      } else {
+        regs.unshift(entry);
+      }
+      record.shopRegistrations = regs;
+      record.updatedAtMs = Date.now();
+      writePersistentDb(record);
+      res.json({ ok: true, registration: entry, registrations: regs });
+    } catch (e) {
+      console.error('Error in POST /api/shop-registrations:', e);
+      res.status(500).json({ ok: false, error: 'Failed to save shop registration' });
+    }
+  });
+
+  app.patch('/api/shop-registrations/:id', (req, res) => {
+    try {
+      const regId = req.params.id;
+      const { status, actionBy } = req.body || {};
+      if (status !== 'approved' && status !== 'rejected' && status !== 'pending_approval') {
+        res.status(400).json({ ok: false, error: 'Invalid status' });
+        return;
+      }
+      const record = readPersistentDb() || { updatedAtMs: Date.now(), state: {} };
+      const regs: any[] = Array.isArray(record.shopRegistrations) ? [...record.shopRegistrations] : [];
+      const users: any[] = Array.isArray(record.registeredUsers) ? [...record.registeredUsers] : [];
+      const nowMs = Date.now();
+      const isApproved = status === 'approved';
+
+      let updatedReg: any = null;
+      const idx = regs.findIndex((r) => r.id === regId);
+      if (idx >= 0) {
+        regs[idx] = {
+          ...regs[idx],
+          status,
+          isApproved,
+          ...(isApproved ? { approvedAtMs: nowMs, approvedBy: actionBy || '01629845006 / mhakbor2001@gmail.com' } : { cancelledAtMs: nowMs, cancelledBy: actionBy || '01629845006 / mhakbor2001@gmail.com' }),
+          updatedAtMs: nowMs,
+        };
+        updatedReg = regs[idx];
+      }
+
+      // Sync matching user(s) in registeredUsers
+      if (updatedReg) {
+        const regDigits = String(updatedReg.phone || '').replace(/[^0-9]/g, '');
+        const regEmail = String(updatedReg.email || '').trim().toLowerCase();
+        for (let i = 0; i < users.length; i++) {
+          const u = users[i];
+          const uDigits = String(u.phone || '').replace(/[^0-9]/g, '');
+          const phoneMatch = regDigits.length >= 6 && (uDigits === regDigits || uDigits.endsWith(regDigits.slice(-10)));
+          const emailMatch = regEmail && String(u.email || '').toLowerCase() === regEmail;
+          const shopMatch = updatedReg.shopId && u.shopId === updatedReg.shopId;
+          if (phoneMatch || emailMatch || shopMatch) {
+            users[i] = { ...u, status, isApproved, updatedAtMs: nowMs };
+          }
+        }
+      }
+
+      record.shopRegistrations = regs;
+      record.registeredUsers = users;
+      record.updatedAtMs = nowMs;
+      writePersistentDb(record);
+      res.json({ ok: true, registration: updatedReg, registrations: regs });
+    } catch (e) {
+      console.error('Error in PATCH /api/shop-registrations:', e);
+      res.status(500).json({ ok: false, error: 'Failed to update registration status' });
     }
   });
 
@@ -271,31 +455,29 @@ async function startServer() {
         return;
       }
 
-      const isMasterOwner =
-        cleanIdent.toLowerCase() === 'mhakbor2001@gmail.com' ||
-        cleanIdent.toLowerCase() === 'iqbalmahmud498@gmail.com' ||
-        cleanDigits.endsWith('01812358839') ||
-        cleanDigits.endsWith('1812358839') ||
-        cleanDigits.endsWith('01822487909') ||
-        cleanDigits.endsWith('1822487909') ||
-        cleanIdent.toLowerCase() === 'owner' ||
-        cleanIdent === 'মালিক';
+      const isMasterOwner = isSuperAdminServerIdent(cleanIdent);
 
       if (isMasterOwner && (cleanPass === '000000' || cleanPass === 'IqbalPharmacy#2026' || cleanPass.length >= 4)) {
+        const is01629 = cleanDigits.endsWith('01629845006') || cleanDigits.endsWith('1629845006');
         const is01822 = cleanDigits.endsWith('01822487909') || cleanDigits.endsWith('1822487909');
+        const isAkborEmail = cleanIdent.toLowerCase() === 'mhakbor2001@gmail.com';
         const masterSession = {
           uid: is01822 ? 'shop_owner_01822487909' : 'shop_owner_default',
           shopId: 'shop_iqbal_pharmacy',
           email: is01822
             ? '01822487909@iqbalpharmacy.bd'
+            : is01629 || isAkborEmail
+            ? 'mhakbor2001@gmail.com'
             : cleanIdent.toLowerCase() === 'iqbalmahmud498@gmail.com'
             ? 'iqbalmahmud498@gmail.com'
             : '01812358839@iqbalpharmacy.bd',
-          displayName: 'ইকবাল মাহমুদ (Owner)',
+          displayName: is01629 || isAkborEmail ? 'অ্যাডমিন (01629845006)' : 'ইকবাল মাহমুদ (Owner)',
           shopName: 'ইকবাল ফার্মেসী',
-          phone: is01822 ? '01822-487909' : '01812-358839',
+          phone: is01822 ? '01822-487909' : is01629 || isAkborEmail ? '01629845006' : '01812-358839',
           operatorRole: 'owner',
           staffId: is01822 ? 'staff-owner-2' : 'staff-owner-1',
+          isApproved: true,
+          status: 'approved',
           loggedInAt: Date.now(),
         };
         res.json({ ok: true, user: masterSession });
@@ -304,6 +486,7 @@ async function startServer() {
 
       const record = readPersistentDb() || { updatedAtMs: Date.now(), state: {} };
       const users: any[] = Array.isArray(record.registeredUsers) ? record.registeredUsers : [];
+      const regs: any[] = Array.isArray(record.shopRegistrations) ? record.shopRegistrations : [];
 
       const matched = users.find((u) => {
         const uDigits = (u.phone || '').replace(/[^0-9]/g, '');
@@ -317,6 +500,18 @@ async function startServer() {
         return phoneMatch || emailMatch || idMatch;
       });
 
+      const matchedReg = regs.find((r) => {
+        const rDigits = (r.phone || '').replace(/[^0-9]/g, '');
+        const phoneMatch =
+          cleanDigits.length >= 6 &&
+          (rDigits === cleanDigits ||
+            (cleanDigits.length >= 10 && rDigits.endsWith(cleanDigits.slice(-10))) ||
+            (rDigits.length >= 10 && cleanDigits.endsWith(rDigits.slice(-10))));
+        const emailMatch = isEmail && r.email && r.email.toLowerCase() === cleanIdent.toLowerCase();
+        const shopMatch = matched?.shopId && r.shopId === matched.shopId;
+        return phoneMatch || emailMatch || shopMatch;
+      });
+
       if (matched) {
         const validPassword =
           cleanPass === matched.password ||
@@ -326,32 +521,55 @@ async function startServer() {
           res.status(401).json({ ok: false, error: 'ভুল পাসওয়ার্ড! অনুগ্রহ করে সঠিক পাসওয়ার্ড দিন।' });
           return;
         }
-        res.json({ ok: true, user: matched });
+
+        const effectiveStatus = matchedReg?.status || matched.status || (matched.isApproved === false ? 'pending_approval' : 'approved');
+        const effectiveApproved = effectiveStatus === 'approved' || (!matchedReg && matched.isApproved !== false && matched.role !== 'owner');
+
+        if (effectiveStatus === 'rejected') {
+          res.status(403).json({
+            ok: false,
+            status: 'rejected',
+            error: 'আপনার শপ একাউন্টটি অ্যাপস মালিক (01629845006 / mhakbor2001@gmail.com) কর্তৃক বাতিল বা স্থগিত করা হয়েছে।',
+          });
+          return;
+        }
+
+        if (!effectiveApproved || effectiveStatus === 'pending_approval') {
+          res.status(403).json({
+            ok: false,
+            status: 'pending_approval',
+            error: 'আপনার শপ একাউন্টটি এখনও পেন্ডিং অবস্থায় আছে। 01629845006 / mhakbor2001@gmail.com ইউজার কর্তৃক এপ্রুভ হওয়ার পর লগইন করতে পারবেন।',
+          });
+          return;
+        }
+
+        res.json({ ok: true, user: { ...matched, status: 'approved', isApproved: true } });
         return;
       }
 
-      // If user wasn't registered yet, auto-provision so user is NEVER blocked on any device
-      const bd11 = cleanDigits.length >= 10 ? '0' + cleanDigits.slice(-10) : cleanDigits;
-      const autoStaffId = cleanDigits.length >= 6 ? `staff_owner_${bd11}` : `staff_owner_${cleanIdent.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-      const autoUser = {
-        id: autoStaffId,
-        staffId: autoStaffId,
-        ownerId: `shop_owner_${bd11 || autoStaffId}`,
-        phone: cleanDigits.length >= 6 ? (cleanDigits.length >= 10 ? bd11 : cleanDigits) : cleanIdent,
-        phoneDigits: cleanDigits,
-        email: isEmail ? cleanIdent.toLowerCase() : `${cleanDigits || 'owner'}@iqbalpharmacy.bd`,
-        password: cleanPass,
-        name: cleanDigits ? `মালিক (${cleanDigits})` : `${cleanIdent} (Owner)`,
-        ownerName: cleanDigits ? `মালিক (${cleanDigits})` : `${cleanIdent} (Owner)`,
-        shopName: 'ইকবাল ফার্মেসী',
-        role: 'owner',
-        updatedAtMs: Date.now(),
-      };
-      users.push(autoUser);
-      record.registeredUsers = users;
-      writePersistentDb(record);
+      if (matchedReg) {
+        if (matchedReg.status === 'rejected') {
+          res.status(403).json({
+            ok: false,
+            status: 'rejected',
+            error: 'আপনার শপ একাউন্টটি অ্যাপস মালিক কর্তৃক বাতিল করা হয়েছে।',
+          });
+          return;
+        }
+        if (!matchedReg.isApproved && matchedReg.status !== 'approved') {
+          res.status(403).json({
+            ok: false,
+            status: 'pending_approval',
+            error: 'আপনার শপ একাউন্টটি এখনও পেন্ডিং অবস্থায় আছে। 01629845006 / mhakbor2001@gmail.com এর অনুমোদনের পর লগইন করতে পারবেন।',
+          });
+          return;
+        }
+      }
 
-      res.json({ ok: true, user: autoUser });
+      res.status(404).json({
+        ok: false,
+        error: 'এই মোবাইল বা ইমেইলে কোনো শপ একাউন্ট পাওয়া যায়নি। প্রথমে নতুন শপ একাউন্ট তৈরি করুন।',
+      });
     } catch (e) {
       console.error('Error in /api/auth/login:', e);
       res.status(500).json({ ok: false, error: 'Login verification failed' });
@@ -401,6 +619,9 @@ async function startServer() {
       const existingRegisteredUsers = Array.isArray(existingRecord?.registeredUsers)
         ? existingRecord.registeredUsers
         : [];
+      const existingShopRegistrations = Array.isArray(existingRecord?.shopRegistrations)
+        ? existingRecord.shopRegistrations
+        : [];
       const nowMs = Date.now();
 
       if (mode === 'overwrite' || !existingRecord || !existingRecord.state) {
@@ -428,7 +649,12 @@ async function startServer() {
           updatedAtMs: nowMs,
         };
 
-        const payload = { updatedAtMs: nowMs, registeredUsers: existingRegisteredUsers, state: nextState };
+        const payload = {
+          updatedAtMs: nowMs,
+          registeredUsers: existingRegisteredUsers,
+          shopRegistrations: existingShopRegistrations,
+          state: nextState,
+        };
         writePersistentDb(payload);
         res.json({ ok: true, updatedAtMs: nowMs, state: nextState });
         return;
@@ -512,7 +738,12 @@ async function startServer() {
         updatedAtMs: nowMs,
       };
 
-      const payload = { updatedAtMs: nowMs, registeredUsers: existingRegisteredUsers, state: mergedState };
+      const payload = {
+        updatedAtMs: nowMs,
+        registeredUsers: existingRegisteredUsers,
+        shopRegistrations: existingShopRegistrations,
+        state: mergedState,
+      };
       writePersistentDb(payload);
       res.json({ ok: true, updatedAtMs: nowMs, state: mergedState });
     } catch (err) {
@@ -825,35 +1056,73 @@ Return STRICTLY a JSON object matching these keys.`;
     };
   }
 
-  async function fetchMedexBrandDetail(url: string, bypassCache = false) {
-    const cleanUrl = url.startsWith('http') ? url : `${MEDEX_BASE_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+  function extractSiblingBrandUrlsFromHtml(html: string): string[] {
+    const urls = new Set<string>();
+    const anchorMatches = html.matchAll(/<a\b[^>]*btn-sibling-brands[^>]*>/gi);
+    for (const m of anchorMatches) {
+      const tag = m[0];
+      const hrefMatch = tag.match(/href=["']([^"'#]+)["']/i);
+      if (hrefMatch) {
+        const raw = hrefMatch[1].split('?')[0];
+        if (/\/brands\/\d+\//i.test(raw)) {
+          const full = raw.startsWith('http') ? raw : `${MEDEX_BASE_URL}${raw.startsWith('/') ? '' : '/'}${raw}`;
+          urls.add(full);
+        }
+      }
+    }
+    return Array.from(urls);
+  }
+
+  async function fetchMedexBrandDetailWithSiblings(
+    url: string,
+    bypassCache = false
+  ): Promise<{ item: any; siblingUrls: string[] } | null> {
+    const cleanUrl = (url.startsWith('http') ? url : `${MEDEX_BASE_URL}${url.startsWith('/') ? '' : '/'}${url}`).split('?')[0];
     const cached = medexBrandCache.get(cleanUrl);
     if (!bypassCache && cached && Date.now() - cached.fetchedAtMs < MEDEX_BRAND_CACHE_TTL_MS) {
       return cached.data;
     }
     const html = await fetchMedexHtml(cleanUrl, 6500);
     const parsed = parseMedexBrandDetailHtml(html, cleanUrl);
-    if (parsed) {
-      medexBrandCache.set(cleanUrl, { fetchedAtMs: Date.now(), data: parsed });
-    }
-    return parsed;
+    if (!parsed) return null;
+    const siblingUrls = extractSiblingBrandUrlsFromHtml(html);
+    const result = { item: parsed, siblingUrls };
+    medexBrandCache.set(cleanUrl, { fetchedAtMs: Date.now(), data: result });
+    return result;
+  }
+
+  async function fetchMedexBrandDetail(url: string, bypassCache = false) {
+    const res = await fetchMedexBrandDetailWithSiblings(url, bypassCache);
+    return res ? res.item : null;
   }
 
   function extractBrandUrlsFromHtml(html: string): string[] {
     const urls = new Set<string>();
     const matches = html.matchAll(/href=["'](https?:\/\/medex\.com\.bd\/brands\/\d+\/[^"'#?]+|\/brands\/\d+\/[^"'#?]+)["']/gi);
     for (const m of matches) {
-      const raw = m[1];
+      const raw = m[1].split('?')[0];
       const full = raw.startsWith('http') ? raw : `${MEDEX_BASE_URL}${raw}`;
       urls.add(full);
     }
     return Array.from(urls);
   }
 
-  async function searchMedexLive(query: string, limit = 8, bypassCache = false) {
+  function extractGenericBrandListUrls(html: string): string[] {
+    const urls = new Set<string>();
+    const matches = html.matchAll(/href=["'](https?:\/\/medex\.com\.bd\/generics\/\d+\/[^"'#?]+|\/generics\/\d+\/[^"'#?]+)["']/gi);
+    for (const m of matches) {
+      const raw = m[1].split('?')[0];
+      const full = raw.startsWith('http') ? raw : `${MEDEX_BASE_URL}${raw}`;
+      const listUrl = full.endsWith('/brand-names') ? full : `${full}/brand-names`;
+      urls.add(listUrl);
+    }
+    return Array.from(urls);
+  }
+
+  async function searchMedexLive(query: string, limit = 20, bypassCache = false) {
     const cleanQ = query.trim();
     if (cleanQ.length < 2) return [];
-    const safeLimit = Math.min(Math.max(limit, 1), 12);
+    const safeLimit = Math.min(Math.max(limit, 1), 28);
     const cacheKey = `${cleanQ.toLowerCase()}::${safeLimit}`;
 
     if (!bypassCache) {
@@ -863,56 +1132,146 @@ Return STRICTLY a JSON object matching these keys.`;
       }
     }
 
-    let brandUrls: string[] = [];
-    try {
-      const brandsSearchHtml = await fetchMedexHtml(
-        `${MEDEX_BASE_URL}/search?search=${encodeURIComponent(cleanQ)}&type=brands`,
-        7000
-      );
-      brandUrls = extractBrandUrlsFromHtml(brandsSearchHtml);
-    } catch {
-      // ignore and fallback
-    }
+    const brandUrlSet = new Set<string>();
+    const addUrls = (list: string[]) => {
+      for (const u of list) brandUrlSet.add(u);
+    };
 
-    // Fallback to general search (handles generic names like Omeprazole, Paracetamol, etc.)
-    if (brandUrls.length === 0) {
+    // Normalized query variants (e.g., stripping trailing strength/dosage words when searching)
+    const normalizedRoot = cleanQ
+      .replace(/[-_/]+/g, ' ')
+      .replace(/\b(\d+(?:\.\d+)?\s*(?:mg|ml|gm|g|mcg|iu|%|tab|tablet|cap|capsule|syr|syrup|susp|suspension|inj|injection|drop|drops|gel|cream|ointment|mups|xr|sr|cr|ds|plus|extra))\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    // 1. Fetch Page 1 (brands + general search in parallel)
+    const [brandsRes, generalRes] = await Promise.allSettled([
+      fetchMedexHtml(`${MEDEX_BASE_URL}/search?search=${encodeURIComponent(cleanQ)}&type=brands`, 7500),
+      fetchMedexHtml(`${MEDEX_BASE_URL}/search?search=${encodeURIComponent(cleanQ)}&type=search`, 7500),
+    ]);
+
+    const brandsHtml = brandsRes.status === 'fulfilled' ? brandsRes.value : '';
+    const generalHtml = generalRes.status === 'fulfilled' ? generalRes.value : '';
+
+    if (brandsHtml) addUrls(extractBrandUrlsFromHtml(brandsHtml));
+    if (generalHtml) addUrls(extractBrandUrlsFromHtml(generalHtml));
+
+    // 2. If pagination (?page=2) exists on brands search and we want more variants, fetch page 2 too
+    if (brandsHtml && /page=2\b/i.test(brandsHtml) && brandUrlSet.size < safeLimit) {
       try {
-        const generalHtml = await fetchMedexHtml(
-          `${MEDEX_BASE_URL}/search?search=${encodeURIComponent(cleanQ)}&type=search`,
-          7000
+        const page2Html = await fetchMedexHtml(
+          `${MEDEX_BASE_URL}/search?search=${encodeURIComponent(cleanQ)}&type=brands&page=2`,
+          6500
         );
-        brandUrls = extractBrandUrlsFromHtml(generalHtml);
-        if (brandUrls.length === 0) {
-          const genMatch = generalHtml.match(
-            /href=["'](https?:\/\/medex\.com\.bd\/generics\/\d+\/[^"'#?]+|\/generics\/\d+\/[^"'#?]+)["']/i
-          );
-          if (genMatch) {
-            const rawGenUrl = genMatch[1].startsWith('http')
-              ? genMatch[1]
-              : `${MEDEX_BASE_URL}${genMatch[1]}`;
-            const brandListUrl = rawGenUrl.endsWith('/brand-names') ? rawGenUrl : `${rawGenUrl}/brand-names`;
-            const genBrandsHtml = await fetchMedexHtml(brandListUrl, 7000);
-            brandUrls = extractBrandUrlsFromHtml(genBrandsHtml);
-          }
-        }
+        addUrls(extractBrandUrlsFromHtml(page2Html));
       } catch {
-        // ignore fallback error
+        // ignore pagination fetch error
       }
     }
 
-    const targetUrls = brandUrls.slice(0, safeLimit);
-    if (targetUrls.length === 0) {
+    // 3. If generic match appeared (e.g. searching "Omeprazole" or "Azithromycin"), load its brand names
+    if (generalHtml && brandUrlSet.size < 6) {
+      const genericBrandPages = extractGenericBrandListUrls(generalHtml).slice(0, 2);
+      if (genericBrandPages.length > 0) {
+        const genResults = await Promise.allSettled(
+          genericBrandPages.map((u) => fetchMedexHtml(u, 6500))
+        );
+        for (const r of genResults) {
+          if (r.status === 'fulfilled' && r.value) {
+            addUrls(extractBrandUrlsFromHtml(r.value));
+          }
+        }
+      }
+    }
+
+    // 4. If query had strength/form words or punctuation and yielded few results, also query root brand name
+    if (normalizedRoot.length >= 2 && normalizedRoot.toLowerCase() !== cleanQ.toLowerCase() && brandUrlSet.size < 8) {
+      try {
+        const rootHtml = await fetchMedexHtml(
+          `${MEDEX_BASE_URL}/search?search=${encodeURIComponent(normalizedRoot)}&type=brands`,
+          6500
+        );
+        addUrls(extractBrandUrlsFromHtml(rootHtml));
+      } catch {
+        // ignore
+      }
+    }
+
+    // Also try first token if multi-word still returned nothing
+    const firstWord = normalizedRoot.split(' ')[0] || cleanQ.split(/\s+/)[0] || '';
+    if (firstWord.length >= 3 && firstWord.toLowerCase() !== cleanQ.toLowerCase() && brandUrlSet.size < 4) {
+      try {
+        const fwHtml = await fetchMedexHtml(
+          `${MEDEX_BASE_URL}/search?search=${encodeURIComponent(firstWord)}&type=brands`,
+          6000
+        );
+        addUrls(extractBrandUrlsFromHtml(fwHtml));
+      } catch {
+        // ignore
+      }
+    }
+
+    const qTokenLower = (normalizedRoot || cleanQ).toLowerCase().split(' ')[0] || '';
+    const rankedUrls = Array.from(brandUrlSet).sort((a, b) => {
+      const aSlug = a.toLowerCase();
+      const bSlug = b.toLowerCase();
+      const aMatch = qTokenLower && aSlug.includes(`/${qTokenLower}`) ? 1 : 0;
+      const bMatch = qTokenLower && bSlug.includes(`/${qTokenLower}`) ? 1 : 0;
+      return bMatch - aMatch;
+    });
+
+    const initialBatch = rankedUrls.slice(0, safeLimit);
+    if (initialBatch.length === 0) {
       return [];
     }
 
-    const settled = await Promise.allSettled(
-      targetUrls.map((u) => fetchMedexBrandDetail(u, bypassCache))
+    const fetchedMap = new Map<string, any>();
+    const discoveredSiblings = new Set<string>();
+
+    const firstSettled = await Promise.allSettled(
+      initialBatch.map((u) => fetchMedexBrandDetailWithSiblings(u, bypassCache))
     );
 
-    const items = settled
-      .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled' && Boolean(r.value))
-      .map((r) => r.value);
+    for (let i = 0; i < initialBatch.length; i++) {
+      const r = firstSettled[i];
+      if (r.status === 'fulfilled' && r.value?.item) {
+        const item = r.value.item;
+        const itemKey = String(item.id || initialBatch[i]);
+        fetchedMap.set(itemKey, item);
+        for (const sibUrl of r.value.siblingUrls || []) {
+          if (!brandUrlSet.has(sibUrl)) {
+            discoveredSiblings.add(sibUrl);
+          }
+        }
+      }
+    }
 
+    // 5. Fetch ALL sibling variants ("Also available as:") discovered from matched brand pages
+    // so every strength & dosage form variant (20mg, 40mg, XR, MUPS, Syrup, Drop, Inj, Suppository) is included!
+    if (discoveredSiblings.size > 0 && fetchedMap.size < safeLimit) {
+      const siblingList = Array.from(discoveredSiblings)
+        .filter((u) => {
+          if (!qTokenLower) return true;
+          const slug = u.split('/').pop()?.toLowerCase() || '';
+          return slug.includes(qTokenLower) || fetchedMap.size < 8;
+        })
+        .slice(0, safeLimit - fetchedMap.size);
+
+      if (siblingList.length > 0) {
+        const sibSettled = await Promise.allSettled(
+          siblingList.map((u) => fetchMedexBrandDetailWithSiblings(u, bypassCache))
+        );
+        for (let i = 0; i < siblingList.length; i++) {
+          const r = sibSettled[i];
+          if (r.status === 'fulfilled' && r.value?.item) {
+            const item = r.value.item;
+            fetchedMap.set(String(item.id || siblingList[i]), item);
+          }
+        }
+      }
+    }
+
+    const items = Array.from(fetchedMap.values());
     if (items.length > 0) {
       medexSearchCache.set(cacheKey, { fetchedAtMs: Date.now(), items });
     }
@@ -923,7 +1282,7 @@ Return STRICTLY a JSON object matching these keys.`;
   app.get('/api/medex/search', async (req, res) => {
     try {
       const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
-      const limit = parseInt(String(req.query.limit || '8'), 10) || 8;
+      const limit = parseInt(String(req.query.limit || '20'), 10) || 20;
       const refresh = req.query.refresh === '1' || req.query.refresh === 'true';
 
       if (q.length < 2) {

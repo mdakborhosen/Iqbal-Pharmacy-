@@ -1,5 +1,5 @@
 {
-  "updatedAtMs": 1794129120044,
+  "updatedAtMs": 1794730654429,
   "state": {
     "shopProfile": {
       "id": "shop-default",
@@ -1216,6 +1216,43 @@
       "shopName": "ইকবাল ফার্মেসী",
       "role": "owner",
       "updatedAtMs": 1794129120044
+    },
+    {
+      "id": "staff_owner_01799000111",
+      "shopId": "shop_01799000111",
+      "staffId": "staff_owner_01799000111",
+      "ownerId": "shop_owner_01799000111",
+      "phone": "01799000111",
+      "phoneDigits": "01799000111",
+      "email": "testshop01799@example.com",
+      "password": "pass1234",
+      "name": "Test Owner",
+      "ownerName": "Test Owner",
+      "shopName": "Test Approval Pharmacy",
+      "role": "owner",
+      "status": "rejected",
+      "isApproved": false,
+      "updatedAtMs": 1794730654429
+    }
+  ],
+  "shopRegistrations": [
+    {
+      "id": "shop_reg_01799000111",
+      "shopId": "shop_01799000111",
+      "shopName": "Test Approval Pharmacy",
+      "ownerName": "Test Owner",
+      "phone": "01799000111",
+      "email": "testshop01799@example.com",
+      "password": "pass1234",
+      "address": "",
+      "status": "rejected",
+      "isApproved": false,
+      "registeredAtMs": 1794730654312,
+      "updatedAtMs": 1794730654429,
+      "approvedAtMs": 1794730654414,
+      "approvedBy": "01629845006",
+      "cancelledAtMs": 1794730654429,
+      "cancelledBy": "01629845006"
     }
   ]
 }

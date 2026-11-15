@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 import {
   BD_PHARMA_COMPANIES,
+  computePurchaseCartTotals,
+  computePurchaseItemMetrics,
   DOSAGE_FORM_OPTIONS,
   expandCatalogWithVariantsForSearch,
   formatCleanMoney,
@@ -183,6 +185,225 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
   const [customBatch, setCustomBatch] = useState('B-2601');
   const [customExpiry, setCustomExpiry] = useState('2028-12-31');
 
+  // Unified inline click-to-edit state for Step 1, Step 2, Step 3 tables & money fields
+  const [editingCell, setEditingCell] = useState<{
+    medId: string;
+    field:
+      | 'step1_pack'
+      | 'step1_qty'
+      | 'step1_tp'
+      | 'step1_lineTp'
+      | 'step2_qty'
+      | 'step2_lineTp'
+      | 'step2_lineVat'
+      | 'step2_lineTotal'
+      | 'step3_qty'
+      | 'step3_bonus'
+      | 'step3_tp'
+      | 'step3_singleVat'
+      | 'step3_lineTp'
+      | 'step3_lineVat'
+      | 'step3_lineTotal'
+      | 'summary_subTotalTp'
+      | 'summary_totalVat'
+      | 'summary_grandTotal'
+      | 'meta_supplier'
+      | 'meta_invoiceNo'
+      | 'meta_dateStr';
+  } | null>(null);
+  const [editingVal, setEditingVal] = useState('');
+  const [editingPackCount, setEditingPackCount] = useState('1');
+  const [editingUnitsPerPack, setEditingUnitsPerPack] = useState('1');
+
+  const startCellEdit = (
+    medId: string,
+    field: NonNullable<typeof editingCell>['field'],
+    initialValue: string | number
+  ) => {
+    setEditingCell({ medId, field });
+    setEditingVal(String(initialValue));
+  };
+
+  const scaleCartSubTotalTp = (targetSubTotal: number) => {
+    const validItems = purchaseCart.filter((i) => i.brandName.trim().length > 0);
+    if (validItems.length === 0) return;
+    const safeTarget = Math.max(0.01, Number(targetSubTotal.toFixed(2)));
+    const currentSub = validItems.reduce((sum, i) => sum + computePurchaseItemMetrics(i).lineTp, 0);
+    if (currentSub <= 0) {
+      const perItem = Number((safeTarget / validItems.length).toFixed(2));
+      for (const it of validItems) {
+        const q = Math.max(1, it.qty || 1);
+        onUpdatePurchaseCartItemDetails(it.medicineId, {
+          customLineTotal: perItem,
+          purchasePrice: Number((perItem / q).toFixed(6)),
+          packRate: Number(((perItem / q) * (it.unitsPerPack || 1)).toFixed(4)),
+        });
+      }
+      return;
+    }
+    const factor = safeTarget / currentSub;
+    let allocated = 0;
+    validItems.forEach((it, idx) => {
+      const m = computePurchaseItemMetrics(it);
+      const q = Math.max(1, it.qty || 1);
+      const newLineTp =
+        idx === validItems.length - 1
+          ? Math.max(0.01, Number((safeTarget - allocated).toFixed(2)))
+          : Math.max(0.01, Number((m.lineTp * factor).toFixed(2)));
+      allocated += newLineTp;
+      onUpdatePurchaseCartItemDetails(it.medicineId, {
+        customLineTotal: newLineTp,
+        purchasePrice: Number((newLineTp / q).toFixed(6)),
+        packRate: Number(((newLineTp / q) * (it.unitsPerPack || 1)).toFixed(4)),
+      });
+    });
+  };
+
+  const commitCellEdit = () => {
+    if (!editingCell) return;
+    const { medId, field } = editingCell;
+    const rawStr = editingVal.trim();
+    const numVal = parseFloat(rawStr);
+    const item = purchaseCart.find((i) => i.medicineId === medId);
+
+    if (field === 'meta_supplier') {
+      if (rawStr) setSupplierCompany(rawStr);
+    } else if (field === 'meta_invoiceNo') {
+      if (rawStr) setPurInvoiceNo(rawStr);
+    } else if (field === 'meta_dateStr') {
+      if (rawStr) setPurDateStr(rawStr);
+    } else if (field === 'summary_subTotalTp') {
+      if (!Number.isNaN(numVal) && numVal > 0) {
+        scaleCartSubTotalTp(numVal);
+      }
+    } else if (field === 'summary_totalVat') {
+      if (!Number.isNaN(numVal) && numVal >= 0) {
+        setPurVatStr(numVal === 0 ? '0' : numVal.toFixed(2));
+      } else if (rawStr === '') {
+        setPurVatStr('');
+      }
+    } else if (field === 'summary_grandTotal') {
+      if (!Number.isNaN(numVal) && numVal >= 0) {
+        const curBeforeDiscount = Number((calculations.subTotalTp + calculations.totalVat).toFixed(2));
+        if (numVal <= curBeforeDiscount) {
+          setPurDiscountStr(Number((curBeforeDiscount - numVal).toFixed(2)).toFixed(2));
+        } else {
+          setPurDiscountStr('0');
+          const neededSub = Math.max(0.01, Number((numVal - calculations.totalVat).toFixed(2)));
+          scaleCartSubTotalTp(neededSub);
+        }
+      }
+    } else if (item) {
+      const m = computePurchaseItemMetrics(item);
+      const q = m.qty;
+      const unitsPerPack = Math.max(1, item.unitsPerPack || 1);
+
+      if (field === 'step1_pack') {
+        const pCount = Math.max(1, parseInt(editingPackCount, 10) || 1);
+        const uPerPack = Math.max(1, parseInt(editingUnitsPerPack, 10) || 1);
+        const nextQty = item.packUnit === 'piece' ? pCount : pCount * uPerPack;
+        const unitLbl =
+          item.packUnit === 'box' ? 'বক্স' : item.packUnit === 'strip' ? 'পাতা' : 'পিস';
+        const formula =
+          item.packUnit === 'piece'
+            ? `${nextQty} পিস`
+            : `${pCount} ${unitLbl} (${uPerPack} পিস/${unitLbl} = ${nextQty} পিস)`;
+        onUpdatePurchaseCartItemDetails(medId, {
+          packCount: pCount,
+          unitsPerPack: uPerPack,
+          qty: nextQty,
+          customLineTotal: undefined,
+          packDetailFormula: formula,
+          packRate: Number(((item.purchasePrice || 0) * uPerPack).toFixed(4)),
+        });
+      } else if (field === 'step1_qty' || field === 'step2_qty' || field === 'step3_qty') {
+        if (!Number.isNaN(numVal) && numVal >= 1) {
+          const nextQty = Math.max(1, Math.round(numVal));
+          const nextPackCount =
+            item.packUnit === 'piece'
+              ? nextQty
+              : Math.max(1, Math.round(nextQty / unitsPerPack));
+          const unitLbl =
+            item.packUnit === 'box' ? 'বক্স' : item.packUnit === 'strip' ? 'পাতা' : 'পিস';
+          const formula =
+            item.packUnit === 'piece'
+              ? `${nextQty} পিস`
+              : `${nextPackCount} ${unitLbl} (${unitsPerPack} পিস/${unitLbl} = ${nextQty} পিস)`;
+          onUpdatePurchaseCartItemDetails(medId, {
+            qty: nextQty,
+            packCount: nextPackCount,
+            packDetailFormula: formula,
+            customLineTotal: undefined,
+          });
+        }
+      } else if (field === 'step1_tp' || field === 'step3_tp') {
+        if (!Number.isNaN(numVal) && numVal > 0) {
+          onUpdatePurchaseCartItemDetails(medId, {
+            purchasePrice: numVal,
+            customLineTotal: undefined,
+            packRate: Number((numVal * unitsPerPack).toFixed(4)),
+          });
+        }
+      } else if (field === 'step1_lineTp' || field === 'step2_lineTp' || field === 'step3_lineTp') {
+        if (!Number.isNaN(numVal) && numVal >= 0) {
+          const exactLineTp = Number(numVal.toFixed(2));
+          const unitTp = q > 0 ? Number((exactLineTp / q).toFixed(6)) : 0;
+          onUpdatePurchaseCartItemDetails(medId, {
+            customLineTotal: exactLineTp,
+            purchasePrice: unitTp,
+            packRate: Number((unitTp * unitsPerPack).toFixed(4)),
+          });
+        }
+      } else if (field === 'step3_bonus') {
+        if (!Number.isNaN(numVal) && numVal >= 0) {
+          onUpdatePurchaseCartItemDetails(medId, {
+            bonusQty: Math.max(0, Math.round(numVal)),
+          });
+        }
+      } else if (field === 'step3_singleVat') {
+        if (!Number.isNaN(numVal) && numVal >= 0) {
+          const approxRate = m.tp > 0 ? Number(((numVal / m.tp) * 100).toFixed(2)) : 0;
+          setPurVatStr('');
+          onUpdatePurchaseCartItemDetails(medId, {
+            pieceVatAmount: numVal,
+            vatPercent: approxRate,
+            vatAmount: Number((numVal * q).toFixed(2)),
+            productVatMode: 'piece_vat',
+          });
+        }
+      } else if (field === 'step2_lineVat' || field === 'step3_lineVat') {
+        if (!Number.isNaN(numVal) && numVal >= 0) {
+          const exactLineVat = Number(numVal.toFixed(2));
+          const sVat = q > 0 ? Number((exactLineVat / q).toFixed(4)) : 0;
+          const approxRate = m.lineTp > 0 ? Number(((exactLineVat / m.lineTp) * 100).toFixed(2)) : 0;
+          setPurVatStr('');
+          onUpdatePurchaseCartItemDetails(medId, {
+            productVatMode: '৳',
+            vatAmount: exactLineVat,
+            pieceVatAmount: sVat,
+            vatPercent: approxRate,
+            bonusVatAmount: 0,
+            bonusVatRate: 0,
+          });
+        }
+      } else if (field === 'step2_lineTotal' || field === 'step3_lineTotal') {
+        if (!Number.isNaN(numVal) && numVal >= 0) {
+          const targetLineTotal = Number(numVal.toFixed(2));
+          const nextLineTp = Math.max(0.01, Number((targetLineTotal - m.lineVat).toFixed(2)));
+          const unitTp = q > 0 ? Number((nextLineTp / q).toFixed(6)) : 0;
+          onUpdatePurchaseCartItemDetails(medId, {
+            customLineTotal: nextLineTp,
+            purchasePrice: unitTp,
+            packRate: Number((unitTp * unitsPerPack).toFixed(4)),
+          });
+        }
+      }
+    }
+
+    setEditingCell(null);
+    setEditingVal('');
+  };
+
   // Live direct search against https://medex.com.bd/ in Step 1 product search
   useEffect(() => {
     const q = productSearch.trim();
@@ -195,7 +416,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
     const timer = setTimeout(async () => {
       setMedexSearching(true);
       try {
-        const items = await onSearchMedexLive(q, { limit: 8, signal: controller.signal });
+        const items = await onSearchMedexLive(q, { limit: 20, signal: controller.signal });
         if (!controller.signal.aborted) {
           setMedexLiveResults(items);
         }
@@ -374,69 +595,13 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
     setShowCustomDrugForm(false);
   };
 
-  // Financial Calculations for Purchase Cart
+  // Financial Calculations for Purchase Cart (Unified single source of truth)
   const calculations = useMemo(() => {
-    let subTotalTp = 0;
-    let totalVat = 0;
-    let totalPcs = 0;
-    let totalBonusPcs = 0;
-
-    for (const item of purchaseCart) {
-      if (!item.brandName.trim()) continue;
-
-      const qty = item.qty || 1;
-      const tp = item.purchasePrice || 0;
-      const lineTp = Number((qty * tp).toFixed(2));
-      subTotalTp += lineTp;
-      totalPcs += qty;
-
-      const bonus = item.bonusQty || 0;
-      totalBonusPcs += bonus;
-
-      // Single VAT Calculation
-      let singleVat = 0;
-      if (item.pieceVatAmount !== undefined && item.pieceVatAmount > 0) {
-        singleVat = item.pieceVatAmount;
-      } else if (item.vatPercent !== undefined && item.vatPercent > 0) {
-        singleVat = Number(((tp * item.vatPercent) / 100).toFixed(4));
-      } else if (item.vatAmount && item.vatAmount > 0) {
-        singleVat = Number((item.vatAmount / qty).toFixed(4));
-      }
-
-      const lineProductVat = Number((qty * singleVat).toFixed(2));
-
-      // Bonus VAT if bonus is taxable
-      let lineBonusVat = 0;
-      if (bonus > 0 && item.bonusVatRate && item.bonusVatRate > 0) {
-        if (item.bonusVatMode === '%') {
-          lineBonusVat = Number((bonus * ((tp * item.bonusVatRate) / 100)).toFixed(2));
-        } else {
-          lineBonusVat = Number((bonus * item.bonusVatRate).toFixed(2));
-        }
-      }
-
-      totalVat += lineProductVat + lineBonusVat;
-    }
-
-    const discount = Math.max(0, parseFloat(purDiscountStr) || 0);
-    const finalVat = purVatStr.trim() !== '' ? Math.max(0, parseFloat(purVatStr) || 0) : totalVat;
-    const grandTotal = Math.max(0, subTotalTp + finalVat - discount);
-    const paidAmount =
-      purPaidStr.trim() === ''
-        ? grandTotal
-        : Math.max(0, Math.min(grandTotal, parseFloat(purPaidStr) || 0));
-    const dueAmount = Math.max(0, grandTotal - paidAmount);
-
-    return {
-      subTotalTp,
-      totalVat: finalVat,
-      discount,
-      grandTotal,
-      paidAmount,
-      dueAmount,
-      totalPcs,
-      totalBonusPcs,
-    };
+    return computePurchaseCartTotals(purchaseCart, {
+      discount: Math.max(0, parseFloat(purDiscountStr) || 0),
+      vatOverrideStr: purVatStr,
+      paidAmountStr: purPaidStr,
+    });
   }, [purchaseCart, purDiscountStr, purVatStr, purPaidStr]);
 
   return (
@@ -994,6 +1159,10 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
               </div>
             ) : (
               <div className="overflow-x-auto">
+                <div className="text-[11px] text-indigo-700 font-semibold mb-1.5 flex items-center gap-1">
+                  <Edit3 className="w-3 h-3" />
+                  <span>টিপস: যেকোনো প্যাক সাইজ, পরিমাণ, একক টিপি বা মোট টিপির উপর ক্লিক করে সরাসরি পরিবর্তন করতে পারবেন।</span>
+                </div>
                 <table className="w-full text-left border-collapse text-xs">
                   <thead className="bg-indigo-50/70 border-b border-indigo-200 text-slate-700 font-bold">
                     <tr>
@@ -1008,7 +1177,12 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-sans">
                     {purchaseCart.map((item, idx) => {
-                      const lineCost = Number(((item.purchasePrice || 0) * (item.qty || 0)).toFixed(2));
+                      const metrics = computePurchaseItemMetrics(item);
+                      const isEdPack = editingCell?.medId === item.medicineId && editingCell.field === 'step1_pack';
+                      const isEdQty = editingCell?.medId === item.medicineId && editingCell.field === 'step1_qty';
+                      const isEdTp = editingCell?.medId === item.medicineId && editingCell.field === 'step1_tp';
+                      const isEdLineTp = editingCell?.medId === item.medicineId && editingCell.field === 'step1_lineTp';
+
                       return (
                         <tr key={item.medicineId} className="hover:bg-slate-50/80">
                           <td className="py-2 px-3 font-mono text-slate-400 font-bold">{idx + 1}</td>
@@ -1022,16 +1196,140 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                             <div className="text-[10.5px] text-teal-800">{item.companyName}</div>
                           </td>
                           <td className="py-2 px-2 text-center text-slate-600 font-mono">
-                            {item.packDetailFormula || `${item.qty} পিস`}
+                            {isEdPack ? (
+                              <div className="inline-flex items-center gap-1 bg-indigo-50 p-1 rounded border border-indigo-300">
+                                <input
+                                  type="number"
+                                  min="1"
+                                  autoFocus
+                                  value={editingPackCount}
+                                  onChange={(e) => setEditingPackCount(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') commitCellEdit();
+                                    if (e.key === 'Escape') setEditingCell(null);
+                                  }}
+                                  className="w-12 px-1 py-0.5 text-center border border-indigo-300 rounded bg-white text-xs font-bold"
+                                  title="প্যাক/বক্স সংখ্যা"
+                                />
+                                {item.packUnit !== 'piece' && (
+                                  <>
+                                    <span>×</span>
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      value={editingUnitsPerPack}
+                                      onChange={(e) => setEditingUnitsPerPack(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') commitCellEdit();
+                                        if (e.key === 'Escape') setEditingCell(null);
+                                      }}
+                                      className="w-14 px-1 py-0.5 text-center border border-indigo-300 rounded bg-white text-xs font-bold"
+                                      title="প্রতি প্যাকে পিস"
+                                    />
+                                  </>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={commitCellEdit}
+                                  className="px-1.5 py-0.5 bg-indigo-700 text-white rounded text-[10px] font-bold cursor-pointer"
+                                >
+                                  ✓
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingPackCount(String(item.packCount || 1));
+                                  setEditingUnitsPerPack(String(item.unitsPerPack || (item.packUnit === 'piece' ? 1 : item.qty)));
+                                  startCellEdit(item.medicineId, 'step1_pack', '');
+                                }}
+                                className="px-1.5 py-0.5 rounded border border-dashed border-transparent hover:border-indigo-300 hover:bg-indigo-50/80 hover:text-indigo-800 cursor-pointer transition-colors"
+                                title="ক্লিক করে প্যাক সাইজ পরিবর্তন করুন"
+                              >
+                                {item.packDetailFormula || `${item.qty} পিস`}
+                              </button>
+                            )}
                           </td>
                           <td className="py-2 px-2 text-center font-bold font-mono text-indigo-950">
-                            {item.qty} পিস
+                            {isEdQty ? (
+                              <input
+                                type="number"
+                                min="1"
+                                autoFocus
+                                value={editingVal}
+                                onChange={(e) => setEditingVal(e.target.value)}
+                                onBlur={commitCellEdit}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') commitCellEdit();
+                                  if (e.key === 'Escape') setEditingCell(null);
+                                }}
+                                className="w-20 px-1.5 py-0.5 text-center border border-indigo-400 rounded bg-white text-xs font-bold"
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => startCellEdit(item.medicineId, 'step1_qty', metrics.qty)}
+                                className="px-2 py-0.5 rounded border border-dashed border-transparent hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 cursor-pointer"
+                                title="ক্লিক করে পরিমাণ (পিস) পরিবর্তন করুন"
+                              >
+                                {metrics.qty} পিস
+                              </button>
+                            )}
                           </td>
                           <td className="py-2 px-3 text-right font-mono font-bold text-slate-800">
-                            ৳{item.purchasePrice.toFixed(2)}
+                            {isEdTp ? (
+                              <input
+                                type="number"
+                                step="any"
+                                min="0.01"
+                                autoFocus
+                                value={editingVal}
+                                onChange={(e) => setEditingVal(e.target.value)}
+                                onBlur={commitCellEdit}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') commitCellEdit();
+                                  if (e.key === 'Escape') setEditingCell(null);
+                                }}
+                                className="w-24 px-1.5 py-0.5 text-right border border-indigo-400 rounded bg-white text-xs font-bold"
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => startCellEdit(item.medicineId, 'step1_tp', metrics.tp.toFixed(2))}
+                                className="px-2 py-0.5 rounded border border-dashed border-transparent hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 cursor-pointer"
+                                title="ক্লিক করে একক টিপি পরিবর্তন করুন"
+                              >
+                                ৳{metrics.tp.toFixed(2)}
+                              </button>
+                            )}
                           </td>
                           <td className="py-2 px-3 text-right font-mono font-bold text-indigo-900">
-                            ৳{lineCost.toFixed(2)}
+                            {isEdLineTp ? (
+                              <input
+                                type="number"
+                                step="any"
+                                min="0"
+                                autoFocus
+                                value={editingVal}
+                                onChange={(e) => setEditingVal(e.target.value)}
+                                onBlur={commitCellEdit}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') commitCellEdit();
+                                  if (e.key === 'Escape') setEditingCell(null);
+                                }}
+                                className="w-24 px-1.5 py-0.5 text-right border border-indigo-400 rounded bg-white text-xs font-bold"
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => startCellEdit(item.medicineId, 'step1_lineTp', metrics.lineTp.toFixed(2))}
+                                className="px-2 py-0.5 rounded border border-dashed border-transparent hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 cursor-pointer"
+                                title="ক্লিক করে মোট টিপি পরিবর্তন করুন"
+                              >
+                                ৳{metrics.lineTp.toFixed(2)}
+                              </button>
+                            )}
                           </td>
                           <td className="py-2 px-2 text-center">
                             <button
@@ -1119,23 +1417,17 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-200 text-xs font-sans">
                 {purchaseCart.map((item, idx) => {
-                  const qty = item.qty || 1;
-                  const tp = item.purchasePrice || 0;
-                  const lineTp = Number((qty * tp).toFixed(2));
-                  const bonus = item.bonusQty || 0;
+                  const m = computePurchaseItemMetrics(item);
+                  const { qty, tp, lineTp, vatRate, singleVat, lineVat, lineTotal: lineNetTotal } = m;
 
-                  // VAT calculations
-                  const vatRate = item.vatPercent !== undefined ? item.vatPercent : 2.4;
-                  const singleVat =
-                    item.pieceVatAmount !== undefined && item.pieceVatAmount > 0
-                      ? item.pieceVatAmount
-                      : Number(((tp * vatRate) / 100).toFixed(4));
-                  const lineVat = Number((qty * singleVat).toFixed(2));
-                  const lineNetTotal = lineTp + lineVat;
+                  const isEdQty = editingCell?.medId === item.medicineId && editingCell.field === 'step2_qty';
+                  const isEdLineTp = editingCell?.medId === item.medicineId && editingCell.field === 'step2_lineTp';
+                  const isEdLineVat = editingCell?.medId === item.medicineId && editingCell.field === 'step2_lineVat';
+                  const isEdLineTotal = editingCell?.medId === item.medicineId && editingCell.field === 'step2_lineTotal';
 
                   return (
                     <tr key={item.medicineId} className="hover:bg-indigo-50/30">
-                      {/* Product Name & Pcs */}
+                      {/* Product Name & Pcs (Click Qty to Edit) */}
                       <td className="py-2.5 px-3">
                         <div className="font-bold text-slate-900 text-xs">
                           {idx + 1}. {item.brandName}{' '}
@@ -1143,8 +1435,32 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                             ({item.dosageForm} {item.strength})
                           </span>
                         </div>
-                        <div className="text-[10.5px] text-slate-500">
-                          {item.companyName} · <strong className="font-mono text-indigo-900">{qty} পিস</strong>
+                        <div className="text-[10.5px] text-slate-500 flex items-center gap-1 mt-0.5">
+                          <span>{item.companyName} ·</span>
+                          {isEdQty ? (
+                            <input
+                              type="number"
+                              min="1"
+                              autoFocus
+                              value={editingVal}
+                              onChange={(e) => setEditingVal(e.target.value)}
+                              onBlur={commitCellEdit}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') commitCellEdit();
+                                if (e.key === 'Escape') setEditingCell(null);
+                              }}
+                              className="w-16 px-1 py-0.5 text-center border border-indigo-400 rounded bg-white text-xs font-bold font-mono"
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => startCellEdit(item.medicineId, 'step2_qty', qty)}
+                              className="font-mono font-bold text-indigo-900 px-1 rounded border border-dashed border-transparent hover:border-indigo-300 hover:bg-indigo-50 cursor-pointer"
+                              title="ক্লিক করে পরিমাণ পরিবর্তন করুন"
+                            >
+                              {qty} পিস
+                            </button>
+                          )}
                         </div>
                       </td>
 
@@ -1169,10 +1485,14 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                           type="number"
                           step="any"
                           min="0.01"
-                          value={item.purchasePrice}
+                          value={Number(tp.toFixed(4))}
                           onChange={(e) => {
                             const newCost = Math.max(0.01, parseFloat(e.target.value) || 0);
-                            onUpdatePurchaseCartCost(item.medicineId, newCost);
+                            onUpdatePurchaseCartItemDetails(item.medicineId, {
+                              purchasePrice: newCost,
+                              customLineTotal: undefined,
+                              packRate: Number((newCost * (item.unitsPerPack || 1)).toFixed(4)),
+                            });
                           }}
                           className="w-20 text-center py-1 px-1 border border-slate-300 rounded font-mono font-bold text-indigo-950 bg-white"
                         />
@@ -1188,9 +1508,11 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                           onChange={(e) => {
                             const rate = Math.max(0, parseFloat(e.target.value) || 0);
                             const newSingleVat = Number(((tp * rate) / 100).toFixed(4));
+                            setPurVatStr('');
                             onUpdatePurchaseCartItemDetails(item.medicineId, {
                               vatPercent: rate,
                               pieceVatAmount: newSingleVat,
+                              vatAmount: Number(((lineTp * rate) / 100).toFixed(2)),
                               productVatMode: '%',
                             });
                           }}
@@ -1208,9 +1530,11 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                           onChange={(e) => {
                             const sVat = Math.max(0, parseFloat(e.target.value) || 0);
                             const approxRate = tp > 0 ? Number(((sVat / tp) * 100).toFixed(2)) : 0;
+                            setPurVatStr('');
                             onUpdatePurchaseCartItemDetails(item.medicineId, {
                               pieceVatAmount: sVat,
                               vatPercent: approxRate,
+                              vatAmount: Number((sVat * qty).toFixed(2)),
                               productVatMode: 'piece_vat',
                             });
                           }}
@@ -1218,19 +1542,91 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                         />
                       </td>
 
-                      {/* Total TP */}
+                      {/* Total TP (Click to Edit) */}
                       <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">
-                        ৳{lineTp.toFixed(2)}
+                        {isEdLineTp ? (
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            autoFocus
+                            value={editingVal}
+                            onChange={(e) => setEditingVal(e.target.value)}
+                            onBlur={commitCellEdit}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') commitCellEdit();
+                              if (e.key === 'Escape') setEditingCell(null);
+                            }}
+                            className="w-24 px-1.5 py-0.5 text-right border border-indigo-400 rounded bg-white text-xs font-bold"
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => startCellEdit(item.medicineId, 'step2_lineTp', lineTp.toFixed(2))}
+                            className="px-1.5 py-0.5 rounded border border-dashed border-transparent hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 cursor-pointer"
+                            title="ক্লিক করে মোট টিপি পরিবর্তন করুন"
+                          >
+                            ৳{lineTp.toFixed(2)}
+                          </button>
+                        )}
                       </td>
 
-                      {/* Total VAT */}
+                      {/* Total VAT (Click to Edit) */}
                       <td className="py-2.5 px-3 text-right font-mono font-bold text-indigo-800">
-                        ৳{lineVat.toFixed(2)}
+                        {isEdLineVat ? (
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            autoFocus
+                            value={editingVal}
+                            onChange={(e) => setEditingVal(e.target.value)}
+                            onBlur={commitCellEdit}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') commitCellEdit();
+                              if (e.key === 'Escape') setEditingCell(null);
+                            }}
+                            className="w-24 px-1.5 py-0.5 text-right border border-indigo-400 rounded bg-white text-xs font-bold"
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => startCellEdit(item.medicineId, 'step2_lineVat', lineVat.toFixed(2))}
+                            className="px-1.5 py-0.5 rounded border border-dashed border-transparent hover:border-indigo-300 hover:bg-indigo-50 cursor-pointer"
+                            title="ক্লিক করে মোট ভ্যাট পরিবর্তন করুন"
+                          >
+                            ৳{lineVat.toFixed(2)}
+                          </button>
+                        )}
                       </td>
 
-                      {/* Line Total */}
+                      {/* Line Total (Click to Edit) */}
                       <td className="py-2.5 px-3 text-right font-mono font-black text-indigo-950">
-                        ৳{lineNetTotal.toFixed(2)}
+                        {isEdLineTotal ? (
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            autoFocus
+                            value={editingVal}
+                            onChange={(e) => setEditingVal(e.target.value)}
+                            onBlur={commitCellEdit}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') commitCellEdit();
+                              if (e.key === 'Escape') setEditingCell(null);
+                            }}
+                            className="w-24 px-1.5 py-0.5 text-right border border-indigo-400 rounded bg-white text-xs font-bold"
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => startCellEdit(item.medicineId, 'step2_lineTotal', lineNetTotal.toFixed(2))}
+                            className="px-1.5 py-0.5 rounded border border-dashed border-transparent hover:border-indigo-300 hover:bg-indigo-50 cursor-pointer"
+                            title="ক্লিক করে লাইন মোট টাকা পরিবর্তন করুন"
+                          >
+                            ৳{lineNetTotal.toFixed(2)}
+                          </button>
+                        )}
                       </td>
 
                       {/* Batch & Expiry */}
@@ -1283,7 +1679,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
             </table>
           </div>
 
-          {/* 4-Column Step 2 Financial Summary Strip */}
+          {/* 4-Column Step 2 Financial Summary Strip (Click Money Fields to Edit) */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-indigo-50/80 p-3.5 rounded-lg border border-indigo-200">
             <div>
               <span className="text-slate-600 text-xs">মোট পরিমাণ ও বোনাস:</span>
@@ -1294,23 +1690,95 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
 
             <div>
               <span className="text-slate-600 text-xs">সর্বমোট টিপি (SubTotal TP):</span>
-              <div className="text-base font-bold font-mono text-slate-900 mt-0.5">
-                ৳{calculations.subTotalTp.toFixed(2)}
-              </div>
+              {editingCell?.medId === '__SUMMARY__' && editingCell.field === 'summary_subTotalTp' ? (
+                <input
+                  type="number"
+                  step="any"
+                  min="0"
+                  autoFocus
+                  value={editingVal}
+                  onChange={(e) => setEditingVal(e.target.value)}
+                  onBlur={commitCellEdit}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitCellEdit();
+                    if (e.key === 'Escape') setEditingCell(null);
+                  }}
+                  className="mt-0.5 w-32 px-2 py-1 border border-indigo-400 rounded bg-white font-mono font-bold text-sm"
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => startCellEdit('__SUMMARY__', 'summary_subTotalTp', calculations.subTotalTp.toFixed(2))}
+                  className="block text-base font-bold font-mono text-slate-900 mt-0.5 px-1.5 py-0.5 -ml-1.5 rounded border border-dashed border-transparent hover:border-indigo-400 hover:bg-white cursor-pointer"
+                  title="ক্লিক করে সর্বমোট টিপি পরিবর্তন করুন"
+                >
+                  ৳{calculations.subTotalTp.toFixed(2)}
+                </button>
+              )}
             </div>
 
             <div>
               <span className="text-slate-600 text-xs">সর্বমোট ভ্যাট (Total VAT):</span>
-              <div className="text-base font-bold font-mono text-indigo-800 mt-0.5">
-                ৳{calculations.totalVat.toFixed(2)}
-              </div>
+              {editingCell?.medId === '__SUMMARY__' && editingCell.field === 'summary_totalVat' ? (
+                <input
+                  type="number"
+                  step="any"
+                  min="0"
+                  autoFocus
+                  value={editingVal}
+                  onChange={(e) => setEditingVal(e.target.value)}
+                  onBlur={commitCellEdit}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitCellEdit();
+                    if (e.key === 'Escape') setEditingCell(null);
+                  }}
+                  className="mt-0.5 w-32 px-2 py-1 border border-indigo-400 rounded bg-white font-mono font-bold text-sm"
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => startCellEdit('__SUMMARY__', 'summary_totalVat', calculations.totalVat.toFixed(2))}
+                  className="block text-base font-bold font-mono text-indigo-800 mt-0.5 px-1.5 py-0.5 -ml-1.5 rounded border border-dashed border-transparent hover:border-indigo-400 hover:bg-white cursor-pointer"
+                  title="ক্লিক করে সর্বমোট ভ্যাট পরিবর্তন করুন"
+                >
+                  ৳{calculations.totalVat.toFixed(2)}
+                </button>
+              )}
             </div>
 
             <div>
               <span className="text-slate-600 text-xs">টিপি + ভ্যাট সর্বমোট:</span>
-              <div className="text-lg font-black font-mono text-indigo-950 mt-0.5">
-                ৳{(calculations.subTotalTp + calculations.totalVat).toFixed(2)}
-              </div>
+              {editingCell?.medId === '__SUMMARY__' && editingCell.field === 'summary_grandTotal' ? (
+                <input
+                  type="number"
+                  step="any"
+                  min="0"
+                  autoFocus
+                  value={editingVal}
+                  onChange={(e) => setEditingVal(e.target.value)}
+                  onBlur={commitCellEdit}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitCellEdit();
+                    if (e.key === 'Escape') setEditingCell(null);
+                  }}
+                  className="mt-0.5 w-32 px-2 py-1 border border-indigo-400 rounded bg-white font-mono font-black text-base"
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() =>
+                    startCellEdit(
+                      '__SUMMARY__',
+                      'summary_grandTotal',
+                      (calculations.subTotalTp + calculations.totalVat).toFixed(2)
+                    )
+                  }
+                  className="block text-lg font-black font-mono text-indigo-950 mt-0.5 px-1.5 py-0.5 -ml-1.5 rounded border border-dashed border-transparent hover:border-indigo-400 hover:bg-white cursor-pointer"
+                  title="ক্লিক করে সর্বমোট টাকা পরিবর্তন করুন"
+                >
+                  ৳{(calculations.subTotalTp + calculations.totalVat).toFixed(2)}
+                </button>
+              )}
             </div>
           </div>
 
@@ -1371,20 +1839,86 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
               )}
             </div>
 
-            {/* Challan Metadata Badge */}
+            {/* Challan Metadata Badge (Click any field to edit inline) */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs">
               <div>
                 <span className="text-slate-500 block">সরবরাহকারী:</span>
-                <strong className="text-indigo-950 text-sm block">{supplierCompany}</strong>
+                {editingCell?.medId === '__META__' && editingCell.field === 'meta_supplier' ? (
+                  <input
+                    type="text"
+                    autoFocus
+                    value={editingVal}
+                    onChange={(e) => setEditingVal(e.target.value)}
+                    onBlur={commitCellEdit}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitCellEdit();
+                      if (e.key === 'Escape') setEditingCell(null);
+                    }}
+                    className="w-full px-1.5 py-0.5 border border-indigo-400 rounded bg-white font-bold text-xs"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => startCellEdit('__META__', 'meta_supplier', supplierCompany)}
+                    className="font-bold text-indigo-950 text-sm block text-left hover:text-indigo-700 hover:underline cursor-pointer"
+                    title="ক্লিক করে সরবরাহকারীর নাম পরিবর্তন করুন"
+                  >
+                    {supplierCompany}
+                  </button>
+                )}
                 <span className="text-slate-500 text-[11px] font-mono">{supplierPhone}</span>
               </div>
               <div>
                 <span className="text-slate-500 block">চালান নম্বর:</span>
-                <strong className="font-mono text-slate-900 text-sm block">{purInvoiceNo}</strong>
+                {editingCell?.medId === '__META__' && editingCell.field === 'meta_invoiceNo' ? (
+                  <input
+                    type="text"
+                    autoFocus
+                    value={editingVal}
+                    onChange={(e) => setEditingVal(e.target.value)}
+                    onBlur={commitCellEdit}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitCellEdit();
+                      if (e.key === 'Escape') setEditingCell(null);
+                    }}
+                    className="w-full px-1.5 py-0.5 border border-indigo-400 rounded bg-white font-mono font-bold text-xs"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => startCellEdit('__META__', 'meta_invoiceNo', purInvoiceNo)}
+                    className="font-mono font-bold text-slate-900 text-sm block hover:text-indigo-700 hover:underline cursor-pointer"
+                    title="ক্লিক করে চালান নম্বর পরিবর্তন করুন"
+                  >
+                    {purInvoiceNo}
+                  </button>
+                )}
               </div>
               <div>
                 <span className="text-slate-500 block">চালানের তারিখ:</span>
-                <strong className="font-mono text-slate-800 block">{purDateStr}</strong>
+                {editingCell?.medId === '__META__' && editingCell.field === 'meta_dateStr' ? (
+                  <input
+                    type="date"
+                    autoFocus
+                    value={editingVal}
+                    onChange={(e) => setEditingVal(e.target.value)}
+                    onBlur={commitCellEdit}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitCellEdit();
+                      if (e.key === 'Escape') setEditingCell(null);
+                    }}
+                    className="w-full px-1.5 py-0.5 border border-indigo-400 rounded bg-white font-mono font-bold text-xs"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => startCellEdit('__META__', 'meta_dateStr', purDateStr)}
+                    className="font-mono font-bold text-slate-800 block hover:text-indigo-700 hover:underline cursor-pointer"
+                    title="ক্লিক করে তারিখ পরিবর্তন করুন"
+                  >
+                    {purDateStr}
+                  </button>
+                )}
               </div>
               <div>
                 <span className="text-slate-500 block">অপারেটর:</span>
@@ -1392,8 +1926,12 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
               </div>
             </div>
 
-            {/* Review Items Table with Amend Actions */}
+            {/* Review Items Table with Inline Click-to-Edit on ALL Values + Amend Button */}
             <div className="border border-slate-200 rounded-lg overflow-x-auto">
+              <div className="bg-indigo-50/40 px-3 py-1.5 border-b border-indigo-100 text-[11px] text-indigo-800 font-semibold flex items-center gap-1.5">
+                <Edit3 className="w-3.5 h-3.5" />
+                <span>যেকোনো পরিমাণ, বোনাস বা টাকার অংকের উপর সরাসরি ক্লিক করে এডিট করতে পারবেন।</span>
+              </div>
               <table className="w-full text-left border-collapse text-xs">
                 <thead className="bg-indigo-50/80 border-b border-indigo-200 text-slate-700 font-bold">
                   <tr>
@@ -1411,17 +1949,16 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-sans">
                   {purchaseCart.map((item, idx) => {
-                    const qty = item.qty || 1;
-                    const tp = item.purchasePrice || 0;
-                    const lineTp = Number((qty * tp).toFixed(2));
-                    const bonus = item.bonusQty || 0;
-                    const vatRate = item.vatPercent !== undefined ? item.vatPercent : 2.4;
-                    const singleVat =
-                      item.pieceVatAmount !== undefined && item.pieceVatAmount > 0
-                        ? item.pieceVatAmount
-                        : Number(((tp * vatRate) / 100).toFixed(4));
-                    const lineVat = Number((qty * singleVat).toFixed(2));
-                    const lineTotal = lineTp + lineVat;
+                    const m = computePurchaseItemMetrics(item);
+                    const { qty, tp, lineTp, bonus, singleVat, lineVat, lineTotal } = m;
+
+                    const isEdQty = editingCell?.medId === item.medicineId && editingCell.field === 'step3_qty';
+                    const isEdBonus = editingCell?.medId === item.medicineId && editingCell.field === 'step3_bonus';
+                    const isEdTp = editingCell?.medId === item.medicineId && editingCell.field === 'step3_tp';
+                    const isEdSingleVat = editingCell?.medId === item.medicineId && editingCell.field === 'step3_singleVat';
+                    const isEdLineTp = editingCell?.medId === item.medicineId && editingCell.field === 'step3_lineTp';
+                    const isEdLineVat = editingCell?.medId === item.medicineId && editingCell.field === 'step3_lineVat';
+                    const isEdLineTotal = editingCell?.medId === item.medicineId && editingCell.field === 'step3_lineTotal';
 
                     return (
                       <tr key={item.medicineId} className="hover:bg-slate-50">
@@ -1436,21 +1973,191 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                           <div className="text-[10.5px] text-teal-800">{item.companyName}</div>
                         </td>
                         <td className="py-2 px-2 text-center font-mono font-bold text-slate-900">
-                          {qty} পিস
+                          {isEdQty ? (
+                            <input
+                              type="number"
+                              min="1"
+                              autoFocus
+                              value={editingVal}
+                              onChange={(e) => setEditingVal(e.target.value)}
+                              onBlur={commitCellEdit}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') commitCellEdit();
+                                if (e.key === 'Escape') setEditingCell(null);
+                              }}
+                              className="w-16 px-1 py-0.5 text-center border border-indigo-400 rounded bg-white text-xs font-bold"
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => startCellEdit(item.medicineId, 'step3_qty', qty)}
+                              className="px-1.5 py-0.5 rounded border border-dashed border-transparent hover:border-indigo-300 hover:bg-indigo-50 cursor-pointer"
+                              title="ক্লিক করে পরিমাণ পরিবর্তন করুন"
+                            >
+                              {qty} পিস
+                            </button>
+                          )}
                         </td>
                         <td className="py-2 px-2 text-center font-mono text-emerald-700 font-bold">
-                          {bonus > 0 ? `${bonus} পিস` : '-'}
+                          {isEdBonus ? (
+                            <input
+                              type="number"
+                              min="0"
+                              autoFocus
+                              value={editingVal}
+                              onChange={(e) => setEditingVal(e.target.value)}
+                              onBlur={commitCellEdit}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') commitCellEdit();
+                                if (e.key === 'Escape') setEditingCell(null);
+                              }}
+                              className="w-16 px-1 py-0.5 text-center border border-indigo-400 rounded bg-white text-xs font-bold"
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => startCellEdit(item.medicineId, 'step3_bonus', bonus)}
+                              className="px-1.5 py-0.5 rounded border border-dashed border-transparent hover:border-indigo-300 hover:bg-indigo-50 cursor-pointer"
+                              title="ক্লিক করে বোনাস সংখ্যা পরিবর্তন করুন"
+                            >
+                              {bonus > 0 ? `${bonus} পিস` : '0'}
+                            </button>
+                          )}
                         </td>
-                        <td className="py-2 px-3 text-right font-mono">৳{tp.toFixed(2)}</td>
-                        <td className="py-2 px-3 text-right font-mono">৳{singleVat.toFixed(2)}</td>
+                        <td className="py-2 px-3 text-right font-mono">
+                          {isEdTp ? (
+                            <input
+                              type="number"
+                              step="any"
+                              min="0.01"
+                              autoFocus
+                              value={editingVal}
+                              onChange={(e) => setEditingVal(e.target.value)}
+                              onBlur={commitCellEdit}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') commitCellEdit();
+                                if (e.key === 'Escape') setEditingCell(null);
+                              }}
+                              className="w-20 px-1 py-0.5 text-right border border-indigo-400 rounded bg-white text-xs font-bold"
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => startCellEdit(item.medicineId, 'step3_tp', tp.toFixed(2))}
+                              className="px-1.5 py-0.5 rounded border border-dashed border-transparent hover:border-indigo-300 hover:bg-indigo-50 cursor-pointer"
+                              title="ক্লিক করে সিঙ্গেল টিপি পরিবর্তন করুন"
+                            >
+                              ৳{tp.toFixed(2)}
+                            </button>
+                          )}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono">
+                          {isEdSingleVat ? (
+                            <input
+                              type="number"
+                              step="any"
+                              min="0"
+                              autoFocus
+                              value={editingVal}
+                              onChange={(e) => setEditingVal(e.target.value)}
+                              onBlur={commitCellEdit}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') commitCellEdit();
+                                if (e.key === 'Escape') setEditingCell(null);
+                              }}
+                              className="w-20 px-1 py-0.5 text-right border border-indigo-400 rounded bg-white text-xs font-bold"
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => startCellEdit(item.medicineId, 'step3_singleVat', singleVat.toFixed(2))}
+                              className="px-1.5 py-0.5 rounded border border-dashed border-transparent hover:border-indigo-300 hover:bg-indigo-50 cursor-pointer"
+                              title="ক্লিক করে সিঙ্গেল ভ্যাট পরিবর্তন করুন"
+                            >
+                              ৳{singleVat.toFixed(2)}
+                            </button>
+                          )}
+                        </td>
                         <td className="py-2 px-3 text-right font-mono font-bold text-slate-900">
-                          ৳{lineTp.toFixed(2)}
+                          {isEdLineTp ? (
+                            <input
+                              type="number"
+                              step="any"
+                              min="0"
+                              autoFocus
+                              value={editingVal}
+                              onChange={(e) => setEditingVal(e.target.value)}
+                              onBlur={commitCellEdit}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') commitCellEdit();
+                                if (e.key === 'Escape') setEditingCell(null);
+                              }}
+                              className="w-24 px-1 py-0.5 text-right border border-indigo-400 rounded bg-white text-xs font-bold"
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => startCellEdit(item.medicineId, 'step3_lineTp', lineTp.toFixed(2))}
+                              className="px-1.5 py-0.5 rounded border border-dashed border-transparent hover:border-indigo-300 hover:bg-indigo-50 cursor-pointer"
+                              title="ক্লিক করে মোট টিপি পরিবর্তন করুন"
+                            >
+                              ৳{lineTp.toFixed(2)}
+                            </button>
+                          )}
                         </td>
                         <td className="py-2 px-3 text-right font-mono font-bold text-indigo-800">
-                          ৳{lineVat.toFixed(2)}
+                          {isEdLineVat ? (
+                            <input
+                              type="number"
+                              step="any"
+                              min="0"
+                              autoFocus
+                              value={editingVal}
+                              onChange={(e) => setEditingVal(e.target.value)}
+                              onBlur={commitCellEdit}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') commitCellEdit();
+                                if (e.key === 'Escape') setEditingCell(null);
+                              }}
+                              className="w-24 px-1 py-0.5 text-right border border-indigo-400 rounded bg-white text-xs font-bold"
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => startCellEdit(item.medicineId, 'step3_lineVat', lineVat.toFixed(2))}
+                              className="px-1.5 py-0.5 rounded border border-dashed border-transparent hover:border-indigo-300 hover:bg-indigo-50 cursor-pointer"
+                              title="ক্লিক করে মোট ভ্যাট পরিবর্তন করুন"
+                            >
+                              ৳{lineVat.toFixed(2)}
+                            </button>
+                          )}
                         </td>
                         <td className="py-2 px-3 text-right font-mono font-black text-indigo-950">
-                          ৳{lineTotal.toFixed(2)}
+                          {isEdLineTotal ? (
+                            <input
+                              type="number"
+                              step="any"
+                              min="0"
+                              autoFocus
+                              value={editingVal}
+                              onChange={(e) => setEditingVal(e.target.value)}
+                              onBlur={commitCellEdit}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') commitCellEdit();
+                                if (e.key === 'Escape') setEditingCell(null);
+                              }}
+                              className="w-24 px-1 py-0.5 text-right border border-indigo-400 rounded bg-white text-xs font-bold"
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => startCellEdit(item.medicineId, 'step3_lineTotal', lineTotal.toFixed(2))}
+                              className="px-1.5 py-0.5 rounded border border-dashed border-transparent hover:border-indigo-300 hover:bg-indigo-50 cursor-pointer"
+                              title="ক্লিক করে লাইন মোট টাকা পরিবর্তন করুন"
+                            >
+                              ৳{lineTotal.toFixed(2)}
+                            </button>
+                          )}
                         </td>
                         <td className="py-2 px-2 text-center">
                           <button
@@ -1475,7 +2182,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
             className="bg-white p-4 sm:p-5 rounded-xl border border-indigo-200 shadow-xs space-y-4"
           >
             <div className="font-bold text-sm text-indigo-950 border-b border-indigo-100 pb-2 flex items-center justify-between">
-              <span>চূড়ান্ত বিল হিসাব ও পেমেন্ট সেটেলমেন্ট:</span>
+              <span>চূড়ান্ত বিল হিসাব ও পেমেন্ট সেটেলমেন্ট (যেকোনো টাকার উপর ক্লিক করে পরিবর্তনযোগ্য):</span>
               <span className="text-xs font-normal text-slate-500">
                 ইনভয়েস সম্পন্ন করলে স্টকে স্বয়ংক্রিয়ভাবে মাল যোগ হবে
               </span>
@@ -1484,16 +2191,60 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-indigo-50/50 p-4 rounded-xl border border-indigo-200 text-xs">
               <div>
                 <label className="block font-semibold text-slate-700">সর্বমোট টিপি (SubTotal TP ৳)</label>
-                <div className="text-lg font-black font-mono text-slate-900 mt-1">
-                  ৳{calculations.subTotalTp.toFixed(2)}
-                </div>
+                {editingCell?.medId === '__SUMMARY__' && editingCell.field === 'summary_subTotalTp' ? (
+                  <input
+                    type="number"
+                    step="any"
+                    min="0"
+                    autoFocus
+                    value={editingVal}
+                    onChange={(e) => setEditingVal(e.target.value)}
+                    onBlur={commitCellEdit}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitCellEdit();
+                      if (e.key === 'Escape') setEditingCell(null);
+                    }}
+                    className="mt-1 w-full px-2.5 py-1 border border-indigo-400 rounded bg-white font-mono font-black text-base"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => startCellEdit('__SUMMARY__', 'summary_subTotalTp', calculations.subTotalTp.toFixed(2))}
+                    className="text-lg font-black font-mono text-slate-900 mt-1 px-2 py-0.5 -ml-2 rounded border border-dashed border-transparent hover:border-indigo-400 hover:bg-white cursor-pointer"
+                    title="ক্লিক করে সর্বমোট টিপি পরিবর্তন করুন"
+                  >
+                    ৳{calculations.subTotalTp.toFixed(2)}
+                  </button>
+                )}
               </div>
 
               <div>
                 <label className="block font-semibold text-slate-700">সর্বমোট ভ্যাট (Total VAT ৳)</label>
-                <div className="text-lg font-black font-mono text-indigo-800 mt-1">
-                  ৳{calculations.totalVat.toFixed(2)}
-                </div>
+                {editingCell?.medId === '__SUMMARY__' && editingCell.field === 'summary_totalVat' ? (
+                  <input
+                    type="number"
+                    step="any"
+                    min="0"
+                    autoFocus
+                    value={editingVal}
+                    onChange={(e) => setEditingVal(e.target.value)}
+                    onBlur={commitCellEdit}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitCellEdit();
+                      if (e.key === 'Escape') setEditingCell(null);
+                    }}
+                    className="mt-1 w-full px-2.5 py-1 border border-indigo-400 rounded bg-white font-mono font-black text-base"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => startCellEdit('__SUMMARY__', 'summary_totalVat', calculations.totalVat.toFixed(2))}
+                    className="text-lg font-black font-mono text-indigo-800 mt-1 px-2 py-0.5 -ml-2 rounded border border-dashed border-transparent hover:border-indigo-400 hover:bg-white cursor-pointer"
+                    title="ক্লিক করে সর্বমোট ভ্যাট পরিবর্তন করুন"
+                  >
+                    ৳{calculations.totalVat.toFixed(2)}
+                  </button>
+                )}
               </div>
 
               <div>
@@ -1513,9 +2264,31 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
 
               <div>
                 <label className="block font-semibold text-slate-700">চূড়ান্ত প্রদেয় বিল (Grand Total ৳)</label>
-                <div className="text-xl font-black font-mono text-indigo-950 mt-1">
-                  ৳{calculations.grandTotal.toFixed(2)}
-                </div>
+                {editingCell?.medId === '__SUMMARY__' && editingCell.field === 'summary_grandTotal' ? (
+                  <input
+                    type="number"
+                    step="any"
+                    min="0"
+                    autoFocus
+                    value={editingVal}
+                    onChange={(e) => setEditingVal(e.target.value)}
+                    onBlur={commitCellEdit}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitCellEdit();
+                      if (e.key === 'Escape') setEditingCell(null);
+                    }}
+                    className="mt-1 w-full px-2.5 py-1 border border-indigo-400 rounded bg-white font-mono font-black text-lg"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => startCellEdit('__SUMMARY__', 'summary_grandTotal', calculations.grandTotal.toFixed(2))}
+                    className="text-xl font-black font-mono text-indigo-950 mt-1 px-2 py-0.5 -ml-2 rounded border border-dashed border-transparent hover:border-indigo-400 hover:bg-white cursor-pointer"
+                    title="ক্লিক করে চূড়ান্ত প্রদেয় বিল পরিবর্তন করুন"
+                  >
+                    ৳{calculations.grandTotal.toFixed(2)}
+                  </button>
+                )}
               </div>
             </div>
 

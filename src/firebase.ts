@@ -421,21 +421,25 @@ export async function signInShopCloudAccount(params?: {
     // Check Default Master Owner Credentials (works unconditionally on ANY device, IP or browser)
     const isDefaultOwnerPhoneOrEmail =
       cleanEmail === 'mhakbor2001@gmail.com' ||
+      targetPhoneDigits.endsWith('01629845006') ||
+      targetPhoneDigits.endsWith('1629845006') ||
       targetPhoneDigits.endsWith('01812358839') ||
       targetPhoneDigits.endsWith('1812358839') ||
       targetPhoneDigits.endsWith('01822487909') ||
       targetPhoneDigits.endsWith('1822487909') ||
       rawInput === '01812-358839' ||
       rawInput === '01822-487909' ||
+      rawInput === '01629-845006' ||
       rawInput.toLowerCase() === 'owner' ||
       rawInput === 'মালিক';
 
     if (isDefaultOwnerPhoneOrEmail && (cleanPassword === '000000' || cleanPassword === 'IqbalPharmacy#2026')) {
+      const is01629 = targetPhoneDigits.endsWith('01629845006') || targetPhoneDigits.endsWith('1629845006') || cleanEmail === 'mhakbor2001@gmail.com';
       const is01822 = targetPhoneDigits.endsWith('01822487909') || targetPhoneDigits.endsWith('1822487909') || rawInput.includes('01822');
       firebaseUid = is01822 ? 'shop_owner_01822487909' : 'shop_owner_default';
-      displayName = 'ইকবাল মাহমুদ (Owner)';
+      displayName = is01629 ? 'অ্যাডমিন (01629845006)' : 'ইকবাল মাহমুদ (Owner)';
       shopName = 'ইকবাল ফার্মেসী';
-      resolvedEmail = is01822 ? '01822487909@iqbalpharmacy.bd' : '01812358839@iqbalpharmacy.bd';
+      resolvedEmail = is01822 ? '01822487909@iqbalpharmacy.bd' : is01629 ? 'mhakbor2001@gmail.com' : '01812358839@iqbalpharmacy.bd';
     } else if (matchedCloudUser) {
       const isOwnerAccount = matchedCloudUser.role === 'owner' || isDefaultOwnerPhoneOrEmail;
       const isPasswordValid =
@@ -520,6 +524,7 @@ export async function signInShopCloudAccount(params?: {
   const isMasterResolved =
     resolvedEmail.toLowerCase() === 'mhakbor2001@gmail.com' ||
     resolvedEmail.toLowerCase() === 'iqbalmahmud498@gmail.com' ||
+    resolvedBd11 === '01629845006' ||
     resolvedBd11 === '01812358839';
   const resolvedShopId = isMasterResolved
     ? 'shop_iqbal_pharmacy'
@@ -640,6 +645,7 @@ export async function registerNewShopOwnerAccount(params: {
   const isMasterAccount =
     cleanEmail === 'mhakbor2001@gmail.com' ||
     cleanEmail === 'iqbalmahmud498@gmail.com' ||
+    bd11 === '01629845006' ||
     bd11 === '01812358839';
   const targetShopId = isMasterAccount
     ? 'shop_iqbal_pharmacy'
@@ -662,6 +668,8 @@ export async function registerNewShopOwnerAccount(params: {
       password: cleanPassword,
       role: 'owner',
       roleTitle: 'owner',
+      status: isMasterAccount ? 'approved' : 'pending_approval',
+      isApproved: isMasterAccount,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
       updatedAtMs: Date.now(),

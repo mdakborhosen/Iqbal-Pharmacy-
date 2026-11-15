@@ -39,6 +39,7 @@ import { AppLanguage } from '../i18n';
 import {
   CustomInvoiceSettings,
   isMandatoryOwner,
+  isMasterAppOwner,
   ShopBranch,
   ShopProfile,
   ShopRegistration,
@@ -95,7 +96,13 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
   onRejectShopRegistration,
 }) => {
   // Navigation Sub-Tabs
-  const [activeTab, setActiveTab] = useState<'staff' | 'branches' | 'invoice_designer' | 'admin_approvals'>('staff');
+  const [activeTab, setActiveTab] = useState<'staff' | 'branches' | 'invoice_designer' | 'admin_approvals'>(() =>
+    isCloudLoggedIn &&
+    (isMasterAppOwner(cloudSession) || isMasterAppOwner(activeStaff)) &&
+    shopRegistrations.some((r) => r.status === 'pending_approval')
+      ? 'admin_approvals'
+      : 'staff'
+  );
 
   // Multi-Institution / Branches State
   const defaultBranches: ShopBranch[] = useMemo(() => {
@@ -192,12 +199,10 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
     setAddress(shopProfile.address || '');
   }, [shopProfile, defaultBranches, defaultInvoiceSettings]);
 
-  // Check if current user is Master App Owner (must be actively logged in)
+  // Check if current user is Master App Owner (01629845006 / mhakbor2001@gmail.com / 01812358839)
   const isAppOwner =
     isCloudLoggedIn &&
-    (cloudSession?.email?.toLowerCase() === 'mhakbor2001@gmail.com' ||
-      activeStaff?.email?.toLowerCase() === 'mhakbor2001@gmail.com' ||
-      activeStaff?.id === 'staff-owner-1');
+    (isMasterAppOwner(cloudSession) || isMasterAppOwner(activeStaff));
 
   // Toggle table password visibility
   const toggleTablePassword = (staffId: string) => {
@@ -1351,7 +1356,7 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
       {/* TAB 4: APP OWNER SHOP APPROVALS DASHBOARD (Visible to Master Owner) */}
       {activeTab === 'admin_approvals' && isAppOwner && (
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs space-y-4 p-5">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4 text-rose-700" />
@@ -1360,6 +1365,14 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
               <p className="text-xs text-slate-500 mt-0.5">
                 নতুন নিবন্ধিত শপ একাউন্ট অনুমোদন দিলে তারা সফটওয়্যারে কাজ করার সম্পূর্ণ এক্সেস পাবে
               </p>
+            </div>
+            <div className="flex items-center gap-2 text-xs">
+              <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 font-bold border border-amber-200">
+                অপেক্ষমান: {shopRegistrations.filter((r) => r.status === 'pending_approval').length}টি
+              </span>
+              <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold border border-emerald-200">
+                অনুমোদিত: {shopRegistrations.filter((r) => r.status === 'approved').length}টি
+              </span>
             </div>
           </div>
 
@@ -1398,7 +1411,7 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
                           </span>
                         ) : reg.status === 'rejected' ? (
                           <span className="px-2 py-0.5 text-[10px] font-bold bg-rose-100 text-rose-800 rounded-full border border-rose-300">
-                            স্থগিত (Suspended)
+                            ক্যানসেল / বাতিল (Cancelled)
                           </span>
                         ) : (
                           <span className="px-2 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-800 rounded-full border border-amber-300">
@@ -1417,16 +1430,16 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
                               onClick={() => onApproveShopRegistration(reg.id)}
                               className="px-3 py-1 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded text-xs cursor-pointer shadow-2xs"
                             >
-                              অনুমোদন করুন
+                              এপ্রুভ করুন (Approve)
                             </button>
                           )}
-                          {reg.status === 'approved' && onRejectShopRegistration && (
+                          {reg.status !== 'rejected' && onRejectShopRegistration && (
                             <button
                               type="button"
                               onClick={() => onRejectShopRegistration(reg.id)}
                               className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold border border-rose-200 rounded text-xs cursor-pointer"
                             >
-                              স্থগিত করুন
+                              {reg.status === 'pending_approval' ? 'ক্যানসেল করুন (Cancel)' : 'স্থগিত / ক্যানসেল'}
                             </button>
                           )}
                         </div>

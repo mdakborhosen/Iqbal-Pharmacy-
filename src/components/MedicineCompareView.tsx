@@ -137,7 +137,7 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
       setMedexStatusMsg('medex.com.bd থেকে সরাসরি অনুসন্ধান ও বিক্রয়মূল্য যাচাই হচ্ছে...');
       try {
         const items = await onSearchMedexLive(q, {
-          limit: 8,
+          limit: 20,
           refresh: forceRefresh,
           signal: controller.signal,
         });
