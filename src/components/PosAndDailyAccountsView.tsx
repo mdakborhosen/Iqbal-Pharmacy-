@@ -39,6 +39,7 @@ import {
   getInvoiceFormPrefix,
   getShortDosageForm,
   matchesMedicineQuery,
+  mergeMedexItemWithCatalogMatch,
   numberToBanglaWords,
   parseTransactionItemsDetailed,
   resolveCanonicalMedicineCompany,
@@ -689,22 +690,18 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
       const key = `${mx.brandName.trim().toLowerCase()}__${(mx.strength || '').trim().toLowerCase()}__${getShortDosageForm(mx.dosageForm).toLowerCase()}`;
       if (!seen.has(key)) {
         seen.add(key);
-        const dbMatch = localMatches.find(
+      const dbMatch =
+        localMatches.find(
+          (l) =>
+            (mx.medexBrandId && l.medexBrandId === mx.medexBrandId) ||
+            `${l.brandName.trim().toLowerCase()}__${(l.strength || '').trim().toLowerCase()}__${getShortDosageForm(l.dosageForm).toLowerCase()}` === key
+        ) ||
+        expandedInvoiceCatalog.find(
           (l) =>
             (mx.medexBrandId && l.medexBrandId === mx.medexBrandId) ||
             `${l.brandName.trim().toLowerCase()}__${(l.strength || '').trim().toLowerCase()}__${getShortDosageForm(l.dosageForm).toLowerCase()}` === key
         );
-        merged.push(
-          dbMatch
-            ? {
-                ...dbMatch,
-                unitPrice: mx.unitPrice > 0 ? mx.unitPrice : dbMatch.unitPrice,
-                stripPrice: mx.stripPrice > 0 ? mx.stripPrice : dbMatch.stripPrice,
-                medexUrl: mx.medexUrl || dbMatch.medexUrl,
-                source: 'medex',
-              }
-            : mx
-        );
+      merged.push(mergeMedexItemWithCatalogMatch(mx, dbMatch));
       }
     }
     for (const loc of localMatches) {
@@ -717,11 +714,65 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     return merged.slice(0, 28);
   }, [expandedInvoiceCatalog, medSearch, medexLiveSaleResults]);
 
+  const [medexLivePurchaseResults, setMedexLivePurchaseResults] = useState<MedicineCatalogItem[]>([]);
+  useEffect(() => {
+    const q = purMedSearch.trim();
+    if (!onSearchMedexLive || q.length < 2) {
+      setMedexLivePurchaseResults([]);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const items = await onSearchMedexLive(q, { limit: 20, signal: controller.signal });
+        if (!controller.signal.aborted) {
+          setMedexLivePurchaseResults(items);
+        }
+      } catch {
+        // fallback cleanly
+      }
+    }, 400);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [purMedSearch]);
+
   const quickSearchPurchaseMedicines = useMemo(() => {
     const q = purMedSearch.trim();
     if (!q) return expandedInvoiceCatalog.slice(0, 16);
-    return searchCatalogVariantsForInvoice(expandedInvoiceCatalog, q, 24);
-  }, [expandedInvoiceCatalog, purMedSearch]);
+    const localMatches = searchCatalogVariantsForInvoice(expandedInvoiceCatalog, q, 24);
+    if (medexLivePurchaseResults.length === 0) return localMatches;
+
+    const merged: MedicineCatalogItem[] = [];
+    const seen = new Set<string>();
+    for (const mx of medexLivePurchaseResults) {
+      const key = `${mx.brandName.trim().toLowerCase()}__${(mx.strength || '').trim().toLowerCase()}__${getShortDosageForm(mx.dosageForm).toLowerCase()}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        const dbMatch =
+          localMatches.find(
+            (l) =>
+              (mx.medexBrandId && l.medexBrandId === mx.medexBrandId) ||
+              `${l.brandName.trim().toLowerCase()}__${(l.strength || '').trim().toLowerCase()}__${getShortDosageForm(l.dosageForm).toLowerCase()}` === key
+          ) ||
+          expandedInvoiceCatalog.find(
+            (l) =>
+              (mx.medexBrandId && l.medexBrandId === mx.medexBrandId) ||
+              `${l.brandName.trim().toLowerCase()}__${(l.strength || '').trim().toLowerCase()}__${getShortDosageForm(l.dosageForm).toLowerCase()}` === key
+          );
+        merged.push(mergeMedexItemWithCatalogMatch(mx, dbMatch));
+      }
+    }
+    for (const loc of localMatches) {
+      const key = `${loc.brandName.trim().toLowerCase()}__${(loc.strength || '').trim().toLowerCase()}__${getShortDosageForm(loc.dosageForm).toLowerCase()}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(loc);
+      }
+    }
+    return merged.slice(0, 28);
+  }, [expandedInvoiceCatalog, purMedSearch, medexLivePurchaseResults]);
 
   const filteredPurchaseCompanies = useMemo(() => {
     const q = purCompanySearch.trim().toLowerCase();

@@ -45,6 +45,7 @@ import {
   getUnitLabelForForm,
   isCoreDatabaseMedicineId,
   matchesMedicineQuery,
+  mergeMedexItemWithCatalogMatch,
   searchAndRankMedicines,
   formatCleanMoney,
 } from '../data/bdMedicines';
@@ -317,23 +318,18 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
       if (!seenKeys.has(key)) {
         seenKeys.add(key);
         // Prefer canonical DB item if it already carries the synced MedEx price & variants
-        const dbMatch = rankedLocal.find(
-          (l) =>
-            (mx.medexBrandId && l.medexBrandId === mx.medexBrandId) ||
-            `${l.brandName.trim().toLowerCase()}__${(l.strength || '').trim().toLowerCase()}__${getShortDosageForm(l.dosageForm).toLowerCase()}` === key
-        );
-        if (dbMatch) {
-          merged.push({
-            ...dbMatch,
-            unitPrice: mx.unitPrice > 0 ? mx.unitPrice : dbMatch.unitPrice,
-            stripPrice: mx.stripPrice > 0 ? mx.stripPrice : dbMatch.stripPrice,
-            medexUrl: mx.medexUrl || dbMatch.medexUrl,
-            medexBrandId: mx.medexBrandId || dbMatch.medexBrandId,
-            source: 'medex',
-          });
-        } else {
-          merged.push(mx);
-        }
+        const dbMatch =
+          rankedLocal.find(
+            (l) =>
+              (mx.medexBrandId && l.medexBrandId === mx.medexBrandId) ||
+              `${l.brandName.trim().toLowerCase()}__${(l.strength || '').trim().toLowerCase()}__${getShortDosageForm(l.dosageForm).toLowerCase()}` === key
+          ) ||
+          catalog.find(
+            (l) =>
+              (mx.medexBrandId && l.medexBrandId === mx.medexBrandId) ||
+              `${l.brandName.trim().toLowerCase()}__${(l.strength || '').trim().toLowerCase()}__${getShortDosageForm(l.dosageForm).toLowerCase()}` === key
+          );
+        merged.push(mergeMedexItemWithCatalogMatch(mx, dbMatch));
       }
     }
 

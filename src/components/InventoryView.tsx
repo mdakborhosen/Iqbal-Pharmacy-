@@ -30,6 +30,7 @@ import {
   getUnitLabelForForm,
   isCoreDatabaseMedicineId,
   matchesMedicineQuery,
+  mergeMedexItemWithCatalogMatch,
   normalizePharmaSearchText,
   searchAndRankMedicines,
   searchCatalogVariantsForInvoice,
@@ -271,10 +272,35 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
     const expandedCatalog = expandCatalogWithVariantsForSearch(catalog);
     const localCatalogMatches = searchCatalogVariantsForInvoice(expandedCatalog, searchQuery, 45);
-    const catalogMatches =
-      medexLiveSearchItems.length > 0 && !showModal
-        ? [...medexLiveSearchItems, ...localCatalogMatches]
-        : localCatalogMatches;
+    const catalogMatches: MedicineCatalogItem[] = [];
+    const seenCatalogKeys = new Set<string>();
+    if (!showModal && medexLiveSearchItems.length > 0) {
+      for (const mx of medexLiveSearchItems) {
+        const key = `${mx.brandName.trim().toLowerCase()}__${(mx.strength || '').trim().toLowerCase()}__${getShortDosageForm(mx.dosageForm).toLowerCase()}`;
+        if (!seenCatalogKeys.has(key)) {
+          seenCatalogKeys.add(key);
+          const dbMatch =
+            localCatalogMatches.find(
+              (l) =>
+                (mx.medexBrandId && l.medexBrandId === mx.medexBrandId) ||
+                `${l.brandName.trim().toLowerCase()}__${(l.strength || '').trim().toLowerCase()}__${getShortDosageForm(l.dosageForm).toLowerCase()}` === key
+            ) ||
+            expandedCatalog.find(
+              (l) =>
+                (mx.medexBrandId && l.medexBrandId === mx.medexBrandId) ||
+                `${l.brandName.trim().toLowerCase()}__${(l.strength || '').trim().toLowerCase()}__${getShortDosageForm(l.dosageForm).toLowerCase()}` === key
+            );
+          catalogMatches.push(mergeMedexItemWithCatalogMatch(mx, dbMatch));
+        }
+      }
+    }
+    for (const loc of localCatalogMatches) {
+      const key = `${loc.brandName.trim().toLowerCase()}__${(loc.strength || '').trim().toLowerCase()}__${getShortDosageForm(loc.dosageForm).toLowerCase()}`;
+      if (!seenCatalogKeys.has(key)) {
+        seenCatalogKeys.add(key);
+        catalogMatches.push(loc);
+      }
+    }
     const virtualCatalogItems: InventoryItem[] = [];
 
     for (const med of catalogMatches) {
@@ -408,15 +434,32 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     const merged: MedicineCatalogItem[] = [];
     const seen = new Set<string>();
     for (const mx of medexLiveSearchItems) {
-      if (modalCompanyFilter !== 'ALL' && mx.companyName !== modalCompanyFilter) continue;
-      const key = `${mx.brandName.trim().toLowerCase()}__${mx.strength.trim().toLowerCase()}__${getShortDosageForm(mx.dosageForm).toLowerCase()}`;
+      const key = `${mx.brandName.trim().toLowerCase()}__${(mx.strength || '').trim().toLowerCase()}__${getShortDosageForm(mx.dosageForm).toLowerCase()}`;
+      const dbMatch =
+        localMatches.find(
+          (l) =>
+            (mx.medexBrandId && l.medexBrandId === mx.medexBrandId) ||
+            `${l.brandName.trim().toLowerCase()}__${(l.strength || '').trim().toLowerCase()}__${getShortDosageForm(l.dosageForm).toLowerCase()}` === key
+        ) ||
+        expandedModalCatalog.find(
+          (l) =>
+            (mx.medexBrandId && l.medexBrandId === mx.medexBrandId) ||
+            `${l.brandName.trim().toLowerCase()}__${(l.strength || '').trim().toLowerCase()}__${getShortDosageForm(l.dosageForm).toLowerCase()}` === key
+        );
+      const mergedItem = mergeMedexItemWithCatalogMatch(mx, dbMatch);
+      if (
+        modalCompanyFilter !== 'ALL' &&
+        mergedItem.companyName.trim().toLowerCase() !== modalCompanyFilter.trim().toLowerCase()
+      ) {
+        continue;
+      }
       if (!seen.has(key)) {
         seen.add(key);
-        merged.push(mx);
+        merged.push(mergedItem);
       }
     }
     for (const loc of localMatches) {
-      const key = `${loc.brandName.trim().toLowerCase()}__${loc.strength.trim().toLowerCase()}__${getShortDosageForm(loc.dosageForm).toLowerCase()}`;
+      const key = `${loc.brandName.trim().toLowerCase()}__${(loc.strength || '').trim().toLowerCase()}__${getShortDosageForm(loc.dosageForm).toLowerCase()}`;
       if (!seen.has(key)) {
         seen.add(key);
         merged.push(loc);
@@ -533,7 +576,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
   const handleCatalogPick = (medId: string) => {
     setSelectedMedId(medId);
-    const found = catalog.find((c) => c.id === medId);
+    const found =
+      filteredModalCatalog.find((c) => c.id === medId) ||
+      medexLiveSearchItems.find((c) => c.id === medId) ||
+      catalog.find((c) => c.id === medId);
     if (found) {
       applyMedicineSelection(found);
     }

@@ -3,6 +3,13 @@ import fs from 'fs';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
+import {
+  MEDEX_BASE_URL,
+  type MedexBrandFetchResult,
+  defaultMedexFetchHtml,
+  parseMedexBrandDetailHtml,
+  searchMedexLiveUsingFetcher,
+} from './src/utils/medexEngine.ts';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const DB_FILE_PATH = path.resolve(process.cwd(), 'pharmacy-persistent-db.json');
@@ -844,439 +851,35 @@ Return STRICTLY a JSON object matching these keys.`;
   // ============================================================================
   // Live MedEx (https://medex.com.bd/) Direct Search & Price Sync Engine
   // ============================================================================
-  const MEDEX_BASE_URL = 'https://medex.com.bd';
-  const medexBrandCache = new Map<string, { fetchedAtMs: number; data: any }>();
+  const medexBrandCache = new Map<string, { fetchedAtMs: number; data: MedexBrandFetchResult }>();
   const medexSearchCache = new Map<string, { fetchedAtMs: number; items: any[] }>();
   const MEDEX_BRAND_CACHE_TTL_MS = 60 * 1000;
   const MEDEX_SEARCH_CACHE_TTL_MS = 90 * 1000;
 
-  function decodeHtmlEntities(input: string): string {
-    if (!input) return '';
-    return input
-      .replace(/&#(\d+);/g, (_m, dec) => String.fromCharCode(parseInt(dec, 10)))
-      .replace(/&#x([0-9a-fA-F]+);/g, (_m, hex) => String.fromCharCode(parseInt(hex, 16)))
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&#0?39;|&apos;/g, "'")
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&times;/g, '×')
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
-
-  function stripHtmlTags(html: string): string {
-    return decodeHtmlEntities(String(html || '').replace(/<[^>]+>/g, ' '));
-  }
-
-  function mapMedexDosageForm(rawForm: string, brandHint = ''): string {
-    const f = `${rawForm} ${brandHint}`.toLowerCase();
-    if (f.includes('eye') && f.includes('drop')) return 'Eye Drop';
-    if (f.includes('ear') && f.includes('drop')) return 'Ear Drop';
-    if (f.includes('nasal') && f.includes('drop')) return 'Nasal Drop';
-    if (f.includes('ophthalmic') || f.includes('eye')) return 'Eye Drop';
-    if (f.includes('otic')) return 'Ear Drop';
-    if (f.includes('nasal spray')) return 'Nasal Drop';
-    if (f.includes('drop')) return 'Drops';
-    if (f.includes('capsule')) return 'Capsule';
-    if (f.includes('tablet')) return 'Tablet';
-    if (f.includes('syrup')) return 'Syrup';
-    if (f.includes('suspension')) return 'Suspension';
-    if (f.includes('suppository')) return 'Suppository';
-    if (f.includes('inhaler') || f.includes('rotacap')) return 'Inhaler';
-    if (f.includes('sachet') || f.includes('powder for oral')) return 'Sachet';
-    if (f.includes('injection') || f.includes('infusion') || f.includes('iv ') || f.includes('im ')) return 'Injection';
-    if (f.includes('gel') || f.includes('cream') || f.includes('ointment') || f.includes('lotion')) return 'Gel';
-    return 'Tablet';
-  }
-
-  async function fetchMedexHtml(url: string, timeoutMs = 7000): Promise<string> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const resp = await fetch(url, {
-        method: 'GET',
-        signal: controller.signal,
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9,bn;q=0.8',
-          Referer: `${MEDEX_BASE_URL}/`,
-          'Cache-Control': 'no-cache',
-        },
-      });
-      if (!resp.ok) {
-        throw new Error(`MedEx HTTP ${resp.status}`);
-      }
-      return await resp.text();
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  function parseMedexBrandDetailHtml(html: string, url: string) {
-    const idMatch = url.match(/\/brands\/(\d+)/);
-    const medexBrandId = idMatch ? idMatch[1] : '';
-    const nowMs = Date.now();
-
-    const h1Match = html.match(/<h1[^>]*class="[^"]*page-heading-1-l[^"]*brand[^"]*"[^>]*>([\s\S]*?)<\/h1>/i);
-    const h1Inner = h1Match ? h1Match[1] : '';
-    const subtitleMatch = h1Inner.match(/<small[^>]*>([\s\S]*?)<\/small>/i);
-    const rawDosageForm = subtitleMatch ? stripHtmlTags(subtitleMatch[1]) : '';
-    const brandName = stripHtmlTags(h1Inner.replace(/<small[\s\S]*?<\/small>/gi, ''));
-
-    if (!brandName) return null;
-
-    const genericMatch = html.match(/<div[^>]*title="Generic Name"[^>]*>([\s\S]*?)<\/div>/i);
-    const genericName = genericMatch ? stripHtmlTags(genericMatch[1]) : brandName;
-
-    const strengthMatch = html.match(/<div[^>]*title="Strength"[^>]*>([\s\S]*?)<\/div>/i);
-    let strength = strengthMatch ? stripHtmlTags(strengthMatch[1]) : '';
-
-    const companyMatch = html.match(/<div[^>]*title="Manufactured by"[^>]*>([\s\S]*?)<\/div>/i);
-    let companyName = companyMatch ? stripHtmlTags(companyMatch[1]) : 'Unknown Pharma';
-    companyName = companyName.replace(/\s*\(See [^)]+\)\s*/gi, '').trim();
-
-    const dosageForm = mapMedexDosageForm(rawDosageForm, brandName);
-
-    let unitPrice = 0;
-    let stripPrice = 0;
-    let unitsPerStrip = dosageForm === 'Tablet' || dosageForm === 'Capsule' ? 10 : 1;
-    let packSize = '';
-
-    const pkgSectionMatch = html.match(/class="[^"]*packages-wrapper[^"]*"([\s\S]{0,6000})/i);
-    const rawPkgChunk = pkgSectionMatch ? pkgSectionMatch[1] : '';
-    const pkgChunk = rawPkgChunk.split(/Also available as:|id="indications"|class="[^"]*brand-indications/i)[0] || '';
-    if (pkgChunk) {
-      const containerBlocks = pkgChunk.split(/<div[^>]*class="[^"]*package-container[^"]*"[^>]*>/i).slice(1);
-      const containerTexts = containerBlocks
-        .map((blk) => stripHtmlTags(blk.split(/<div[^>]*class="[^"]*col-xs-12/i)[0]))
-        .filter(Boolean);
-      const fullPkgText = containerTexts.length > 0 ? containerTexts.join(' | ') : stripHtmlTags(pkgChunk);
-
-      const unitMatch = fullPkgText.match(/Unit\s*Price:\s*(?:৳|Tk\.?|BDT)?\s*([0-9,]+(?:\.[0-9]+)?)/i);
-      if (unitMatch) {
-        unitPrice = parseFloat(unitMatch[1].replace(/,/g, '')) || 0;
-      }
-
-      const stripMatch = fullPkgText.match(/Strip\s*Price:\s*(?:৳|Tk\.?|BDT)?\s*([0-9,]+(?:\.[0-9]+)?)/i);
-      if (stripMatch) {
-        stripPrice = parseFloat(stripMatch[1].replace(/,/g, '')) || 0;
-      }
-
-      const packInfoMatch = fullPkgText.match(/\((\d+)\s*[x×]\s*(\d+)\s*:\s*(?:৳|Tk\.?|BDT)?\s*([0-9,.]+)\)/i);
-      if (packInfoMatch) {
-        const boxes = parseInt(packInfoMatch[1], 10) || 1;
-        const perStrip = parseInt(packInfoMatch[2], 10) || 10;
-        const totalPcs = boxes * perStrip;
-        unitsPerStrip = perStrip;
-        packSize = `${boxes} × ${perStrip} (${totalPcs} pcs)`;
-      }
-
-      // Syrups / Drops / Inhalers / Bottles / Tubes / Injections
-      if (unitPrice <= 0) {
-        for (const cText of containerTexts) {
-          const bottleMatch = cText.match(/^([^:|]+):\s*(?:৳|Tk\.?|BDT)?\s*([0-9,]+(?:\.[0-9]+)?)/i);
-          if (bottleMatch) {
-            const label = bottleMatch[1].trim();
-            const price = parseFloat(bottleMatch[2].replace(/,/g, '')) || 0;
-            if (price > 0 && !/price unavailable/i.test(cText)) {
-              unitPrice = price;
-              stripPrice = price;
-              unitsPerStrip = 1;
-              if (!packSize) packSize = label;
-              if (!strength) {
-                const volMatch = label.match(/(\d+(?:\.\d+)?\s*(?:ml|mg|gm|g|mcg))/i);
-                if (volMatch) strength = volMatch[1];
-              }
-              break;
-            }
-          }
-        }
-      }
-    }
-
-    if (unitPrice > 0 && stripPrice <= 0) {
-      if (unitsPerStrip > 1 && (dosageForm === 'Tablet' || dosageForm === 'Capsule')) {
-        stripPrice = Number((unitPrice * unitsPerStrip).toFixed(2));
-      } else {
-        stripPrice = unitPrice;
-      }
-    } else if (stripPrice > 0 && unitPrice <= 0 && unitsPerStrip > 0) {
-      unitPrice = Number((stripPrice / unitsPerStrip).toFixed(2));
-    }
-
-    if (unitPrice > 0 && stripPrice > 0 && unitPrice !== stripPrice) {
-      const ratio = Math.round(stripPrice / unitPrice);
-      if (ratio >= 2 && ratio <= 50) {
-        unitsPerStrip = ratio;
-      }
-    }
-
-    if (!packSize) {
-      packSize =
-        dosageForm === 'Tablet' || dosageForm === 'Capsule'
-          ? `10 × ${unitsPerStrip} (${10 * unitsPerStrip} pcs)`
-          : '1 Pack / Bottle';
-    }
-    if (!strength) {
-      strength = 'Standard';
-    }
-
-    let indication = 'চিকিৎসকের পরামর্শ অনুযায়ী সেব্য';
-    const indMatch = html.match(/id="indications"[\s\S]{0,600}<div[^>]*class="[^"]*ac-body[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
-    if (indMatch) {
-      const cleaned = stripHtmlTags(indMatch[1]);
-      if (cleaned) {
-        indication = cleaned.length > 220 ? `${cleaned.slice(0, 217)}...` : cleaned;
-      }
-    }
-
-    return {
-      id: medexBrandId ? `medex_${medexBrandId}` : `medex_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      brandName,
-      genericName,
-      companyName,
-      strength,
-      dosageForm,
-      packSize,
-      unitsPerStrip,
-      unitPrice: Number(unitPrice.toFixed(2)),
-      stripPrice: Number(stripPrice.toFixed(2)),
-      purchasePrice: unitPrice > 0 ? Number((unitPrice * 0.88).toFixed(2)) : 0,
-      therapeuticClass: rawDosageForm || 'MedEx Verified Medicine',
-      indication,
-      darNo: medexBrandId ? `MEDEX-${medexBrandId}` : 'MEDEX-BD',
-      medexBrandId,
-      medexUrl: url,
-      medexLastSyncedMs: nowMs,
-      source: 'medex' as const,
-    };
-  }
-
-  function extractSiblingBrandUrlsFromHtml(html: string): string[] {
-    const urls = new Set<string>();
-    const anchorMatches = html.matchAll(/<a\b[^>]*btn-sibling-brands[^>]*>/gi);
-    for (const m of anchorMatches) {
-      const tag = m[0];
-      const hrefMatch = tag.match(/href=["']([^"'#]+)["']/i);
-      if (hrefMatch) {
-        const raw = hrefMatch[1].split('?')[0];
-        if (/\/brands\/\d+\//i.test(raw)) {
-          const full = raw.startsWith('http') ? raw : `${MEDEX_BASE_URL}${raw.startsWith('/') ? '' : '/'}${raw}`;
-          urls.add(full);
-        }
-      }
-    }
-    return Array.from(urls);
-  }
-
-  async function fetchMedexBrandDetailWithSiblings(
-    url: string,
-    bypassCache = false
-  ): Promise<{ item: any; siblingUrls: string[] } | null> {
-    const cleanUrl = (url.startsWith('http') ? url : `${MEDEX_BASE_URL}${url.startsWith('/') ? '' : '/'}${url}`).split('?')[0];
+  async function fetchMedexBrandDetail(url: string, bypassCache = false) {
+    const cleanUrl = (
+      url.startsWith('http') ? url : `${MEDEX_BASE_URL}${url.startsWith('/') ? '' : '/'}${url}`
+    ).split('?')[0];
     const cached = medexBrandCache.get(cleanUrl);
     if (!bypassCache && cached && Date.now() - cached.fetchedAtMs < MEDEX_BRAND_CACHE_TTL_MS) {
-      return cached.data;
+      return cached.data.item;
     }
-    const html = await fetchMedexHtml(cleanUrl, 6500);
+    const html = await defaultMedexFetchHtml(cleanUrl, 6500);
     const parsed = parseMedexBrandDetailHtml(html, cleanUrl);
     if (!parsed) return null;
-    const siblingUrls = extractSiblingBrandUrlsFromHtml(html);
-    const result = { item: parsed, siblingUrls };
-    medexBrandCache.set(cleanUrl, { fetchedAtMs: Date.now(), data: result });
-    return result;
+    return parsed;
   }
 
-  async function fetchMedexBrandDetail(url: string, bypassCache = false) {
-    const res = await fetchMedexBrandDetailWithSiblings(url, bypassCache);
-    return res ? res.item : null;
-  }
-
-  function extractBrandUrlsFromHtml(html: string): string[] {
-    const urls = new Set<string>();
-    const matches = html.matchAll(/href=["'](https?:\/\/medex\.com\.bd\/brands\/\d+\/[^"'#?]+|\/brands\/\d+\/[^"'#?]+)["']/gi);
-    for (const m of matches) {
-      const raw = m[1].split('?')[0];
-      const full = raw.startsWith('http') ? raw : `${MEDEX_BASE_URL}${raw}`;
-      urls.add(full);
-    }
-    return Array.from(urls);
-  }
-
-  function extractGenericBrandListUrls(html: string): string[] {
-    const urls = new Set<string>();
-    const matches = html.matchAll(/href=["'](https?:\/\/medex\.com\.bd\/generics\/\d+\/[^"'#?]+|\/generics\/\d+\/[^"'#?]+)["']/gi);
-    for (const m of matches) {
-      const raw = m[1].split('?')[0];
-      const full = raw.startsWith('http') ? raw : `${MEDEX_BASE_URL}${raw}`;
-      const listUrl = full.endsWith('/brand-names') ? full : `${full}/brand-names`;
-      urls.add(listUrl);
-    }
-    return Array.from(urls);
-  }
-
-  async function searchMedexLive(query: string, limit = 20, bypassCache = false) {
-    const cleanQ = query.trim();
-    if (cleanQ.length < 2) return [];
-    const safeLimit = Math.min(Math.max(limit, 1), 28);
-    const cacheKey = `${cleanQ.toLowerCase()}::${safeLimit}`;
-
-    if (!bypassCache) {
-      const cached = medexSearchCache.get(cacheKey);
-      if (cached && Date.now() - cached.fetchedAtMs < MEDEX_SEARCH_CACHE_TTL_MS) {
-        return cached.items;
-      }
-    }
-
-    const brandUrlSet = new Set<string>();
-    const addUrls = (list: string[]) => {
-      for (const u of list) brandUrlSet.add(u);
-    };
-
-    // Normalized query variants (e.g., stripping trailing strength/dosage words when searching)
-    const normalizedRoot = cleanQ
-      .replace(/[-_/]+/g, ' ')
-      .replace(/\b(\d+(?:\.\d+)?\s*(?:mg|ml|gm|g|mcg|iu|%|tab|tablet|cap|capsule|syr|syrup|susp|suspension|inj|injection|drop|drops|gel|cream|ointment|mups|xr|sr|cr|ds|plus|extra))\b/gi, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    // 1. Fetch Page 1 (brands + general search in parallel)
-    const [brandsRes, generalRes] = await Promise.allSettled([
-      fetchMedexHtml(`${MEDEX_BASE_URL}/search?search=${encodeURIComponent(cleanQ)}&type=brands`, 7500),
-      fetchMedexHtml(`${MEDEX_BASE_URL}/search?search=${encodeURIComponent(cleanQ)}&type=search`, 7500),
-    ]);
-
-    const brandsHtml = brandsRes.status === 'fulfilled' ? brandsRes.value : '';
-    const generalHtml = generalRes.status === 'fulfilled' ? generalRes.value : '';
-
-    if (brandsHtml) addUrls(extractBrandUrlsFromHtml(brandsHtml));
-    if (generalHtml) addUrls(extractBrandUrlsFromHtml(generalHtml));
-
-    // 2. If pagination (?page=2) exists on brands search and we want more variants, fetch page 2 too
-    if (brandsHtml && /page=2\b/i.test(brandsHtml) && brandUrlSet.size < safeLimit) {
-      try {
-        const page2Html = await fetchMedexHtml(
-          `${MEDEX_BASE_URL}/search?search=${encodeURIComponent(cleanQ)}&type=brands&page=2`,
-          6500
-        );
-        addUrls(extractBrandUrlsFromHtml(page2Html));
-      } catch {
-        // ignore pagination fetch error
-      }
-    }
-
-    // 3. If generic match appeared (e.g. searching "Omeprazole" or "Azithromycin"), load its brand names
-    if (generalHtml && brandUrlSet.size < 6) {
-      const genericBrandPages = extractGenericBrandListUrls(generalHtml).slice(0, 2);
-      if (genericBrandPages.length > 0) {
-        const genResults = await Promise.allSettled(
-          genericBrandPages.map((u) => fetchMedexHtml(u, 6500))
-        );
-        for (const r of genResults) {
-          if (r.status === 'fulfilled' && r.value) {
-            addUrls(extractBrandUrlsFromHtml(r.value));
-          }
-        }
-      }
-    }
-
-    // 4. If query had strength/form words or punctuation and yielded few results, also query root brand name
-    if (normalizedRoot.length >= 2 && normalizedRoot.toLowerCase() !== cleanQ.toLowerCase() && brandUrlSet.size < 8) {
-      try {
-        const rootHtml = await fetchMedexHtml(
-          `${MEDEX_BASE_URL}/search?search=${encodeURIComponent(normalizedRoot)}&type=brands`,
-          6500
-        );
-        addUrls(extractBrandUrlsFromHtml(rootHtml));
-      } catch {
-        // ignore
-      }
-    }
-
-    // Also try first token if multi-word still returned nothing
-    const firstWord = normalizedRoot.split(' ')[0] || cleanQ.split(/\s+/)[0] || '';
-    if (firstWord.length >= 3 && firstWord.toLowerCase() !== cleanQ.toLowerCase() && brandUrlSet.size < 4) {
-      try {
-        const fwHtml = await fetchMedexHtml(
-          `${MEDEX_BASE_URL}/search?search=${encodeURIComponent(firstWord)}&type=brands`,
-          6000
-        );
-        addUrls(extractBrandUrlsFromHtml(fwHtml));
-      } catch {
-        // ignore
-      }
-    }
-
-    const qTokenLower = (normalizedRoot || cleanQ).toLowerCase().split(' ')[0] || '';
-    const rankedUrls = Array.from(brandUrlSet).sort((a, b) => {
-      const aSlug = a.toLowerCase();
-      const bSlug = b.toLowerCase();
-      const aMatch = qTokenLower && aSlug.includes(`/${qTokenLower}`) ? 1 : 0;
-      const bMatch = qTokenLower && bSlug.includes(`/${qTokenLower}`) ? 1 : 0;
-      return bMatch - aMatch;
+  async function searchMedexLive(query: string, limit = 24, bypassCache = false) {
+    return searchMedexLiveUsingFetcher(query, {
+      limit,
+      bypassCache,
+      fetchHtml: defaultMedexFetchHtml,
+      brandCache: medexBrandCache,
+      searchCache: medexSearchCache,
+      brandCacheTtlMs: MEDEX_BRAND_CACHE_TTL_MS,
+      searchCacheTtlMs: MEDEX_SEARCH_CACHE_TTL_MS,
     });
-
-    const initialBatch = rankedUrls.slice(0, safeLimit);
-    if (initialBatch.length === 0) {
-      return [];
-    }
-
-    const fetchedMap = new Map<string, any>();
-    const discoveredSiblings = new Set<string>();
-
-    const firstSettled = await Promise.allSettled(
-      initialBatch.map((u) => fetchMedexBrandDetailWithSiblings(u, bypassCache))
-    );
-
-    for (let i = 0; i < initialBatch.length; i++) {
-      const r = firstSettled[i];
-      if (r.status === 'fulfilled' && r.value?.item) {
-        const item = r.value.item;
-        const itemKey = String(item.id || initialBatch[i]);
-        fetchedMap.set(itemKey, item);
-        for (const sibUrl of r.value.siblingUrls || []) {
-          if (!brandUrlSet.has(sibUrl)) {
-            discoveredSiblings.add(sibUrl);
-          }
-        }
-      }
-    }
-
-    // 5. Fetch ALL sibling variants ("Also available as:") discovered from matched brand pages
-    // so every strength & dosage form variant (20mg, 40mg, XR, MUPS, Syrup, Drop, Inj, Suppository) is included!
-    if (discoveredSiblings.size > 0 && fetchedMap.size < safeLimit) {
-      const siblingList = Array.from(discoveredSiblings)
-        .filter((u) => {
-          if (!qTokenLower) return true;
-          const slug = u.split('/').pop()?.toLowerCase() || '';
-          return slug.includes(qTokenLower) || fetchedMap.size < 8;
-        })
-        .slice(0, safeLimit - fetchedMap.size);
-
-      if (siblingList.length > 0) {
-        const sibSettled = await Promise.allSettled(
-          siblingList.map((u) => fetchMedexBrandDetailWithSiblings(u, bypassCache))
-        );
-        for (let i = 0; i < siblingList.length; i++) {
-          const r = sibSettled[i];
-          if (r.status === 'fulfilled' && r.value?.item) {
-            const item = r.value.item;
-            fetchedMap.set(String(item.id || siblingList[i]), item);
-          }
-        }
-      }
-    }
-
-    const items = Array.from(fetchedMap.values());
-    if (items.length > 0) {
-      medexSearchCache.set(cacheKey, { fetchedAtMs: Date.now(), items });
-    }
-
-    return items;
   }
 
   app.get('/api/medex/search', async (req, res) => {

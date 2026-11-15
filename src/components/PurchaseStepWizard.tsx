@@ -25,7 +25,9 @@ import {
   DOSAGE_FORM_OPTIONS,
   expandCatalogWithVariantsForSearch,
   formatCleanMoney,
+  getShortDosageForm,
   matchesMedicineQuery,
+  mergeMedexItemWithCatalogMatch,
   resolveCanonicalMedicineCompany,
   searchAndRankMedicines,
   searchCatalogVariantsForInvoice,
@@ -100,6 +102,7 @@ export interface PurchaseStepWizardProps {
     unitsPerPack?: number;
     packRate?: number;
     packDetailFormula?: string;
+    packSize?: string;
   }) => Promise<void>;
   onUpdatePurchaseCartQty: (medId: string, newQty: number) => void;
   onUpdatePurchaseCartCost: (medId: string, newCost: number) => void;
@@ -174,15 +177,21 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
   const [mrpInput, setMrpInput] = useState('');
   const [showCustomDrugForm, setShowCustomDrugForm] = useState(false);
 
-  // Custom Drug form states
+  // Custom Drug form states (with full Pack Size + Company support)
   const [customBrand, setCustomBrand] = useState('');
   const [customGeneric, setCustomGeneric] = useState('');
-  const [customCompany, setCustomCompany] = useState(supplierCompany || BD_PHARMA_COMPANIES[0]);
+  const [customCompany, setCustomCompany] = useState(
+    supplierCompany && supplierCompany !== 'সকল কোম্পানি' ? supplierCompany : BD_PHARMA_COMPANIES[0]
+  );
   const [customStrength, setCustomStrength] = useState('20 mg');
   const [customForm, setCustomForm] = useState('Tablet');
+  const [customPackUnit, setCustomPackUnit] = useState<PurchasePackUnit>('box');
+  const [customPackCount, setCustomPackCount] = useState('1');
+  const [customUnitsPerPack, setCustomUnitsPerPack] = useState('100');
   const [customTpPrice, setCustomTpPrice] = useState('5.28');
+  const [customPackRate, setCustomPackRate] = useState('528.00');
   const [customMrpPrice, setCustomMrpPrice] = useState('6.00');
-  const [customQty, setCustomQty] = useState('100');
+  const [customPackSizeLabel, setCustomPackSizeLabel] = useState('');
   const [customBatch, setCustomBatch] = useState('B-2601');
   const [customExpiry, setCustomExpiry] = useState('2028-12-31');
 
@@ -213,6 +222,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
       | 'meta_dateStr';
   } | null>(null);
   const [editingVal, setEditingVal] = useState('');
+  const [editingPackUnit, setEditingPackUnit] = useState<PurchasePackUnit>('box');
   const [editingPackCount, setEditingPackCount] = useState('1');
   const [editingUnitsPerPack, setEditingUnitsPerPack] = useState('1');
 
@@ -300,21 +310,30 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
       const unitsPerPack = Math.max(1, item.unitsPerPack || 1);
 
       if (field === 'step1_pack') {
+        const pUnit = editingPackUnit;
         const pCount = Math.max(1, parseInt(editingPackCount, 10) || 1);
-        const uPerPack = Math.max(1, parseInt(editingUnitsPerPack, 10) || 1);
-        const nextQty = item.packUnit === 'piece' ? pCount : pCount * uPerPack;
+        const uPerPack = pUnit === 'piece' ? 1 : Math.max(1, parseInt(editingUnitsPerPack, 10) || 1);
+        const nextQty = pUnit === 'piece' ? pCount : pCount * uPerPack;
         const unitLbl =
-          item.packUnit === 'box' ? 'বক্স' : item.packUnit === 'strip' ? 'পাতা' : 'পিস';
+          pUnit === 'box'
+            ? 'বক্স'
+            : pUnit === 'strip'
+            ? 'পাতা'
+            : pUnit === 'cartoon'
+            ? 'কার্টুন'
+            : 'পিস';
         const formula =
-          item.packUnit === 'piece'
+          pUnit === 'piece'
             ? `${nextQty} পিস`
             : `${pCount} ${unitLbl} (${uPerPack} পিস/${unitLbl} = ${nextQty} পিস)`;
         onUpdatePurchaseCartItemDetails(medId, {
+          packUnit: pUnit,
           packCount: pCount,
           unitsPerPack: uPerPack,
           qty: nextQty,
           customLineTotal: undefined,
           packDetailFormula: formula,
+          packSize: formula,
           packRate: Number(((item.purchasePrice || 0) * uPerPack).toFixed(4)),
         });
       } else if (field === 'step1_qty' || field === 'step2_qty' || field === 'step3_qty') {
@@ -460,36 +479,33 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
     const merged: MedicineCatalogItem[] = [];
     const seen = new Set<string>();
     for (const mx of medexLiveResults) {
-      const key = `${mx.brandName.trim().toLowerCase()}__${(mx.strength || '').trim().toLowerCase()}__${mx.dosageForm.toLowerCase()}`;
+      const mxShort = getShortDosageForm(mx.dosageForm).toLowerCase();
+      const key = `${mx.brandName.trim().toLowerCase()}__${(mx.strength || '').trim().toLowerCase()}__${mxShort}`;
       if (!seen.has(key)) {
         seen.add(key);
-        const dbMatch = localMatches.find(
-          (l) =>
-            (mx.medexBrandId && l.medexBrandId === mx.medexBrandId) ||
-            `${l.brandName.trim().toLowerCase()}__${(l.strength || '').trim().toLowerCase()}__${l.dosageForm.toLowerCase()}` === key
-        );
-        merged.push(
-          dbMatch
-            ? {
-                ...dbMatch,
-                unitPrice: mx.unitPrice > 0 ? mx.unitPrice : dbMatch.unitPrice,
-                stripPrice: mx.stripPrice > 0 ? mx.stripPrice : dbMatch.stripPrice,
-                medexUrl: mx.medexUrl || dbMatch.medexUrl,
-                source: 'medex',
-              }
-            : mx
-        );
+        const dbMatch =
+          localMatches.find(
+            (l) =>
+              (mx.medexBrandId && l.medexBrandId === mx.medexBrandId) ||
+              `${l.brandName.trim().toLowerCase()}__${(l.strength || '').trim().toLowerCase()}__${getShortDosageForm(l.dosageForm).toLowerCase()}` === key
+          ) ||
+          expandedCatalog.find(
+            (l) =>
+              (mx.medexBrandId && l.medexBrandId === mx.medexBrandId) ||
+              `${l.brandName.trim().toLowerCase()}__${(l.strength || '').trim().toLowerCase()}__${getShortDosageForm(l.dosageForm).toLowerCase()}` === key
+          );
+        merged.push(mergeMedexItemWithCatalogMatch(mx, dbMatch));
       }
     }
     for (const loc of localMatches) {
-      const key = `${loc.brandName.trim().toLowerCase()}__${(loc.strength || '').trim().toLowerCase()}__${loc.dosageForm.toLowerCase()}`;
+      const key = `${loc.brandName.trim().toLowerCase()}__${(loc.strength || '').trim().toLowerCase()}__${getShortDosageForm(loc.dosageForm).toLowerCase()}`;
       if (!seen.has(key)) {
         seen.add(key);
         merged.push(loc);
       }
     }
     return merged.slice(0, 26);
-  }, [expandedCatalog, productSearch, supplierCompany, medexLiveResults]);
+  }, [expandedCatalog, productSearch, supplierCompany, isCustomCompanyMode, medexLiveResults]);
 
   // Handle selecting a medicine from search
   const handleSelectMedicine = (med: MedicineCatalogItem) => {
@@ -562,20 +578,52 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
     setMrpInput('');
   };
 
-  // Add Custom Drug from Step 1
+  // Add Custom Drug from Step 1 (with full Pack Size support)
   const handleAddCustomDrugSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!customBrand.trim()) return;
 
+    const pCount = Math.max(1, parseInt(customPackCount, 10) || 1);
+    const uPerPack =
+      customPackUnit === 'piece' ? 1 : Math.max(1, parseInt(customUnitsPerPack, 10) || 1);
+    const totalPcs = customPackUnit === 'piece' ? pCount : pCount * uPerPack;
+
     const parsedTp = Math.max(0.01, parseFloat(customTpPrice) || 1);
+    const parsedPackRate =
+      customPackUnit === 'piece'
+        ? parsedTp
+        : parseFloat(customPackRate) > 0
+        ? parseFloat(customPackRate)
+        : Number((parsedTp * uPerPack).toFixed(2));
     const parsedMrp = Math.max(0.1, parseFloat(customMrpPrice) || parsedTp * 1.15);
-    const parsedQty = Math.max(1, parseInt(customQty, 10) || 1);
+
+    const unitLblBn =
+      customPackUnit === 'box'
+        ? 'বক্স'
+        : customPackUnit === 'strip'
+        ? 'পাতা'
+        : customPackUnit === 'cartoon'
+        ? 'কার্টুন'
+        : 'পিস';
+    const packFormula =
+      customPackUnit === 'piece'
+        ? `${totalPcs} পিস`
+        : `${pCount} ${unitLblBn} (${uPerPack} পিস/${unitLblBn} = ${totalPcs} পিস)`;
+    const resolvedPackSize =
+      customPackSizeLabel.trim() ||
+      (customPackUnit === 'piece'
+        ? `${uPerPack} পিস`
+        : `${pCount} × ${uPerPack} (${totalPcs} pcs)`);
+
     const resolvedCompany = resolveCanonicalMedicineCompany({
       catalog,
       brandName: customBrand.trim(),
       strength: customStrength.trim(),
       dosageForm: customForm,
-      candidateCompany: customCompany.trim() === supplierCompany.trim() && isCustomCompanyMode ? '' : customCompany.trim(),
+      candidateCompany:
+        customCompany.trim() === supplierCompany.trim() && isCustomCompanyMode
+          ? ''
+          : customCompany.trim(),
       invoiceSupplierCompany: supplierCompany,
     });
 
@@ -587,20 +635,23 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
       dosageForm: customForm,
       purchasePrice: parsedTp,
       unitPrice: parsedMrp,
-      qty: parsedQty,
+      qty: totalPcs,
       batchNo: customBatch.trim() || 'B-2601',
       expiryDate: customExpiry.trim() || '2028-12-31',
       updateStock: true,
       saveToCatalog: true,
-      packUnit: 'piece',
-      packCount: parsedQty,
-      unitsPerPack: 1,
-      packRate: parsedTp,
-      packDetailFormula: `${parsedQty} পিস`,
+      packUnit: customPackUnit,
+      packCount: pCount,
+      unitsPerPack: uPerPack,
+      packRate: parsedPackRate,
+      packDetailFormula: packFormula,
+      packSize: resolvedPackSize,
     });
 
     setCustomBrand('');
     setCustomGeneric('');
+    setCustomPackCount('1');
+    setCustomPackSizeLabel('');
     setShowCustomDrugForm(false);
   };
 
@@ -855,12 +906,13 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
             </div>
 
             {showCustomDrugForm ? (
-              /* Custom Drug Manual Entry Form */
-              <form onSubmit={handleAddCustomDrugSubmit} className="p-3 bg-indigo-50/50 rounded-lg border border-indigo-200 space-y-3">
+              /* Custom Drug Manual Entry Form (with full Pack Size + Company + Live Calculation) */
+              <form onSubmit={handleAddCustomDrugSubmit} className="p-3.5 bg-indigo-50/50 rounded-lg border border-indigo-200 space-y-3">
                 <div className="font-bold text-xs text-indigo-950">
-                  ক্যাটালগে না থাকা নতুন ওষুধ বা সার্জিক্যাল আইটেম সরাসরি ক্রয় তালিকায় যোগ করুন:
+                  ক্যাটালগে না থাকা নতুন ওষুধ বা সার্জিক্যাল আইটেম প্যাক সাইজসহ সরাসরি ক্রয় তালিকায় যোগ করুন:
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-xs">
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 text-xs">
                   <div>
                     <label className="block font-medium text-slate-700 mb-0.5">ব্র্যান্ড নাম *</label>
                     <input
@@ -868,7 +920,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                       required
                       value={customBrand}
                       onChange={(e) => setCustomBrand(e.target.value)}
-                      placeholder="যেমন: Napa Extra, Seclo-40"
+                      placeholder="যেমন: Napa Extra, Seclo"
                       className="w-full px-2.5 py-1.5 border border-slate-300 rounded bg-white font-semibold"
                     />
                   </div>
@@ -883,10 +935,49 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                     />
                   </div>
                   <div>
+                    <label className="block font-medium text-slate-700 mb-0.5">প্রস্তুতকারক কোম্পানি</label>
+                    <input
+                      type="text"
+                      list="purchase-custom-company-list"
+                      value={customCompany}
+                      onChange={(e) => setCustomCompany(e.target.value)}
+                      placeholder="যেমন: Square Pharmaceuticals PLC"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded bg-white"
+                    />
+                    <datalist id="purchase-custom-company-list">
+                      {BD_PHARMA_COMPANIES.map((c) => (
+                        <option key={c} value={c} />
+                      ))}
+                    </datalist>
+                  </div>
+                  <div>
                     <label className="block font-medium text-slate-700 mb-0.5">ধরণ (Form)</label>
                     <select
                       value={customForm}
-                      onChange={(e) => setCustomForm(e.target.value)}
+                      onChange={(e) => {
+                        const nextForm = e.target.value;
+                        setCustomForm(nextForm);
+                        const lower = nextForm.toLowerCase();
+                        const isLiquidOrSingle =
+                          lower.includes('syrup') ||
+                          lower.includes('susp') ||
+                          lower.includes('drop') ||
+                          lower.includes('inhaler') ||
+                          lower.includes('gel') ||
+                          lower.includes('injection') ||
+                          lower.includes('spray');
+                        if (isLiquidOrSingle) {
+                          setCustomPackUnit('piece');
+                          setCustomUnitsPerPack('1');
+                          const tp = parseFloat(customTpPrice) || 0;
+                          if (tp > 0) setCustomPackRate(tp.toFixed(2));
+                        } else {
+                          setCustomPackUnit('box');
+                          setCustomUnitsPerPack('100');
+                          const tp = parseFloat(customTpPrice) || 0;
+                          if (tp > 0) setCustomPackRate((tp * 100).toFixed(2));
+                        }
+                      }}
                       className="w-full px-2.5 py-1.5 border border-slate-300 rounded bg-white"
                     >
                       {DOSAGE_FORM_OPTIONS.map((f) => (
@@ -908,20 +999,186 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs pt-1">
+                {/* Pack Size Configuration Row */}
+                <div className="p-2.5 bg-white/90 border border-indigo-200 rounded-lg space-y-2">
+                  <div className="text-[11px] font-bold text-indigo-900">
+                    প্যাক সাইজ ও পরিমাণ নির্ধারণ (Pack Size &amp; Quantity)
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 text-xs">
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-0.5">প্যাক সাইজ ধরণ *</label>
+                      <select
+                        value={customPackUnit}
+                        onChange={(e) => {
+                          const unit = e.target.value as PurchasePackUnit;
+                          setCustomPackUnit(unit);
+                          const nextUnits =
+                            unit === 'piece'
+                              ? 1
+                              : unit === 'strip'
+                              ? 10
+                              : unit === 'cartoon'
+                              ? 48
+                              : 100;
+                          setCustomUnitsPerPack(String(nextUnits));
+                          const tp = parseFloat(customTpPrice) || 0;
+                          if (tp > 0) {
+                            setCustomPackRate((tp * nextUnits).toFixed(2));
+                          }
+                        }}
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded bg-white font-semibold"
+                      >
+                        <option value="box">📦 সম্পূর্ণ বক্স (Box)</option>
+                        <option value="strip">💊 পাতা / স্ট্রিপ (Strip)</option>
+                        <option value="cartoon">📥 কার্টুন (Cartoon)</option>
+                        <option value="piece">🔹 খুচরা পিস (Piece)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-0.5">
+                        {customPackUnit === 'box'
+                          ? 'কত বক্স? *'
+                          : customPackUnit === 'strip'
+                          ? 'কত পাতা? *'
+                          : customPackUnit === 'cartoon'
+                          ? 'কত কার্টুন? *'
+                          : 'মোট পিস *'}
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        required
+                        value={customPackCount}
+                        onChange={(e) => setCustomPackCount(e.target.value)}
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded bg-white font-mono font-bold text-slate-900"
+                      />
+                    </div>
+
+                    {customPackUnit !== 'piece' && (
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-0.5">
+                          প্রতি প্যাকে পিস সংখ্যা *
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          required
+                          value={customUnitsPerPack}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setCustomUnitsPerPack(val);
+                            const u = Math.max(1, parseInt(val, 10) || 1);
+                            const tp = parseFloat(customTpPrice) || 0;
+                            if (tp > 0) {
+                              setCustomPackRate((tp * u).toFixed(2));
+                            }
+                          }}
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded bg-white font-mono font-bold"
+                        />
+                      </div>
+                    )}
+
+                    {customPackUnit !== 'piece' && (
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-0.5">
+                          প্যাক রেট / বক্স দর (৳)
+                        </label>
+                        <input
+                          type="number"
+                          step="any"
+                          min="0"
+                          value={customPackRate}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setCustomPackRate(val);
+                            const pRate = parseFloat(val) || 0;
+                            const u = Math.max(1, parseInt(customUnitsPerPack, 10) || 1);
+                            if (pRate > 0) {
+                              setCustomTpPrice((pRate / u).toFixed(4));
+                            }
+                          }}
+                          placeholder="যেমন: 528.00"
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded bg-white font-mono font-bold text-indigo-900"
+                        />
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-0.5">
+                        প্যাক সাইজ নোট (ঐচ্ছিক)
+                      </label>
+                      <input
+                        type="text"
+                        value={customPackSizeLabel}
+                        onChange={(e) => setCustomPackSizeLabel(e.target.value)}
+                        placeholder={
+                          customPackUnit === 'piece'
+                            ? 'যেমন: 100 ml Bottle'
+                            : 'যেমন: 10 × 10 (100 pcs)'
+                        }
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded bg-white"
+                      />
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-indigo-900 font-medium flex flex-wrap items-center gap-3">
+                    <span>
+                      হিসাব: মোট পরিমাণ ={' '}
+                      <strong className="font-mono text-slate-900">
+                        {customPackUnit === 'piece'
+                          ? `${Math.max(1, parseInt(customPackCount, 10) || 1)} পিস`
+                          : `${Math.max(1, parseInt(customPackCount, 10) || 1)} ${
+                              customPackUnit === 'box'
+                                ? 'বক্স'
+                                : customPackUnit === 'strip'
+                                ? 'পাতা'
+                                : 'কার্টুন'
+                            } × ${Math.max(1, parseInt(customUnitsPerPack, 10) || 1)} = ${
+                              Math.max(1, parseInt(customPackCount, 10) || 1) *
+                              Math.max(1, parseInt(customUnitsPerPack, 10) || 1)
+                            } পিস`}
+                      </strong>
+                    </span>
+                    <span className="text-slate-400">·</span>
+                    <span>
+                      মোট টিপি:{' '}
+                      <strong className="font-mono text-indigo-900">
+                        ৳
+                        {(
+                          (customPackUnit === 'piece'
+                            ? Math.max(1, parseInt(customPackCount, 10) || 1)
+                            : Math.max(1, parseInt(customPackCount, 10) || 1) *
+                              Math.max(1, parseInt(customUnitsPerPack, 10) || 1)) *
+                          (parseFloat(customTpPrice) || 0)
+                        ).toFixed(2)}
+                      </strong>
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs pt-0.5">
                   <div>
-                    <label className="block font-medium text-slate-700 mb-0.5">সিঙ্গেল ক্রয়মূল্য (টিপি ৳) *</label>
+                    <label className="block font-medium text-slate-700 mb-0.5">সিঙ্গেল ক্রয়মূল্য (প্রতি পিস টিপি ৳) *</label>
                     <input
                       type="number"
                       step="any"
                       required
                       value={customTpPrice}
-                      onChange={(e) => setCustomTpPrice(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setCustomTpPrice(val);
+                        const tp = parseFloat(val) || 0;
+                        const u =
+                          customPackUnit === 'piece'
+                            ? 1
+                            : Math.max(1, parseInt(customUnitsPerPack, 10) || 1);
+                        setCustomPackRate((tp * u).toFixed(2));
+                      }}
                       className="w-full px-2.5 py-1.5 border border-slate-300 rounded bg-white font-mono font-bold text-indigo-950"
                     />
                   </div>
                   <div>
-                    <label className="block font-medium text-slate-700 mb-0.5">বিক্রয়মূল্য (MRP ৳) *</label>
+                    <label className="block font-medium text-slate-700 mb-0.5">একক বিক্রয়মূল্য (MRP ৳) *</label>
                     <input
                       type="number"
                       step="any"
@@ -931,23 +1188,12 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                       className="w-full px-2.5 py-1.5 border border-slate-300 rounded bg-white font-mono font-bold text-emerald-800"
                     />
                   </div>
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-0.5">মোট ক্রয় পিস *</label>
-                    <input
-                      type="number"
-                      min="1"
-                      required
-                      value={customQty}
-                      onChange={(e) => setCustomQty(e.target.value)}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded bg-white font-mono font-bold"
-                    />
-                  </div>
-                  <div className="flex items-end">
+                  <div className="flex items-end col-span-2 sm:col-span-1">
                     <button
                       type="submit"
                       className="w-full py-1.5 px-3 bg-indigo-700 hover:bg-indigo-800 text-white font-bold rounded cursor-pointer shadow-xs"
                     >
-                      + তালিকায় যোগ করুন
+                      + প্যাক সাইজসহ তালিকায় যোগ করুন
                     </button>
                   </div>
                 </div>
@@ -1211,7 +1457,28 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                           </td>
                           <td className="py-2 px-2 text-center text-slate-600 font-mono">
                             {isEdPack ? (
-                              <div className="inline-flex items-center gap-1 bg-indigo-50 p-1 rounded border border-indigo-300">
+                              <div className="inline-flex flex-wrap items-center justify-center gap-1 bg-indigo-50 p-1 rounded border border-indigo-300">
+                                <select
+                                  value={editingPackUnit}
+                                  onChange={(e) => {
+                                    const nextU = e.target.value as PurchasePackUnit;
+                                    setEditingPackUnit(nextU);
+                                    if (nextU === 'piece') {
+                                      setEditingUnitsPerPack('1');
+                                    } else if ((parseInt(editingUnitsPerPack, 10) || 1) <= 1) {
+                                      setEditingUnitsPerPack(
+                                        nextU === 'strip' ? '10' : nextU === 'cartoon' ? '48' : '100'
+                                      );
+                                    }
+                                  }}
+                                  className="px-1 py-0.5 border border-indigo-300 rounded bg-white text-[11px] font-bold text-indigo-950"
+                                  title="প্যাকের ধরন"
+                                >
+                                  <option value="box">বক্স</option>
+                                  <option value="strip">পাতা</option>
+                                  <option value="cartoon">কার্টুন</option>
+                                  <option value="piece">পিস</option>
+                                </select>
                                 <input
                                   type="number"
                                   min="1"
@@ -1225,7 +1492,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                                   className="w-12 px-1 py-0.5 text-center border border-indigo-300 rounded bg-white text-xs font-bold"
                                   title="প্যাক/বক্স সংখ্যা"
                                 />
-                                {item.packUnit !== 'piece' && (
+                                {editingPackUnit !== 'piece' && (
                                   <>
                                     <span>×</span>
                                     <input
@@ -1254,8 +1521,10 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                               <button
                                 type="button"
                                 onClick={() => {
-                                  setEditingPackCount(String(item.packCount || 1));
-                                  setEditingUnitsPerPack(String(item.unitsPerPack || (item.packUnit === 'piece' ? 1 : item.qty)));
+                                  const curUnit = item.packUnit || 'piece';
+                                  setEditingPackUnit(curUnit);
+                                  setEditingPackCount(String(item.packCount || (curUnit === 'piece' ? item.qty : 1)));
+                                  setEditingUnitsPerPack(String(item.unitsPerPack || (curUnit === 'piece' ? 1 : item.qty)));
                                   startCellEdit(item.medicineId, 'step1_pack', '');
                                 }}
                                 className="px-1.5 py-0.5 rounded border border-dashed border-transparent hover:border-indigo-300 hover:bg-indigo-50/80 hover:text-indigo-800 cursor-pointer transition-colors"

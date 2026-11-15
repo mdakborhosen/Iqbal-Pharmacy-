@@ -89,6 +89,7 @@ import {
   getShortDosageForm,
   isCoreDatabaseMedicineId,
   isOfficialPharmaCompanyName,
+  isValidMedexCompanyName,
   parseTransactionItemsDetailed,
   resolveCanonicalMedicineCompany,
 } from './data/bdMedicines';
@@ -4405,6 +4406,7 @@ export default function App() {
     unitsPerPack?: number;
     packRate?: number;
     packDetailFormula?: string;
+    packSize?: string;
     stripsPerBox?: number;
     pcsPerStrip?: number;
   }) => {
@@ -4507,7 +4509,10 @@ export default function App() {
         companyName: resolvedPurItemCompany,
         strength: cleanStrength,
         dosageForm: cleanForm,
-        packSize: params.packDetailFormula || '10 × 10 (100 pcs)',
+        packSize:
+          params.packSize?.trim() ||
+          params.packDetailFormula ||
+          (params.unitsPerPack && params.unitsPerPack > 1 ? `1 × ${params.unitsPerPack}` : '10 × 10 (100 pcs)'),
         purchasePrice,
         unitPrice,
         qty,
@@ -4534,6 +4539,7 @@ export default function App() {
                 qty: item.qty + qty,
                 batchNo: batchNo || item.batchNo,
                 updateStock,
+                packSize: params.packSize?.trim() || params.packDetailFormula || item.packSize,
                 packUnit: params.packUnit || item.packUnit,
                 packCount: params.packCount || item.packCount,
                 unitsPerPack: params.unitsPerPack || item.unitsPerPack,
@@ -4611,10 +4617,21 @@ export default function App() {
             companyName: resolvedSaveCompany,
             strength: cleanStrength || 'Standard',
             dosageForm: cleanForm,
-            packSize: existingCatalogMed?.packSize || params.packDetailFormula || '10 × 10 (100 pcs)',
+            packSize:
+              params.packSize?.trim() ||
+              params.packDetailFormula ||
+              existingCatalogMed?.packSize ||
+              '10 × 10 (100 pcs)',
             purchasePrice,
             unitPrice,
-            stripPrice: Number((unitPrice * 10).toFixed(2)),
+            stripPrice: Number(
+              (
+                unitPrice *
+                (params.unitsPerPack && params.unitsPerPack > 1 && params.unitsPerPack <= 30
+                  ? params.unitsPerPack
+                  : 10)
+              ).toFixed(2)
+            ),
             therapeuticClass: existingCatalogMed?.therapeuticClass || 'Custom Product',
             indication: existingCatalogMed?.indication || 'কাস্টম প্রডাক্ট / সাধারণ ব্যবহার্য',
           },
@@ -6876,6 +6893,20 @@ export default function App() {
         continue;
       }
 
+      const medexCompany = isValidMedexCompanyName(mx.companyName) ? mx.companyName.trim() : '';
+      const currentCompany = existingCustom?.companyName || matchedCatalog?.companyName || '';
+      const companyChanged = Boolean(
+        medexCompany &&
+          currentCompany &&
+          currentCompany.trim() !== medexCompany
+      );
+      const currentForm = existingCustom?.dosageForm || matchedCatalog?.dosageForm || '';
+      const formChanged = Boolean(
+        mx.dosageForm &&
+          currentForm &&
+          currentForm.trim().toLowerCase() !== mx.dosageForm.trim().toLowerCase()
+      );
+
       const priceChanged =
         liveUnitPrice > 0 &&
         prevUnitPrice > 0 &&
@@ -6884,6 +6915,8 @@ export default function App() {
 
       const needsMedexMetaSave =
         !existingCustom ||
+        companyChanged ||
+        formChanged ||
         (mx.medexUrl && existingCustom.medexUrl !== mx.medexUrl) ||
         (mx.medexBrandId && existingCustom.medexBrandId !== mx.medexBrandId);
 
@@ -6913,11 +6946,21 @@ export default function App() {
         shopId: effectiveShopId,
         ownerId: effectiveCloudUid,
         brandName: sanitizeString(mx.brandName || matchedCatalog?.brandName || existingCustom?.brandName, 120),
-        genericName: sanitizeString(mx.genericName || matchedCatalog?.genericName || existingCustom?.genericName, 150),
-        companyName: sanitizeString(mx.companyName || matchedCatalog?.companyName || existingCustom?.companyName, 120),
+        genericName: sanitizeString(
+          (mx.genericName && mx.genericName.trim().toLowerCase() !== 'generic' ? mx.genericName : '') ||
+            matchedCatalog?.genericName ||
+            existingCustom?.genericName,
+          150
+        ),
+        companyName: sanitizeString(medexCompany || matchedCatalog?.companyName || existingCustom?.companyName, 120),
         strength: sanitizeString(mx.strength || matchedCatalog?.strength || existingCustom?.strength, 60),
         dosageForm: sanitizeString(mx.dosageForm || matchedCatalog?.dosageForm || existingCustom?.dosageForm, 60),
-        packSize: sanitizeString(mx.packSize || matchedCatalog?.packSize || existingCustom?.packSize, 60),
+        packSize: sanitizeString(
+          (mx.packSize && mx.packSize !== 'Standard' ? mx.packSize : '') ||
+            matchedCatalog?.packSize ||
+            existingCustom?.packSize,
+          60
+        ),
         purchasePrice: sanitizeNumber(resolvedPurchasePrice),
         unitPrice: sanitizeNumber(resolvedUnitPrice),
         stripPrice: sanitizeNumber(resolvedStripPrice),
@@ -6981,7 +7024,7 @@ export default function App() {
     });
 
     const changedInvItemsForCloud: InventoryItem[] = [];
-    if (priceChanges.length > 0) {
+    if (toUpsertCustoms.length > 0) {
       setInventory((prev) => {
         let modified = false;
         const next = prev.map((inv) => {
@@ -6994,11 +7037,19 @@ export default function App() {
                 c.strength.toLowerCase() === inv.strength.toLowerCase() &&
                 getShortDosageForm(c.dosageForm).toLowerCase() === getShortDosageForm(inv.dosageForm).toLowerCase()
             );
-          if (
-            matchByKey &&
-            (Math.abs(inv.unitPrice - matchByKey.unitPrice) >= 0.01 ||
-              Math.abs(inv.stripPrice - matchByKey.stripPrice) >= 0.01)
-          ) {
+          if (!matchByKey) return inv;
+
+          const invPriceDiff =
+            Math.abs(inv.unitPrice - matchByKey.unitPrice) >= 0.01 ||
+            Math.abs(inv.stripPrice - matchByKey.stripPrice) >= 0.01;
+          const invCompanyNeedsFix =
+            isValidMedexCompanyName(matchByKey.companyName) &&
+            inv.companyName.trim() !== matchByKey.companyName.trim() &&
+            (!isValidMedexCompanyName(inv.companyName) ||
+              inv.companyName.includes('(Mfg. by') ||
+              inv.companyName.endsWith('PLC.'));
+
+          if (invPriceDiff || invCompanyNeedsFix) {
             modified = true;
             const updatedInv: InventoryItem = {
               ...inv,
@@ -7006,6 +7057,7 @@ export default function App() {
               shopId: effectiveShopId,
               unitPrice: matchByKey.unitPrice,
               stripPrice: matchByKey.stripPrice,
+              companyName: invCompanyNeedsFix ? matchByKey.companyName : inv.companyName,
               updatedAtMs: nowMs,
             };
             changedInvItemsForCloud.push(updatedInv);

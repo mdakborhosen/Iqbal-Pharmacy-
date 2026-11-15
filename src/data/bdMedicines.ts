@@ -276,8 +276,8 @@ export const CURATED_BD_MEDICINES: MedicineCatalogItem[] = [
     dosageForm: 'Capsule',
     packSize: '6 × 10 (60 pcs)',
     unitsPerStrip: 10,
-    unitPrice: 10.0,
-    stripPrice: 100.0,
+    unitPrice: 11.0,
+    stripPrice: 110.0,
     therapeuticClass: 'Proton Pump Inhibitor (Gastric)',
     indication: 'তীব্র গ্যাস্ট্রিক আলসার ও রিফ্লাক্স ইসোফ্যাজাইটিস নিরাময়ে ব্যবহৃত',
     darNo: '319-046-043',
@@ -308,8 +308,8 @@ export const CURATED_BD_MEDICINES: MedicineCatalogItem[] = [
     dosageForm: 'Capsule',
     packSize: '6 × 10 (60 pcs)',
     unitsPerStrip: 10,
-    unitPrice: 10.0,
-    stripPrice: 100.0,
+    unitPrice: 9.0,
+    stripPrice: 90.0,
     therapeuticClass: 'Proton Pump Inhibitor (Gastric)',
     indication: 'তীব্র গ্যাস্ট্রিক আলসার ও অ্যাসিড নিঃসরণ নিয়ন্ত্রণে ব্যবহৃত',
     darNo: '108-292-043',
@@ -5579,15 +5579,86 @@ export function isOfficialPharmaCompanyName(companyName?: string | null): boolea
   }
   return (
     /\bpharmaceuticals?\b/i.test(clean) ||
-    /\bpharma\s+(plc|ltd|limited)\b/i.test(clean) ||
+    /\bpharma\b/i.test(clean) ||
+    /\bplc\.?$/i.test(clean) ||
     /\blaboratories\b/i.test(clean) ||
     /\bhealthcare\b/i.test(clean) ||
     /\bbiotech\b/i.test(clean) ||
+    /\bbiopharma\b/i.test(clean) ||
+    /\blifesciences?\b/i.test(clean) ||
+    /\btherapeutics\b/i.test(clean) ||
     /\bremedies\b/i.test(clean) ||
     /\bmedimpex\b/i.test(clean) ||
     /\bchemical\b/i.test(clean) ||
-    /\bsaline\b/i.test(clean)
+    /\bsaline\b/i.test(clean) ||
+    /\bdrug\s+laboratories\b/i.test(clean)
   );
+}
+
+export function isValidMedexCompanyName(companyName?: string | null): boolean {
+  const clean = (companyName || '').trim();
+  if (!clean) return false;
+  const lower = clean.toLowerCase();
+  if (
+    lower === 'unknown pharma' ||
+    lower === 'unknown' ||
+    lower === 'custom / general' ||
+    lower.startsWith('(mfg. by')
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function mergeMedexItemWithCatalogMatch(
+  mx: MedicineCatalogItem,
+  dbMatch?: MedicineCatalogItem
+): MedicineCatalogItem {
+  if (!dbMatch) return mx;
+
+  const resolvedUnitPrice = mx.unitPrice > 0 ? mx.unitPrice : dbMatch.unitPrice;
+  const resolvedStripPrice = mx.stripPrice > 0 ? mx.stripPrice : dbMatch.stripPrice;
+  const priceChanged =
+    mx.unitPrice > 0 &&
+    dbMatch.unitPrice > 0 &&
+    Math.abs(mx.unitPrice - dbMatch.unitPrice) >= 0.01;
+
+  const dbPur = dbMatch.purchasePrice;
+  const wasDefaultRatio =
+    !dbPur ||
+    dbPur <= 0 ||
+    (dbMatch.unitPrice > 0 && Math.abs(dbPur - Number((dbMatch.unitPrice * 0.88).toFixed(2))) < 0.05) ||
+    dbPur > resolvedUnitPrice;
+
+  const resolvedPurchasePrice =
+    priceChanged || wasDefaultRatio
+      ? Number((resolvedUnitPrice * 0.88).toFixed(2))
+      : dbPur;
+
+  const resolvedCompany = isValidMedexCompanyName(mx.companyName)
+    ? mx.companyName
+    : dbMatch.companyName;
+  const resolvedGeneric =
+    mx.genericName && mx.genericName.trim().toLowerCase() !== 'generic'
+      ? mx.genericName
+      : dbMatch.genericName;
+
+  return {
+    ...dbMatch,
+    brandName: mx.brandName || dbMatch.brandName,
+    genericName: resolvedGeneric,
+    companyName: resolvedCompany,
+    strength: mx.strength || dbMatch.strength,
+    dosageForm: mx.dosageForm || dbMatch.dosageForm,
+    packSize: mx.packSize && mx.packSize !== 'Standard' ? mx.packSize : dbMatch.packSize,
+    unitsPerStrip: mx.unitsPerStrip || dbMatch.unitsPerStrip,
+    unitPrice: resolvedUnitPrice,
+    stripPrice: resolvedStripPrice,
+    purchasePrice: resolvedPurchasePrice,
+    medexUrl: mx.medexUrl || dbMatch.medexUrl,
+    medexBrandId: mx.medexBrandId || dbMatch.medexBrandId,
+    source: 'medex',
+  };
 }
 
 export function resolveCanonicalMedicineCompany(params: {
