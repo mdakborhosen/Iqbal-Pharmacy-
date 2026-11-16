@@ -8,7 +8,6 @@ import {
   Edit3,
   FileSpreadsheet,
   FlaskConical,
-  Lock,
   Package,
   PackagePlus,
   Pill,
@@ -1066,23 +1065,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                           >
                             <Edit3 className="w-3.5 h-3.5" /> মূল্য/স্টক এডিট
                           </button>
-                          {isCore ? (
-                            <span
-                              className="px-2 py-1 text-[11px] font-medium text-slate-500 bg-slate-100 rounded flex items-center gap-1 whitespace-nowrap shrink-0"
-                              title="ডাটাবেস এ থাকা মূল প্রোডাক্ট ডিলিট করা যাবে না"
-                            >
-                              <Lock className="w-3 h-3 text-slate-400" /> স্থায়ী
-                            </span>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => onDeleteInventoryItem(item.id)}
-                              className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors cursor-pointer"
-                              title="কাস্টম স্টক মুছে ফেলুন"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            onClick={() => onDeleteInventoryItem(item.id)}
+                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors cursor-pointer"
+                            title="স্টক আইটেম মুছে ফেলুন"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
                       </td>
                     </tr>

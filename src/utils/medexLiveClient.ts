@@ -81,31 +81,138 @@ async function tryFetchJsonEndpoint<T>(
   }
 }
 
+const LOCAL_MEDEX_SEARCH_CACHE_KEY = 'medex_live_search_cache_v2';
+
+function readPersistedSearchCache(queryKey: string): MedicineCatalogItem[] | null {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return null;
+    const raw = window.localStorage.getItem(LOCAL_MEDEX_SEARCH_CACHE_KEY);
+    if (!raw) return null;
+    const map = JSON.parse(raw) as Record<string, { fetchedAtMs: number; items: MedicineCatalogItem[] }>;
+    const hit = map?.[queryKey];
+    if (hit && Array.isArray(hit.items) && Date.now() - hit.fetchedAtMs < 15 * 60 * 1000) {
+      return hit.items;
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return null;
+}
+
+function writePersistedSearchCache(queryKey: string, items: MedicineCatalogItem[]): void {
+  if (!items || items.length === 0) return;
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    const raw = window.localStorage.getItem(LOCAL_MEDEX_SEARCH_CACHE_KEY);
+    const map = (raw ? JSON.parse(raw) : {}) as Record<
+      string,
+      { fetchedAtMs: number; items: MedicineCatalogItem[] }
+    >;
+    const now = Date.now();
+    // Prune expired or oversized entries
+    const keys = Object.keys(map);
+    if (keys.length > 40) {
+      keys
+        .sort((a, b) => (map[a]?.fetchedAtMs || 0) - (map[b]?.fetchedAtMs || 0))
+        .slice(0, keys.length - 30)
+        .forEach((k) => delete map[k]);
+    }
+    map[queryKey] = { fetchedAtMs: now, items };
+    window.localStorage.setItem(LOCAL_MEDEX_SEARCH_CACHE_KEY, JSON.stringify(map));
+  } catch {
+    // ignore storage errors
+  }
+}
+
 async function fetchMedexViaBrowserCorsProxy(
   targetUrl: string,
-  timeoutMs = 7000,
+  timeoutMs = 8000,
   externalSignal?: AbortSignal
 ): Promise<string> {
-  const proxyBuilders = [
-    (u: string) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
-    (u: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-    (u: string) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+  const attempts: Array<() => Promise<string | null>> = [
+    // 1. r.jina.ai raw HTML mode (supports CORS on iqbal-pharmacy.pages.dev and returns full MedEx HTML)
+    async () => {
+      const { signal, cleanup } = combineSignals(externalSignal, timeoutMs);
+      try {
+        const resp = await fetch(`https://r.jina.ai/${targetUrl}`, {
+          method: 'GET',
+          headers: { 'X-Return-Format': 'html' },
+          signal,
+        });
+        if (!resp.ok) return null;
+        const html = await resp.text();
+        if (
+          html &&
+          (html.includes('medex.com.bd') ||
+            html.includes('page-heading-1-l') ||
+            html.includes('search-result') ||
+            html.includes('lsri'))
+        ) {
+          return html;
+        }
+        return null;
+      } finally {
+        cleanup();
+      }
+    },
+    // 2. allorigins JSON wrapper fallback
+    async () => {
+      const { signal, cleanup } = combineSignals(externalSignal, Math.min(timeoutMs, 6500));
+      try {
+        const resp = await fetch(
+          `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`,
+          { method: 'GET', signal }
+        );
+        if (!resp.ok) return null;
+        const data = (await resp.json()) as { contents?: string };
+        const html = data?.contents || '';
+        if (
+          html &&
+          (html.includes('medex.com.bd') ||
+            html.includes('page-heading-1-l') ||
+            html.includes('search-result') ||
+            html.includes('lsri'))
+        ) {
+          return html;
+        }
+        return null;
+      } finally {
+        cleanup();
+      }
+    },
+    // 3. codetabs raw proxy fallback
+    async () => {
+      const { signal, cleanup } = combineSignals(externalSignal, Math.min(timeoutMs, 6000));
+      try {
+        const resp = await fetch(
+          `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
+          { method: 'GET', signal }
+        );
+        if (!resp.ok) return null;
+        const html = await resp.text();
+        if (
+          html &&
+          (html.includes('medex.com.bd') ||
+            html.includes('page-heading-1-l') ||
+            html.includes('search-result') ||
+            html.includes('lsri'))
+        ) {
+          return html;
+        }
+        return null;
+      } finally {
+        cleanup();
+      }
+    },
   ];
 
-  for (const build of proxyBuilders) {
+  for (const run of attempts) {
     if (externalSignal?.aborted) throw new Error('Aborted');
-    const { signal, cleanup } = combineSignals(externalSignal, timeoutMs);
     try {
-      const resp = await fetch(build(targetUrl), { method: 'GET', signal });
-      if (!resp.ok) continue;
-      const html = await resp.text();
-      if (html && (html.includes('medex.com.bd') || html.includes('page-heading-1-l') || html.includes('search-result'))) {
-        return html;
-      }
+      const html = await run();
+      if (html) return html;
     } catch {
-      // try next proxy
-    } finally {
-      cleanup();
+      // try next relay
     }
   }
   throw new Error('MedEx proxy unavailable');
@@ -118,45 +225,59 @@ export async function searchMedexLiveFromApi(
   const cleanQ = query.trim();
   if (cleanQ.length < 2) return [];
 
-  const limit = options.limit ?? 24;
+  const cacheKey = cleanQ.toLowerCase();
+  if (!options.refresh) {
+    const persisted = readPersistedSearchCache(cacheKey);
+    if (persisted && persisted.length > 0) {
+      return persisted;
+    }
+  }
+
+  const limit = options.limit ?? 20;
   const refreshParam = options.refresh ? '&refresh=1' : '';
   const path = `/api/medex/search?q=${encodeURIComponent(cleanQ)}&limit=${limit}${refreshParam}`;
 
-  // 1. Always try same-origin API first (works on localhost, .run.app, AND Cloudflare Pages Functions on iqbal-pharmacy.pages.dev!)
+  // 1. Try same-origin API first (works on localhost, .run.app, AND Cloudflare Pages Functions)
   const sameOriginData = await tryFetchJsonEndpoint<MedexSearchResponse>(
     path,
     { method: 'GET' },
-    15000,
+    14000,
     options.signal
   );
   if (sameOriginData?.ok && Array.isArray(sameOriginData.items)) {
+    writePersistedSearchCache(cacheKey, sameOriginData.items);
     return sameOriginData.items;
   }
 
-  // 2. Try configured remote API base if distinct and returns real JSON (skips AI Studio 302 HTML cookie gate cleanly)
+  // 2. Try configured remote API base if distinct and returns real JSON (skips auth HTML gates)
   const remoteBase = getApiBaseUrl();
   if (remoteBase) {
     const remoteData = await tryFetchJsonEndpoint<MedexSearchResponse>(
       `${remoteBase}${path}`,
       { method: 'GET' },
-      9000,
+      7000,
       options.signal
     );
     if (remoteData?.ok && Array.isArray(remoteData.items)) {
+      writePersistedSearchCache(cacheKey, remoteData.items);
       return remoteData.items;
     }
   }
 
-  // 3. Browser-side CORS relay fallback (guarantees MedEx live search even on pure static hosts)
+  // 3. Browser-side verified HTML relay fallback (rate-safe budget so r.jina.ai stays fast and under 20 req/min)
   if (options.signal?.aborted) return [];
   try {
-    return await searchMedexLiveUsingFetcher(cleanQ, {
-      limit: Math.min(limit, 18),
+    const items = await searchMedexLiveUsingFetcher(cleanQ, {
+      limit: Math.min(limit, 8),
+      maxFetches: 10,
+      concurrency: 3,
       bypassCache: Boolean(options.refresh),
-      fetchHtml: (url, ms) => fetchMedexViaBrowserCorsProxy(url, ms || 7000, options.signal),
+      fetchHtml: (url, ms) => fetchMedexViaBrowserCorsProxy(url, ms || 8000, options.signal),
       brandCache: clientBrandCache,
       searchCache: clientSearchCache,
     });
+    writePersistedSearchCache(cacheKey, items);
+    return items;
   } catch {
     return [];
   }

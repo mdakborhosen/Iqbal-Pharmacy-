@@ -35,6 +35,11 @@
           "minLength": 1,
           "maxLength": 250
         },
+        "deletedIds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of deleted medicine, variant, and inventory IDs"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",

@@ -9,6 +9,7 @@ import {
   Pill,
   ShieldCheck,
   ShoppingCart,
+  Trash2,
   X,
 } from 'lucide-react';
 import { MedicineCatalogItem } from '../types';
@@ -21,6 +22,13 @@ interface MedExMedicineCardProps {
   onAddToPurchaseCart?: (med: MedicineCatalogItem, qty: number) => void;
   onOpenEditPrice?: (med: MedicineCatalogItem) => void;
   onAddVariant?: (baseMed: MedicineCatalogItem) => void;
+  onDeleteMedicine?: (med: MedicineCatalogItem) => void;
+  onDeleteVariant?: (
+    parentMed: MedicineCatalogItem,
+    variantId: string,
+    kind: 'explicit' | 'family',
+    sourceMedId?: string
+  ) => void;
   isCompact?: boolean;
 }
 
@@ -32,12 +40,16 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
   onAddToPurchaseCart,
   onOpenEditPrice,
   onAddVariant,
+  onDeleteMedicine,
+  onDeleteVariant,
   isCompact = false,
 }) => {
   const [showPackImageModal, setShowPackImageModal] = useState(false);
   const [showAlternateBrandsModal, setShowAlternateBrandsModal] = useState(false);
   const [posSuccess, setPosSuccess] = useState(false);
   const [purchaseSuccess, setPurchaseSuccess] = useState(false);
+  const [confirmDeleteMed, setConfirmDeleteMed] = useState(false);
+  const [confirmDeleteVariantKey, setConfirmDeleteVariantKey] = useState<string | null>(null);
 
   // Explicit saved variants on this medicine + other catalog brand family variants (deduplicated)
   const explicitVariants = React.useMemo(() => {
@@ -201,38 +213,125 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
               parentMedicineId: medicine.id,
               variantId: v.id,
             };
+            const varKey = `exp::${v.id}`;
+            const isConfirming = confirmDeleteVariantKey === varKey;
             return (
-              <button
+              <div
                 key={v.id}
-                type="button"
-                onClick={() => onSelectMedicine && onSelectMedicine(expandedMed)}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-teal-900 bg-teal-50/80 border border-teal-500 hover:bg-teal-100 rounded-md transition-colors cursor-pointer shadow-2xs"
-                title={`${v.variantName} (${v.dosageForm} · ${v.strength}) - বিক্রয়মূল্য: ৳${v.unitPrice.toFixed(2)}`}
+                onClick={(e) => e.stopPropagation()}
+                className="inline-flex items-center text-xs font-semibold text-teal-900 bg-teal-50/80 border border-teal-500 rounded-md overflow-hidden shadow-2xs"
               >
-                <span>{v.variantName}</span>
-                <span className="text-[10px] font-normal text-slate-600">{v.dosageForm}</span>
-                <span className="font-mono text-emerald-700 font-bold">৳{v.unitPrice.toFixed(2)}</span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => onSelectMedicine && onSelectMedicine(expandedMed)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 hover:bg-teal-100 transition-colors cursor-pointer"
+                  title={`${v.variantName} (${v.dosageForm} · ${v.strength}) - বিক্রয়মূল্য: ৳${v.unitPrice.toFixed(2)}`}
+                >
+                  <span>{v.variantName}</span>
+                  <span className="text-[10px] font-normal text-slate-600">{v.dosageForm}</span>
+                  <span className="font-mono text-emerald-700 font-bold">৳{v.unitPrice.toFixed(2)}</span>
+                </button>
+                {onDeleteVariant && (
+                  isConfirming ? (
+                    <span className="inline-flex items-center gap-0.5 px-1.5 py-1 bg-red-50 border-l border-red-200 text-[10px]">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onDeleteVariant(medicine, v.id, 'explicit', v.sourceMedicineId);
+                          setConfirmDeleteVariantKey(null);
+                        }}
+                        className="px-1 py-0.5 bg-red-600 text-white rounded font-bold cursor-pointer"
+                        title="ডিলিট নিশ্চিত করুন"
+                      >
+                        ডিলিট
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteVariantKey(null)}
+                        className="px-1 py-0.5 text-slate-600 hover:text-slate-900 cursor-pointer"
+                        title="বাতিল"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteVariantKey(varKey)}
+                      className="px-1.5 py-1 text-red-400 hover:text-red-700 hover:bg-red-50 border-l border-teal-300/60 transition-colors cursor-pointer"
+                      title={`${v.variantName} ভ্যারিয়েন্ট ডিলিট করুন`}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )
+                )}
+              </div>
             );
           })}
 
-          {brandFamilyVariants.map((v) => (
-            <button
-              key={v.id}
-              type="button"
-              onClick={() => onSelectMedicine && onSelectMedicine(v)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-[#1e6b7b] bg-white border border-[#1e6b7b] hover:bg-teal-50 rounded-md transition-colors cursor-pointer shadow-2xs"
-              title={`${v.brandName} ${v.dosageForm} (${v.strength}) - বিক্রয়মূল্য: ৳${v.unitPrice.toFixed(2)}`}
-            >
-              <span>{v.dosageForm !== medicine.dosageForm ? `${v.dosageForm} ` : ''}{v.strength}</span>
-              <span className="font-mono text-emerald-700 font-bold">৳{v.unitPrice.toFixed(2)}</span>
-            </button>
-          ))}
+          {brandFamilyVariants.map((v) => {
+            const varKey = `fam::${v.id}`;
+            const isConfirming = confirmDeleteVariantKey === varKey;
+            return (
+              <div
+                key={v.id}
+                onClick={(e) => e.stopPropagation()}
+                className="inline-flex items-center text-xs font-semibold text-[#1e6b7b] bg-white border border-[#1e6b7b] rounded-md overflow-hidden shadow-2xs"
+              >
+                <button
+                  type="button"
+                  onClick={() => onSelectMedicine && onSelectMedicine(v)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 hover:bg-teal-50 transition-colors cursor-pointer"
+                  title={`${v.brandName} ${v.dosageForm} (${v.strength}) - বিক্রয়মূল্য: ৳${v.unitPrice.toFixed(2)}`}
+                >
+                  <span>{v.dosageForm !== medicine.dosageForm ? `${v.dosageForm} ` : ''}{v.strength}</span>
+                  <span className="font-mono text-emerald-700 font-bold">৳{v.unitPrice.toFixed(2)}</span>
+                </button>
+                {onDeleteVariant && (
+                  isConfirming ? (
+                    <span className="inline-flex items-center gap-0.5 px-1.5 py-1 bg-red-50 border-l border-red-200 text-[10px]">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onDeleteVariant(medicine, v.id, 'family');
+                          setConfirmDeleteVariantKey(null);
+                        }}
+                        className="px-1 py-0.5 bg-red-600 text-white rounded font-bold cursor-pointer"
+                        title="ডিলিট নিশ্চিত করুন"
+                      >
+                        ডিলিট
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteVariantKey(null)}
+                        className="px-1 py-0.5 text-slate-600 hover:text-slate-900 cursor-pointer"
+                        title="বাতিল"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteVariantKey(varKey)}
+                      className="px-1.5 py-1 text-red-400 hover:text-red-700 hover:bg-red-50 border-l border-teal-600/20 transition-colors cursor-pointer"
+                      title={`${v.brandName} ${v.strength} ডিলিট করুন`}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )
+                )}
+              </div>
+            );
+          })}
 
           {onAddVariant && (
             <button
               type="button"
-              onClick={() => onAddVariant(medicine)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onAddVariant(medicine);
+              }}
               className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-md transition-colors cursor-pointer shadow-2xs"
               title="এই ঔষধের নতুন মাত্রা বা ধরণ (যেমন: Seclo 40, Seclo MUPS 20) বা ডাটাবেস থেকে অন্য ঔষধ ভ্যারিয়েন্ট হিসেবে যুক্ত করুন"
             >
@@ -243,7 +342,10 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
         </div>
 
         {/* Bottom Actions Row: [ Alternate Brands ] button + Cart options */}
-        <div className="mt-4 pt-3.5 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+        <div
+          className="mt-4 pt-3.5 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap"
+          onClick={(e) => e.stopPropagation()}
+        >
           <button
             type="button"
             onClick={() => setShowAlternateBrandsModal(true)}
@@ -257,7 +359,7 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
             )}
           </button>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             {onOpenEditPrice && (
               <button
                 type="button"
@@ -266,6 +368,40 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
               >
                 মূল্য পরিবর্তন
               </button>
+            )}
+
+            {onDeleteMedicine && (
+              confirmDeleteMed ? (
+                <div className="inline-flex items-center gap-1 px-2 py-1 bg-red-50 border border-red-200 rounded-md text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onDeleteMedicine(medicine);
+                      setConfirmDeleteMed(false);
+                    }}
+                    className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded cursor-pointer"
+                  >
+                    নিশ্চিত ডিলিট
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteMed(false)}
+                    className="px-1.5 py-0.5 text-slate-600 hover:text-slate-900 cursor-pointer"
+                  >
+                    বাতিল
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteMed(true)}
+                  className="px-2.5 py-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-md flex items-center gap-1 cursor-pointer"
+                  title="এই ঔষধটি তালিকা থেকে ডিলিট করুন"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>ডিলিট</span>
+                </button>
+              )
             )}
 
             {onAddToPosCart && (

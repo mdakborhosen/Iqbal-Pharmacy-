@@ -43,7 +43,6 @@ import {
   getCompleteCompanyGenericItems,
   getShortDosageForm,
   getUnitLabelForForm,
-  isCoreDatabaseMedicineId,
   matchesMedicineQuery,
   mergeMedexItemWithCatalogMatch,
   searchAndRankMedicines,
@@ -68,6 +67,12 @@ interface MedicineCompareViewProps {
     existingMed?: MedicineCatalogItem
   ) => Promise<void>;
   onDeleteCustomMedicine: (medId: string) => Promise<void>;
+  onDeleteMedicineVariant?: (
+    parentMed: MedicineCatalogItem,
+    variantId: string,
+    kind: 'explicit' | 'family',
+    sourceMedId?: string
+  ) => Promise<void>;
   onTogglePriceWatch: (med: MedicineCatalogItem) => Promise<void>;
   onMarkAlertRead: (alertId: string) => Promise<void>;
   onDeletePriceAlert: (alertId: string) => Promise<void>;
@@ -97,6 +102,7 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
   onQuickAddInventory,
   onSaveMedicineCatalog,
   onDeleteCustomMedicine,
+  onDeleteMedicineVariant,
   onTogglePriceWatch,
   onMarkAlertRead,
   onDeletePriceAlert,
@@ -113,6 +119,8 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
   const [activeMedicineId, setActiveMedicineId] = useState<string>('med-a-cal-dx-500');
   const [medViewMode, setMedViewMode] = useState<'cards' | 'table'>('cards');
   const [addedFeedbackId, setAddedFeedbackId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmDeleteDetailVarKey, setConfirmDeleteDetailVarKey] = useState<string | null>(null);
   const [showWatchCenter, setShowWatchCenter] = useState<boolean>(false);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
   const [medexLiveResults, setMedexLiveResults] = useState<MedicineCatalogItem[]>([]);
@@ -203,12 +211,6 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
       return invMatch.purchasePrice;
     }
     return Number((med.unitPrice * 0.88).toFixed(2));
-  };
-
-  const isCoreCatalogMed = (med: MedicineCatalogItem): boolean => {
-    if (med.isCoreProduct) return true;
-    if (isCoreDatabaseMedicineId(med.id)) return true;
-    return !med.isCustom;
   };
 
   const modalBrandMatches = useMemo(() => {
@@ -413,6 +415,7 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
     }
     return (
       catalog.find((m) => m.id === activeMedicineId) ||
+      filteredMedicines.find((m) => m.id === activeMedicineId) ||
       filteredMedicines[0] ||
       catalog[0]
     );
@@ -1458,6 +1461,24 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                         }
                         onOpenEditPrice={(m) => openEditMedicineModal(m)}
                         onAddVariant={(m) => openAddVariantModal(m)}
+                        onDeleteMedicine={(m) => {
+                          void onDeleteCustomMedicine(m.id);
+                          setMedexLiveResults((prev) => prev.filter((item) => item.id !== m.id));
+                          if (activeMedicine?.id === m.id) {
+                            const fallback = filteredMedicines.find((item) => item.id !== m.id);
+                            if (fallback) setActiveMedicineId(fallback.id);
+                          }
+                        }}
+                        onDeleteVariant={
+                          onDeleteMedicineVariant
+                            ? (parentMed, varId, kind, sourceMedId) => {
+                                void onDeleteMedicineVariant(parentMed, varId, kind, sourceMedId);
+                                if (kind === 'family') {
+                                  setMedexLiveResults((prev) => prev.filter((item) => item.id !== varId));
+                                }
+                              }
+                            : undefined
+                        }
                       />
                     </div>
                   ))
@@ -1497,7 +1518,6 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                         watchedIds.has(med.id) ||
                         watchedIds.has(med.brandName.toLowerCase());
                       const purchasePriceVal = getMedPurchasePrice(med);
-                      const isCore = isCoreCatalogMed(med);
                       const genericDosages =
                         med.availableDosages ||
                         Array.from(
@@ -1649,11 +1669,32 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                                 <span>মূল্য পরিবর্তন</span>
                               </button>
 
-                              {!isCore && (
+                              {confirmDeleteId === `tbl::${med.id}` ? (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-red-50 border border-red-200 rounded text-[11px]">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      void onDeleteCustomMedicine(med.id);
+                                      setMedexLiveResults((prev) => prev.filter((item) => item.id !== med.id));
+                                      setConfirmDeleteId(null);
+                                    }}
+                                    className="px-1.5 py-0.5 bg-red-600 text-white font-bold rounded cursor-pointer"
+                                  >
+                                    ডিলিট
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteId(null)}
+                                    className="px-1 text-slate-600 hover:text-slate-900 cursor-pointer"
+                                  >
+                                    ✕
+                                  </button>
+                                </span>
+                              ) : (
                                 <button
                                   type="button"
-                                  onClick={() => onDeleteCustomMedicine(med.id)}
-                                  title="কাস্টম ওষুধ মুছে ফেলুন"
+                                  onClick={() => setConfirmDeleteId(`tbl::${med.id}`)}
+                                  title="এই ঔষধটি ডিলিট করুন"
                                   className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors cursor-pointer"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -1763,6 +1804,22 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                     }
                     onOpenEditPrice={(m) => openEditMedicineModal(m)}
                     onAddVariant={(m) => openAddVariantModal(m)}
+                    onDeleteMedicine={(m) => {
+                      void onDeleteCustomMedicine(m.id);
+                      setMedexLiveResults((prev) => prev.filter((item) => item.id !== m.id));
+                      const fallback = filteredMedicines.find((item) => item.id !== m.id);
+                      if (fallback) setActiveMedicineId(fallback.id);
+                    }}
+                    onDeleteVariant={
+                      onDeleteMedicineVariant
+                        ? (parentMed, varId, kind, sourceMedId) => {
+                            void onDeleteMedicineVariant(parentMed, varId, kind, sourceMedId);
+                            if (kind === 'family') {
+                              setMedexLiveResults((prev) => prev.filter((item) => item.id !== varId));
+                            }
+                          }
+                        : undefined
+                    }
                   />
                 </div>
 
@@ -1839,25 +1896,67 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                         {activeMedicine.variants.map((v) => {
                           const varCompId = `${activeMedicine.parentMedicineId || activeMedicine.id}__var__${v.id}`;
                           const isCurr = activeMedicine.id === varCompId;
+                          const delKey = `dexp::${v.id}`;
+                          const isConfirming = confirmDeleteDetailVarKey === delKey;
                           return (
-                            <button
+                            <div
                               key={v.id}
-                              type="button"
-                              onClick={() => setActiveMedicineId(varCompId)}
-                              className={`px-2.5 py-1 text-xs rounded border transition-all cursor-pointer flex items-center gap-1.5 ${
+                              className={`inline-flex items-center rounded border overflow-hidden transition-all ${
                                 isCurr
                                   ? 'bg-emerald-700 text-white border-emerald-700 font-bold shadow-xs'
-                                  : 'bg-emerald-50/60 text-emerald-950 border-emerald-300 hover:bg-emerald-100'
+                                  : 'bg-emerald-50/60 text-emerald-950 border-emerald-300'
                               }`}
                             >
-                              <span className="font-bold">{v.variantName}</span>
-                              <span className={`text-[10px] ${isCurr ? 'text-emerald-100' : 'text-slate-500'}`}>
-                                ({v.dosageForm} · {v.strength})
-                              </span>
-                              <span className={`font-mono font-bold ${isCurr ? 'text-white' : 'text-emerald-700'}`}>
-                                — ক্রয় ৳{Number(v.purchasePrice || v.unitPrice * 0.88).toFixed(2)} | বিক্রয় ৳{Number(v.unitPrice).toFixed(2)}
-                              </span>
-                            </button>
+                              <button
+                                type="button"
+                                onClick={() => setActiveMedicineId(varCompId)}
+                                className="px-2.5 py-1 text-xs cursor-pointer flex items-center gap-1.5 hover:opacity-90"
+                              >
+                                <span className="font-bold">{v.variantName}</span>
+                                <span className={`text-[10px] ${isCurr ? 'text-emerald-100' : 'text-slate-500'}`}>
+                                  ({v.dosageForm} · {v.strength})
+                                </span>
+                                <span className={`font-mono font-bold ${isCurr ? 'text-white' : 'text-emerald-700'}`}>
+                                  — ক্রয় ৳{Number(v.purchasePrice || v.unitPrice * 0.88).toFixed(2)} | বিক্রয় ৳{Number(v.unitPrice).toFixed(2)}
+                                </span>
+                              </button>
+                              {onDeleteMedicineVariant && (
+                                isConfirming ? (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-1 bg-red-50 text-red-900 border-l border-red-200 text-[10px]">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        void onDeleteMedicineVariant(activeMedicine, v.id, 'explicit', v.sourceMedicineId);
+                                        setConfirmDeleteDetailVarKey(null);
+                                      }}
+                                      className="px-1.5 py-0.5 bg-red-600 text-white font-bold rounded cursor-pointer"
+                                    >
+                                      ডিলিট
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmDeleteDetailVarKey(null)}
+                                      className="px-1 text-slate-600 hover:text-slate-900 cursor-pointer"
+                                    >
+                                      ✕
+                                    </button>
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteDetailVarKey(delKey)}
+                                    className={`px-1.5 py-1 border-l transition-colors cursor-pointer ${
+                                      isCurr
+                                        ? 'border-emerald-500 text-emerald-100 hover:bg-red-600 hover:text-white'
+                                        : 'border-emerald-200 text-red-500 hover:bg-red-50 hover:text-red-700'
+                                    }`}
+                                    title={`${v.variantName} ভ্যারিয়েন্ট ডিলিট করুন`}
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                )
+                              )}
+                            </div>
                           );
                         })}
                       </div>
@@ -1872,32 +1971,77 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                           {activeMedicine.brandName}-এর উপলব্ধ সকল প্রকারভেদ ও মাত্রা ({activeBrandFormStrengthVariants.length}টি ধরন):
                         </div>
                         <span className="text-[10px] text-teal-700 font-medium">
-                          যে প্রকারটি স্টকে বা মেমোতে নিবেন ক্লিক করুন
+                          ক্লিক করে দেখুন অথবা × চাপ দিয়ে ডিলিট করুন
                         </span>
                       </div>
                       <div className="flex flex-wrap gap-1.5">
                         {activeBrandFormStrengthVariants.map((v) => {
                           const isCurr = v.id === activeMedicine.id;
+                          const delKey = `dfam::${v.id}`;
+                          const isConfirming = confirmDeleteDetailVarKey === delKey;
                           return (
-                            <button
+                            <div
                               key={v.id}
-                              type="button"
-                              onClick={() => setActiveMedicineId(v.id)}
-                              className={`px-2.5 py-1 text-xs rounded border transition-all cursor-pointer flex items-center gap-1.5 ${
+                              className={`inline-flex items-center rounded border overflow-hidden transition-all ${
                                 isCurr
                                   ? 'bg-teal-700 text-white border-teal-700 font-bold shadow-xs'
-                                  : 'bg-white text-slate-700 border-slate-300 hover:border-teal-600 hover:bg-teal-50/40'
+                                  : 'bg-white text-slate-700 border-slate-300'
                               }`}
                             >
-                              <span>{formatBrandVariantLabel(v, activeMedicine.brandName)}</span>
-                              <span
-                                className={`font-mono font-bold ${
-                                  isCurr ? 'text-teal-100' : 'text-teal-700'
-                                }`}
+                              <button
+                                type="button"
+                                onClick={() => setActiveMedicineId(v.id)}
+                                className="px-2.5 py-1 text-xs cursor-pointer flex items-center gap-1.5 hover:opacity-90"
                               >
-                                — ক্রয় ৳{getMedPurchasePrice(v).toFixed(2)} | বিক্রয় ৳{v.unitPrice.toFixed(2)}
-                              </span>
-                            </button>
+                                <span>{formatBrandVariantLabel(v, activeMedicine.brandName)}</span>
+                                <span
+                                  className={`font-mono font-bold ${
+                                    isCurr ? 'text-teal-100' : 'text-teal-700'
+                                  }`}
+                                >
+                                  — ক্রয় ৳{getMedPurchasePrice(v).toFixed(2)} | বিক্রয় ৳{v.unitPrice.toFixed(2)}
+                                </span>
+                              </button>
+                              {isConfirming ? (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-1 bg-red-50 text-red-900 border-l border-red-200 text-[10px]">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      void onDeleteCustomMedicine(v.id);
+                                      setMedexLiveResults((prev) => prev.filter((item) => item.id !== v.id));
+                                      setConfirmDeleteDetailVarKey(null);
+                                      if (isCurr) {
+                                        const nextVar = activeBrandFormStrengthVariants.find((x) => x.id !== v.id);
+                                        if (nextVar) setActiveMedicineId(nextVar.id);
+                                      }
+                                    }}
+                                    className="px-1.5 py-0.5 bg-red-600 text-white font-bold rounded cursor-pointer"
+                                  >
+                                    ডিলিট
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteDetailVarKey(null)}
+                                    className="px-1 text-slate-600 hover:text-slate-900 cursor-pointer"
+                                  >
+                                    ✕
+                                  </button>
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteDetailVarKey(delKey)}
+                                  className={`px-1.5 py-1 border-l transition-colors cursor-pointer ${
+                                    isCurr
+                                      ? 'border-teal-500 text-teal-100 hover:bg-red-600 hover:text-white'
+                                      : 'border-slate-200 text-red-400 hover:bg-red-50 hover:text-red-700'
+                                  }`}
+                                  title={`${v.brandName} ${v.strength} ভ্যারিয়েন্টটি ডিলিট করুন`}
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
                           );
                         })}
                       </div>
@@ -1932,18 +2076,39 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                         : 'মূল্য ট্র্যাক করুন'}
                     </button>
 
-                    {isCoreCatalogMed(activeMedicine) ? (
-                      <span className="px-2.5 py-1.5 text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-200 rounded-md">
-                        মূল ডাটাবেস প্রোডাক্ট (ডিলিট করা যাবে না)
-                      </span>
+                    {confirmDeleteId === `det::${activeMedicine.id}` ? (
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-red-50 border border-red-200 rounded-md text-xs">
+                        <span className="font-semibold text-red-800">সত্যিই ডিলিট করবেন?</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const targetId = activeMedicine.id;
+                            void onDeleteCustomMedicine(targetId);
+                            setMedexLiveResults((prev) => prev.filter((item) => item.id !== targetId));
+                            setConfirmDeleteId(null);
+                            const nextMed = filteredMedicines.find((m) => m.id !== targetId);
+                            if (nextMed) setActiveMedicineId(nextMed.id);
+                          }}
+                          className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded cursor-pointer"
+                        >
+                          হ্যাঁ, ডিলিট
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteId(null)}
+                          className="px-2 py-0.5 bg-white border border-slate-300 text-slate-700 rounded cursor-pointer"
+                        >
+                          বাতিল
+                        </button>
+                      </div>
                     ) : (
                       <button
                         type="button"
-                        onClick={() => onDeleteCustomMedicine(activeMedicine.id)}
+                        onClick={() => setConfirmDeleteId(`det::${activeMedicine.id}`)}
                         className="px-3 py-1.5 text-xs font-semibold bg-white border border-red-200 hover:bg-red-50 text-red-600 rounded-md flex items-center gap-1.5 cursor-pointer"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
-                        কাস্টম প্রোডাক্ট মুছুন
+                        এই ঔষধটি ডিলিট করুন
                       </button>
                     )}
                   </div>

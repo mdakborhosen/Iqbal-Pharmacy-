@@ -87,7 +87,6 @@ import {
   getInventoryStockForMedicine,
   getInvoiceFormPrefix,
   getShortDosageForm,
-  isCoreDatabaseMedicineId,
   isOfficialPharmaCompanyName,
   isValidMedexCompanyName,
   parseTransactionItemsDetailed,
@@ -491,7 +490,12 @@ function mergeEntityList<T extends { id: string; shopId?: string; updatedAtMs?: 
   return Array.from(byId.values());
 }
 
-function buildShopCloudPayload(shop: ShopProfile, ownerId = SHARED_PHARMACY_OWNER_ID, shopId = 'shop_iqbal_pharmacy') {
+function buildShopCloudPayload(
+  shop: ShopProfile,
+  ownerId = SHARED_PHARMACY_OWNER_ID,
+  shopId = 'shop_iqbal_pharmacy',
+  deletedIds?: string[]
+) {
   return {
     id: shop.id || shopId,
     shopId: sanitizeString(shopId, 128, 'shop_iqbal_pharmacy'),
@@ -503,6 +507,7 @@ function buildShopCloudPayload(shop: ShopProfile, ownerId = SHARED_PHARMACY_OWNE
     branches: shop.branches || [],
     activeBranchId: shop.activeBranchId || 'branch-1',
     customInvoiceSettings: shop.customInvoiceSettings || {},
+    ...(Array.isArray(deletedIds) ? { deletedIds: deletedIds.slice(0, 1500) } : {}),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
@@ -849,28 +854,38 @@ export default function App() {
   const isOnline = useOnlineStatus();
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
 
-  // Persistent Deleted IDs registry so deleted custom items NEVER reappear on refresh (core products cannot be deleted)
+  // Persistent Deleted IDs registry so deleted medicines, variants, and items NEVER reappear on refresh
   const [deletedIds, setDeletedIds] = useState<string[]>(() => {
-    const raw = loadLocal<string[]>(STORAGE_KEYS.DELETED_IDS, []);
-    const filtered = raw.filter(
-      (id) => !isCoreDatabaseMedicineId(id) && !id.startsWith('inv-seed-')
-    );
-    if (filtered.length !== raw.length) {
-      saveLocal(STORAGE_KEYS.DELETED_IDS, filtered);
-    }
-    return filtered;
+    return loadLocal<string[]>(STORAGE_KEYS.DELETED_IDS, []);
   });
 
+  const deletedIdsRef = useRef<string[]>(deletedIds);
+  deletedIdsRef.current = deletedIds;
   const deletedIdsSet = useMemo(() => new Set(deletedIds), [deletedIds]);
 
+  const persistDeletedIdsToCloud = (nextList: string[]) => {
+    const activeSid = isCloudLoggedIn
+      ? computeCurrentShopId(cloudSession, activeStaff, user)
+      : 'shop_guest';
+    if ((user || isCloudLoggedIn) && activeSid && activeSid !== 'shop_guest') {
+      setDoc(
+        doc(db, 'shops', activeSid),
+        {
+          deletedIds: nextList.slice(0, 1500),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      ).catch(() => {});
+    }
+  };
+
   const markDeletedIds = (ids: string | string[]) => {
-    const list = (Array.isArray(ids) ? ids : [ids]).filter(
-      (id) => !isCoreDatabaseMedicineId(id) && !id.startsWith('inv-seed-')
-    );
+    const list = (Array.isArray(ids) ? ids : [ids]).filter((id) => Boolean(id && String(id).trim()));
     if (list.length === 0) return;
     setDeletedIds((prev) => {
       const next = Array.from(new Set([...prev, ...list]));
       saveLocal(STORAGE_KEYS.DELETED_IDS, next);
+      persistDeletedIdsToCloud(next);
       return next;
     });
   };
@@ -880,6 +895,7 @@ export default function App() {
       if (!prev.includes(id)) return prev;
       const next = prev.filter((item) => item !== id);
       saveLocal(STORAGE_KEYS.DELETED_IDS, next);
+      persistDeletedIdsToCloud(next);
       return next;
     });
   };
@@ -911,11 +927,7 @@ export default function App() {
 
   const [inventory, setInventory] = useState<InventoryItem[]>(() => {
     if (!bootLoggedIn) return [];
-    const initialDeleted = new Set(
-      loadLocal<string[]>(STORAGE_KEYS.DELETED_IDS, []).filter(
-        (id) => !isCoreDatabaseMedicineId(id) && !id.startsWith('inv-seed-')
-      )
-    );
+    const initialDeleted = new Set(loadLocal<string[]>(STORAGE_KEYS.DELETED_IDS, []));
     const saved = loadLocal<InventoryItem[]>(
       getScopedStorageKey(STORAGE_KEYS.INVENTORY, bootShopId),
       loadLocal<InventoryItem[]>(
@@ -927,10 +939,7 @@ export default function App() {
     const byKey = new Map<string, InventoryItem>();
     for (const rawItem of saved) {
       const canonId = getCanonicalDocId(rawItem.id, bootShopId);
-      const isCoreSeed =
-        canonId.startsWith('inv-seed-') ||
-        INITIAL_DEMO_INVENTORY.some((d) => d.id === canonId || d.medicineId === rawItem.medicineId);
-      if (!isCoreSeed && (initialDeleted.has(rawItem.id) || initialDeleted.has(canonId))) {
+      if (initialDeleted.has(rawItem.id) || initialDeleted.has(canonId)) {
         continue;
       }
       const normalizedItem: InventoryItem = {
@@ -951,7 +960,12 @@ export default function App() {
 
     if (bootShopId === 'shop_iqbal_pharmacy') {
       for (const demoItem of INITIAL_DEMO_INVENTORY) {
-        if (!existingIds.has(demoItem.id) && !existingMedIds.has(demoItem.medicineId)) {
+        if (
+          !initialDeleted.has(demoItem.id) &&
+          !initialDeleted.has(demoItem.medicineId) &&
+          !existingIds.has(demoItem.id) &&
+          !existingMedIds.has(demoItem.medicineId)
+        ) {
           cleaned.push({ ...demoItem, shopId: bootShopId });
           changed = true;
         }
@@ -1043,8 +1057,7 @@ export default function App() {
     const byId = new Map<string, CustomMedicine>();
     for (const m of saved) {
       const canonId = getCanonicalDocId(m.id, bootShopId);
-      const isCore = isCoreDatabaseMedicineId(canonId) || CATALOG_BY_ID.has(canonId);
-      if (!isCore && (initialDeleted.has(m.id) || initialDeleted.has(canonId))) continue;
+      if (initialDeleted.has(m.id) || initialDeleted.has(canonId)) continue;
       const norm = { ...m, id: canonId, shopId: bootShopId };
       const prev = byId.get(canonId);
       if (!prev || (norm.updatedAtMs || 0) >= (prev.updatedAtMs || 0)) {
@@ -1155,10 +1168,7 @@ export default function App() {
       shopId = effectiveShopId
     ): T[] => {
       const byId = new Map<string, T>();
-      const canDelete = (id: string) => {
-        if (isInv && INITIAL_DEMO_INVENTORY.some((d) => d.id === id)) return false;
-        return true;
-      };
+      const canDelete = (_id: string) => true;
 
       for (const r of remoteList) {
         if (!r || !r.id) continue;
@@ -1295,7 +1305,7 @@ export default function App() {
               ...(Array.isArray(remote.deletedIds) ? remote.deletedIds : []),
               ...deletedIds,
             ])
-          ).filter((id) => !isCoreDatabaseMedicineId(id) && !id.startsWith('inv-seed-'));
+          );
           const mergedDeletedSet = new Set(mergedDeletedArr);
           setDeletedIds(mergedDeletedArr);
           saveLocal(STORAGE_KEYS.DELETED_IDS, mergedDeletedArr);
@@ -1683,11 +1693,7 @@ export default function App() {
       const isInv = Boolean(options?.isInventory);
       const isCMed = Boolean(options?.isCustomMeds);
 
-      const canBeDeleted = (id: string) => {
-        if (isInv && INITIAL_DEMO_INVENTORY.some((d) => d.id === id)) return false;
-        if (isCMed && (isCoreDatabaseMedicineId(id) || CATALOG_BY_ID.has(id))) return false;
-        return true;
-      };
+      const canBeDeleted = (_id: string) => true;
 
       const validCloud = cloudItems.filter((item) => {
         const canonId = getCanonicalDocId(item.id, effectiveShopId);
@@ -1740,8 +1746,17 @@ export default function App() {
       doc(db, 'shops', effectiveShopId),
       (snap) => {
         if (snap.exists()) {
-          const rawData = snap.data() as Omit<ShopProfile, 'id'>;
+          const rawData = snap.data() as Omit<ShopProfile, 'id'> & { deletedIds?: string[] };
           const bestTs = getDocTimestampMs(rawData as Record<string, unknown>);
+          if (Array.isArray(rawData.deletedIds) && rawData.deletedIds.length > 0) {
+            setDeletedIds((prev) => {
+              const mergedDel = Array.from(new Set([...prev, ...rawData.deletedIds!]));
+              if (mergedDel.length !== prev.length) {
+                saveLocal(STORAGE_KEYS.DELETED_IDS, mergedDel);
+              }
+              return mergedDel.length !== prev.length ? mergedDel : prev;
+            });
+          }
           const rawShop: ShopProfile = {
             id: effectiveShopId,
             shopId: effectiveShopId,
@@ -2367,9 +2382,15 @@ export default function App() {
     };
   }, [serverHydrated, authReady, isCloudLoggedIn, user?.uid, cloudSession?.uid, effectiveShopId]);
 
-  // Combined Medicine Catalog (Built-in 21,250+ DGDA core products can NEVER be deleted, but their purchasePrice & unitPrice can be modified)
+  // Combined Medicine Catalog (All medicines & variants can be edited or deleted)
   const fullCatalog = useMemo<MedicineCatalogItem[]>(() => {
-    const baseList = BD_MEDICINES_CATALOG;
+    const isDeletedMedId = (id: string) =>
+      deletedIdsSet.has(id) || deletedIdsSet.has(getCanonicalDocId(id, effectiveShopId));
+
+    const baseList =
+      deletedIdsSet.size === 0
+        ? BD_MEDICINES_CATALOG
+        : BD_MEDICINES_CATALOG.filter((m) => !isDeletedMedId(m.id));
 
     if (customMedicines.length === 0) return baseList;
 
@@ -2378,13 +2399,7 @@ export default function App() {
     const customByBrandStrength = new Map<string, CustomMedicine>();
 
     for (const cm of customMedicines) {
-      const isCore =
-        isCoreDatabaseMedicineId(cm.id) ||
-        CATALOG_BY_ID.has(cm.id) ||
-        CATALOG_BY_BRAND_STRENGTH.has(
-          `${cm.brandName.toLowerCase()}__${cm.strength.toLowerCase()}`
-        );
-      if (!isCore && deletedIdsSet.has(cm.id)) continue;
+      if (isDeletedMedId(cm.id)) continue;
 
       customById.set(cm.id, cm);
       customByBrandStrengthForm.set(
@@ -2521,7 +2536,7 @@ export default function App() {
       }
       return item;
     });
-  }, [customMedicines, deletedIdsSet]);
+  }, [customMedicines, deletedIdsSet, effectiveShopId]);
 
   const fullCatalogRef = useRef<MedicineCatalogItem[]>(fullCatalog);
   fullCatalogRef.current = fullCatalog;
@@ -2793,8 +2808,7 @@ export default function App() {
         for (const d of customMedSnap.docs) {
           const data = d.data() as Record<string, unknown>;
           const canonId = getCanonicalDocId((data.id as string) || d.id, targetShopId);
-          const isCore = isCoreDatabaseMedicineId(canonId) || CATALOG_BY_ID.has(canonId);
-          if (!isCore && (activeDeleted.has(d.id) || activeDeleted.has(canonId))) continue;
+          if (activeDeleted.has(d.id) || activeDeleted.has(canonId)) continue;
           const ts = getDocTimestampMs(data);
           const item: CustomMedicine = {
             ...(data as Omit<CustomMedicine, 'id'>),
@@ -6435,23 +6449,6 @@ export default function App() {
   const handleDeleteInventoryItem = async (id: string) => {
     const canonId = getCanonicalDocId(id, effectiveShopId);
     const scopedId = getScopedFirestoreDocId(effectiveShopId, canonId);
-    const targetItem = inventory.find((i) => getCanonicalDocId(i.id, effectiveShopId) === canonId);
-    if (targetItem) {
-      const isCore =
-        canonId.startsWith('inv-seed-') ||
-        INITIAL_DEMO_INVENTORY.some((d) => d.id === canonId) ||
-        isCoreDatabaseMedicineId(targetItem.medicineId) ||
-        CATALOG_BY_ID.has(targetItem.medicineId) ||
-        CATALOG_BY_BRAND_STRENGTH.has(
-          `${targetItem.brandName.toLowerCase()}__${targetItem.strength.toLowerCase()}`
-        );
-      if (isCore) {
-        showToast(
-          'ডাটাবেস এ থাকা মূল প্রোডাক্ট ডিলিট করা যাবে না! তবে এর ক্রয় ও বিক্রয় মূল্য পরিবর্তন করতে পারবেন।'
-        );
-        return;
-      }
-    }
 
     markDeletedIds([id, canonId, scopedId]);
     setInventory((prev) => {
@@ -6470,7 +6467,7 @@ export default function App() {
         1200
       );
     }
-    showToast('কাস্টম স্টক আইটেম মুছে ফেলা হয়েছে');
+    showToast('স্টক আইটেম তালিকা থেকে মুছে ফেলা হয়েছে');
   };
 
   // Customer & Ledger CRUD Handlers
@@ -6868,6 +6865,13 @@ export default function App() {
         ? `medex_${mx.medexBrandId}`
         : mx.id;
       const canonId = getCanonicalDocId(rawId, effectiveShopId);
+      if (
+        deletedIdsRef.current.includes(rawId) ||
+        deletedIdsRef.current.includes(canonId) ||
+        (mx.id && deletedIdsRef.current.includes(mx.id))
+      ) {
+        continue;
+      }
       if (seenIds.has(canonId)) continue;
       seenIds.add(canonId);
 
@@ -7233,34 +7237,118 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [isCloudLoggedIn, customMedicines.length]);
 
-  const handleDeleteCustomMedicine = async (medId: string) => {
-    const canonId = getCanonicalDocId(medId, effectiveShopId);
-    const scopedId = getScopedFirestoreDocId(effectiveShopId, canonId);
-    if (isCoreDatabaseMedicineId(canonId) || CATALOG_BY_ID.has(canonId)) {
-      showToast(
-        'ডাটাবেস এ থাকা মূল প্রোডাক্ট ডিলিট করা যাবে না! তবে ক্রয় মূল্য ও বিক্রয় মূল্য পরিবর্তন করা যাবে।'
-      );
+  const handleDeleteMedicineVariant = async (
+    parentMed: MedicineCatalogItem,
+    variantId: string,
+    kind: 'explicit' | 'family',
+    sourceMedId?: string
+  ) => {
+    if (kind === 'family') {
+      await handleDeleteCustomMedicine(variantId);
       return;
     }
 
-    markDeletedIds([medId, canonId, scopedId]);
+    const realParentId = parentMed.parentMedicineId || parentMed.id;
+    const resolvedParent =
+      fullCatalogRef.current.find((m) => m.id === realParentId) || parentMed;
+    const currentVariants = Array.isArray(resolvedParent.variants) ? resolvedParent.variants : [];
+    const targetVariant = currentVariants.find((v) => v.id === variantId);
+    const nextVariants = currentVariants.filter((v) => v.id !== variantId);
+
+    await handleSaveMedicineCatalog(
+      {
+        brandName: resolvedParent.brandName,
+        genericName: resolvedParent.genericName,
+        companyName: resolvedParent.companyName,
+        strength: resolvedParent.strength,
+        dosageForm: resolvedParent.dosageForm,
+        packSize: resolvedParent.packSize,
+        purchasePrice: resolvedParent.purchasePrice,
+        unitPrice: resolvedParent.unitPrice,
+        stripPrice: resolvedParent.stripPrice,
+        therapeuticClass: resolvedParent.therapeuticClass,
+        indication: resolvedParent.indication,
+        variants: nextVariants,
+      },
+      resolvedParent
+    );
+
+    const absorbedSourceId = sourceMedId || targetVariant?.sourceMedicineId;
+    if (absorbedSourceId) {
+      const canonSrc = getCanonicalDocId(absorbedSourceId, effectiveShopId);
+      const scopedSrc = getScopedFirestoreDocId(effectiveShopId, canonSrc);
+      markDeletedIds([absorbedSourceId, canonSrc, scopedSrc]);
+    }
+    showToast('নির্বাচিত ভ্যারিয়েন্টটি ডিলিট করা হয়েছে');
+  };
+
+  const handleDeleteCustomMedicine = async (medId: string) => {
+    if (medId.includes('__var__')) {
+      const [parentId, variantId] = medId.split('__var__');
+      const parentMed = fullCatalogRef.current.find((m) => m.id === parentId);
+      if (parentMed && variantId) {
+        await handleDeleteMedicineVariant(parentMed, variantId, 'explicit');
+        return;
+      }
+    }
+
+    const canonId = getCanonicalDocId(medId, effectiveShopId);
+    const scopedId = getScopedFirestoreDocId(effectiveShopId, canonId);
+    const targetMed = fullCatalogRef.current.find(
+      (m) => m.id === medId || getCanonicalDocId(m.id, effectiveShopId) === canonId
+    );
+    const absorbedIds =
+      targetMed?.variants?.map((v) => v.sourceMedicineId).filter(Boolean) as string[] | undefined;
+
+    markDeletedIds([medId, canonId, scopedId, ...(absorbedIds || [])]);
+
+    // Remove the deleted medicine and clean up any variant reference pointing to it
+    const updatedParentsToSync: CustomMedicine[] = [];
     setCustomMedicines((prev) => {
-      const next = prev.filter((m) => getCanonicalDocId(m.id, effectiveShopId) !== canonId);
+      const next: CustomMedicine[] = [];
+      for (const m of prev) {
+        const mCanon = getCanonicalDocId(m.id, effectiveShopId);
+        if (m.id === medId || mCanon === canonId) continue;
+        if (Array.isArray(m.variants) && m.variants.some((v) => v.sourceMedicineId === medId || v.sourceMedicineId === canonId)) {
+          const cleanedVars = m.variants.filter((v) => v.sourceMedicineId !== medId && v.sourceMedicineId !== canonId);
+          const updatedParent: CustomMedicine = {
+            ...m,
+            variants: cleanedVars,
+            updatedAtMs: Date.now(),
+          };
+          updatedParentsToSync.push(updatedParent);
+          next.push(updatedParent);
+        } else {
+          next.push(m);
+        }
+      }
       saveLocal(STORAGE_KEYS.CUSTOM_MEDS, next);
       saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOM_MEDS, effectiveShopId), next);
       return next;
     });
+
     if (user || isCloudLoggedIn) {
-      await fireAndRaceFirestoreWrites(
-        Array.from(new Set([scopedId, canonId, medId])).map((delId) => ({
+      const cloudOps: Array<{ promise: Promise<unknown>; operationType: OperationType; path: string | null }> = [
+        ...Array.from(new Set([scopedId, canonId, medId])).map((delId) => ({
           promise: deleteDoc(doc(db, 'custom_medicines', delId)),
           operationType: OperationType.DELETE,
           path: `custom_medicines/${delId}`,
         })),
-        1200
-      );
+        ...updatedParentsToSync.map((p) => {
+          const pScoped = getScopedFirestoreDocId(effectiveShopId, getCanonicalDocId(p.id, effectiveShopId));
+          return {
+            promise: setDoc(
+              doc(db, 'custom_medicines', pScoped),
+              buildCustomMedCloudPayload(p, effectiveCloudUid, effectiveShopId)
+            ),
+            operationType: OperationType.WRITE,
+            path: `custom_medicines/${pScoped}`,
+          };
+        }),
+      ];
+      await fireAndRaceFirestoreWrites(cloudOps, 1200);
     }
-    showToast('কাস্টম ওষুধটি তালিকা থেকে মুছে ফেলা হয়েছে');
+    showToast('ওষুধটি তালিকা থেকে ডিলিট করা হয়েছে');
   };
 
   // Price Watchlist & Alert Handlers
@@ -8719,6 +8807,7 @@ export default function App() {
                   onQuickAddInventory={handleQuickAddInventoryFromCompare}
                   onSaveMedicineCatalog={handleSaveMedicineCatalog}
                   onDeleteCustomMedicine={handleDeleteCustomMedicine}
+                  onDeleteMedicineVariant={handleDeleteMedicineVariant}
                   onTogglePriceWatch={handleTogglePriceWatch}
                   onMarkAlertRead={handleMarkAlertRead}
                   onDeletePriceAlert={handleDeletePriceAlert}

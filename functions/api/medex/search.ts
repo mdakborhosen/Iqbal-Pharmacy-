@@ -39,7 +39,9 @@ export async function onRequestGet(context: CfPagesContext): Promise<Response> {
     }
 
     const items = await searchMedexLiveUsingFetcher(q, {
-      limit,
+      limit: Math.min(limit, 16),
+      maxFetches: 26,
+      concurrency: 8,
       bypassCache: refresh,
       fetchHtml: (targetUrl, timeoutMs) =>
         defaultMedexFetchHtml(

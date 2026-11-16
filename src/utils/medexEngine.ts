@@ -434,14 +434,14 @@ export function extractBrandUrlsFromHtml(html: string): string[] {
 
 export function extractSearchRowPreviews(html: string): SearchRowPreview[] {
   const rows: SearchRowPreview[] = [];
-  const rowMatches = html.matchAll(
-    /<div class="search-result-row">([\s\S]*?)<\/div>\s*<p>([\s\S]*?)<\/p>/gi
-  );
-  for (const m of rowMatches) {
-    const titleBlock = m[1] || '';
-    const descBlock = m[2] || '';
-    const anchorMatch = titleBlock.match(
-      /<a\s+href=["']([^"'#?]+)["'][^>]*>([\s\S]*?)<\/a>/i
+  // Ignore sponsored .ad rows; match search-result-row blocks safely even with nested divs
+  const chunks = html.split(/<div\s+class=["']search-result-row(["']|\s+[^"']*["'])/gi);
+  for (let i = 1; i < chunks.length; i += 2) {
+    const classTail = chunks[i] || '';
+    if (/\bad\b/i.test(classTail)) continue;
+    const body = (chunks[i + 1] || '').slice(0, 1500);
+    const anchorMatch = body.match(
+      /<a\s+[^>]*href=["']([^"'#?]+)["'][^>]*>([\s\S]*?)<\/a>/i
     );
     if (!anchorMatch) continue;
     const rawUrl = anchorMatch[1].split('?')[0];
@@ -454,6 +454,8 @@ export function extractSearchRowPreviews(html: string): SearchRowPreview[] {
     const formMatch = titleText.match(/\(([^)]+)\)\s*$/);
     const rawForm = formMatch ? formMatch[1].trim() : '';
     const withoutForm = formMatch ? titleText.slice(0, formMatch.index).trim() : titleText;
+    const descMatch = body.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
+    const descBlock = descMatch ? descMatch[1] : '';
     const genMatch = descBlock.match(/<i>\(([\s\S]*?)\)<\/i>/i);
     const genericName = genMatch ? stripHtmlTags(genMatch[1]) : withoutForm;
     const mfgText = stripHtmlTags(descBlock);
@@ -468,6 +470,43 @@ export function extractSearchRowPreviews(html: string): SearchRowPreview[] {
       dosageForm: mapMedexDosageForm(rawForm, withoutForm),
       genericName,
       companyName,
+    });
+  }
+  return rows;
+}
+
+export function extractAjaxSearchPreviews(html: string): SearchRowPreview[] {
+  const rows: SearchRowPreview[] = [];
+  const anchorMatches = html.matchAll(
+    /<a\b[^>]*href=["']([^"'#?]+)["'][^>]*class=["'][^"']*\blsri\b([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi
+  );
+  for (const m of anchorMatches) {
+    const classTail = m[2] || '';
+    if (/\bad\b/i.test(classTail)) continue;
+    const rawUrl = (m[1] || '').split('?')[0];
+    if (!/\/brands\/\d+\//i.test(rawUrl)) continue;
+    const fullUrl = rawUrl.startsWith('http')
+      ? rawUrl
+      : `${MEDEX_BASE_URL}${rawUrl.startsWith('/') ? '' : '/'}${rawUrl}`;
+    const brandId = fullUrl.match(/\/brands\/(\d+)/)?.[1] || '';
+    const inner = m[3] || '';
+    const titleMatch = inner.match(/<li[^>]*title=["']([^"']*)["']/i);
+    const rawForm = titleMatch ? decodeHtmlEntities(titleMatch[1]) : '';
+    const strengthMatch = inner.match(/<span[^>]*class=["'][^"']*sr-strength[^"']*["'][^>]*>([\s\S]*?)<\/span>/i);
+    const strength = strengthMatch ? stripHtmlTags(strengthMatch[1]) : '';
+    const brandName = stripHtmlTags(
+      inner.replace(/<span[^>]*class=["'][^"']*sr-strength[^"']*["'][^>]*>[\s\S]*?<\/span>/gi, '')
+    );
+    if (!brandName) continue;
+
+    rows.push({
+      url: fullUrl,
+      brandId,
+      brandName,
+      strength,
+      dosageForm: mapMedexDosageForm(rawForm, brandName),
+      genericName: '',
+      companyName: '',
     });
   }
   return rows;
@@ -506,10 +545,37 @@ export function extractGenericBrandListUrls(
   return results;
 }
 
+async function runWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>
+): Promise<Array<PromiseSettledResult<R>>> {
+  const results: Array<PromiseSettledResult<R>> = new Array(items.length);
+  let nextIdx = 0;
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIdx < items.length) {
+        const current = nextIdx++;
+        try {
+          const val = await fn(items[current]);
+          results[current] = { status: 'fulfilled', value: val };
+        } catch (reason) {
+          results[current] = { status: 'rejected', reason };
+        }
+      }
+    })
+  );
+  return results;
+}
+
 export async function searchMedexLiveUsingFetcher(
   query: string,
   options: {
     limit?: number;
+    maxFetches?: number;
+    concurrency?: number;
     bypassCache?: boolean;
     fetchHtml?: MedexFetchFn;
     brandCache?: Map<string, { fetchedAtMs: number; data: MedexBrandFetchResult }>;
@@ -521,11 +587,13 @@ export async function searchMedexLiveUsingFetcher(
   const cleanQ = query.trim();
   if (cleanQ.length < 2) return [];
 
-  const fetchHtml = options.fetchHtml || defaultMedexFetchHtml;
-  const safeLimit = Math.min(Math.max(options.limit ?? 24, 1), 32);
+  const baseFetchHtml = options.fetchHtml || defaultMedexFetchHtml;
+  const safeLimit = Math.min(Math.max(options.limit ?? 20, 1), 28);
+  const maxFetches = Math.max(options.maxFetches ?? 32, 6);
+  const concurrency = Math.max(options.concurrency ?? 6, 1);
   const bypassCache = Boolean(options.bypassCache);
-  const brandCacheTtlMs = options.brandCacheTtlMs ?? 60 * 1000;
-  const searchCacheTtlMs = options.searchCacheTtlMs ?? 90 * 1000;
+  const brandCacheTtlMs = options.brandCacheTtlMs ?? 5 * 60 * 1000;
+  const searchCacheTtlMs = options.searchCacheTtlMs ?? 3 * 60 * 1000;
   const cacheKey = `${cleanQ.toLowerCase()}::${safeLimit}`;
 
   if (!bypassCache && options.searchCache) {
@@ -535,15 +603,38 @@ export async function searchMedexLiveUsingFetcher(
     }
   }
 
+  let fetchCount = 0;
+  const budgetedFetchHtml = async (url: string, timeoutMs?: number): Promise<string> => {
+    if (fetchCount >= maxFetches) {
+      throw new Error('Subrequest budget reached');
+    }
+    fetchCount++;
+    return baseFetchHtml(url, timeoutMs);
+  };
+
   const brandUrlSet = new Set<string>();
   const previewByUrl = new Map<string, SearchRowPreview>();
 
   const ingestHtml = (html: string) => {
     if (!html) return;
-    for (const preview of extractSearchRowPreviews(html)) {
+    for (const preview of extractAjaxSearchPreviews(html)) {
       brandUrlSet.add(preview.url);
       if (!previewByUrl.has(preview.url)) {
         previewByUrl.set(preview.url, preview);
+      }
+    }
+    for (const preview of extractSearchRowPreviews(html)) {
+      brandUrlSet.add(preview.url);
+      const existing = previewByUrl.get(preview.url);
+      if (!existing) {
+        previewByUrl.set(preview.url, preview);
+      } else {
+        previewByUrl.set(preview.url, {
+          ...existing,
+          genericName: existing.genericName || preview.genericName,
+          companyName: existing.companyName || preview.companyName,
+          strength: existing.strength || preview.strength,
+        });
       }
     }
     for (const u of extractBrandUrlsFromHtml(html)) {
@@ -560,68 +651,74 @@ export async function searchMedexLiveUsingFetcher(
     .replace(/\s+/g, ' ')
     .trim();
 
-  // 1. Fetch Page 1 (brands + general search in parallel)
-  const [brandsRes, generalRes] = await Promise.allSettled([
-    fetchHtml(`${MEDEX_BASE_URL}/search?search=${encodeURIComponent(cleanQ)}&type=brands`, 7500),
-    fetchHtml(`${MEDEX_BASE_URL}/search?search=${encodeURIComponent(cleanQ)}&type=search`, 7500),
-  ]);
-
-  const brandsHtml = brandsRes.status === 'fulfilled' ? brandsRes.value : '';
-  const generalHtml = generalRes.status === 'fulfilled' ? generalRes.value : '';
-
-  ingestHtml(brandsHtml);
-  ingestHtml(generalHtml);
-
-  // 2. If pagination (?page=2 / ?page=3) exists, fetch page 2 in parallel with generic brands
-  const secondaryFetches: Array<{ kind: 'page' | 'generic'; promise: Promise<string> }> = [];
-
-  if (brandsHtml && /page=2\b/i.test(brandsHtml)) {
-    secondaryFetches.push({
-      kind: 'page',
-      promise: fetchHtml(
-        `${MEDEX_BASE_URL}/search?search=${encodeURIComponent(cleanQ)}&type=brands&page=2`,
-        6500
-      ),
-    });
+  // 1. Fetch brands search + ajax live autocomplete in parallel (and general search if budget allows)
+  const initialQueries: Array<Promise<string>> = [
+    budgetedFetchHtml(`${MEDEX_BASE_URL}/search?search=${encodeURIComponent(cleanQ)}&type=brands`, 7500),
+    budgetedFetchHtml(
+      `${MEDEX_BASE_URL}/ajax/search?searchtype=brands&searchkey=${encodeURIComponent(cleanQ)}`,
+      6500
+    ),
+  ];
+  if (maxFetches >= 14) {
+    initialQueries.push(
+      budgetedFetchHtml(`${MEDEX_BASE_URL}/search?search=${encodeURIComponent(cleanQ)}&type=search`, 7500)
+    );
   }
 
-  // 3. Always load generic brand lists when query matches a generic (e.g., "omeprazole", "azithromycin")
-  // or when direct brand matches are sparse!
-  if (generalHtml) {
+  const initialSettled = await Promise.allSettled(initialQueries);
+  const brandsHtml = initialSettled[0]?.status === 'fulfilled' ? initialSettled[0].value : '';
+  const ajaxHtml = initialSettled[1]?.status === 'fulfilled' ? initialSettled[1].value : '';
+  const generalHtml = initialSettled[2]?.status === 'fulfilled' ? initialSettled[2].value : '';
+
+  ingestHtml(brandsHtml);
+  ingestHtml(ajaxHtml);
+  ingestHtml(generalHtml);
+
+  // 2. If pagination (?page=2) or exact generic brand list exists and budget permits, fetch in parallel
+  const secondaryFetches: Array<Promise<string>> = [];
+  const remainingBudget = () => maxFetches - fetchCount;
+
+  if (brandsHtml && /page=2\b/i.test(brandsHtml) && remainingBudget() > 6) {
+    secondaryFetches.push(
+      budgetedFetchHtml(
+        `${MEDEX_BASE_URL}/search?search=${encodeURIComponent(cleanQ)}&type=brands&page=2`,
+        6500
+      )
+    );
+  }
+
+  if (generalHtml && remainingBudget() > 5) {
     const genericEntries = extractGenericBrandListUrls(generalHtml, cleanQ.toLowerCase());
     const exactGenerics = genericEntries.filter((g) => g.isExactGenericMatch);
     const targetGenerics =
       exactGenerics.length > 0
-        ? exactGenerics.slice(0, 2)
-        : brandUrlSet.size < 8
-        ? genericEntries.slice(0, 2)
+        ? exactGenerics.slice(0, 1)
+        : brandUrlSet.size < 6
+        ? genericEntries.slice(0, 1)
         : [];
     for (const g of targetGenerics) {
-      secondaryFetches.push({
-        kind: 'generic',
-        promise: fetchHtml(g.listUrl, 6500),
-      });
+      secondaryFetches.push(budgetedFetchHtml(g.listUrl, 6500));
     }
   }
 
   if (secondaryFetches.length > 0) {
-    const settledSecondary = await Promise.allSettled(secondaryFetches.map((s) => s.promise));
-    for (let i = 0; i < settledSecondary.length; i++) {
-      const r = settledSecondary[i];
+    const settledSecondary = await Promise.allSettled(secondaryFetches);
+    for (const r of settledSecondary) {
       if (r.status === 'fulfilled' && r.value) {
         ingestHtml(r.value);
       }
     }
   }
 
-  // 4. Query normalized root / first token if still sparse
+  // 3. Fallback query on normalized root / first token (e.g. "Seclo 20" -> "Seclo", "Calbo-D 500" -> "Calbo")
   if (
     normalizedRoot.length >= 2 &&
     normalizedRoot.toLowerCase() !== cleanQ.toLowerCase() &&
-    brandUrlSet.size < 8
+    brandUrlSet.size < 8 &&
+    remainingBudget() > 4
   ) {
     try {
-      const rootHtml = await fetchHtml(
+      const rootHtml = await budgetedFetchHtml(
         `${MEDEX_BASE_URL}/search?search=${encodeURIComponent(normalizedRoot)}&type=brands`,
         6500
       );
@@ -635,11 +732,12 @@ export async function searchMedexLiveUsingFetcher(
   if (
     firstWord.length >= 3 &&
     firstWord.toLowerCase() !== cleanQ.toLowerCase() &&
-    brandUrlSet.size < 5
+    brandUrlSet.size < 5 &&
+    remainingBudget() > 4
   ) {
     try {
-      const fwHtml = await fetchHtml(
-        `${MEDEX_BASE_URL}/search?search=${encodeURIComponent(firstWord)}&type=brands`,
+      const fwHtml = await budgetedFetchHtml(
+        `${MEDEX_BASE_URL}/ajax/search?searchtype=brands&searchkey=${encodeURIComponent(firstWord)}`,
         6000
       );
       ingestHtml(fwHtml);
@@ -649,15 +747,21 @@ export async function searchMedexLiveUsingFetcher(
   }
 
   const qLower = cleanQ.toLowerCase();
+  const qTokens = qLower.split(/[\s\-+]+/).filter((t) => t.length >= 2);
   const qTokenLower = (normalizedRoot || cleanQ).toLowerCase().split(' ')[0] || '';
 
   const scoreCandidateUrl = (url: string): number => {
     const preview = previewByUrl.get(url);
     const bLow = preview?.brandName.toLowerCase() || '';
+    const sLow = preview?.strength.toLowerCase() || '';
     const gLow = preview?.genericName.toLowerCase() || '';
     const slug = url.split('/').pop()?.toLowerCase() || '';
-    if (bLow === qLower) return 100;
-    if (bLow.startsWith(`${qLower} `) || bLow.startsWith(`${qLower}-`) || bLow.startsWith(qLower)) return 85;
+    const combined = `${bLow} ${sLow} ${slug.replace(/-/g, ' ')}`.trim();
+
+    if (bLow === qLower) return 120;
+    if (qTokens.length > 1 && qTokens.every((t) => combined.includes(t))) return 110;
+    if (bLow.startsWith(`${qLower} `) || bLow.startsWith(`${qLower}-`)) return 95;
+    if (bLow.startsWith(qLower)) return 85;
     if (qTokenLower && (bLow.startsWith(qTokenLower) || slug.startsWith(qTokenLower))) return 70;
     if (gLow === qLower || gLow.startsWith(`${qLower} `)) return 60;
     if (bLow.includes(qLower) || (qTokenLower && slug.includes(qTokenLower))) return 40;
@@ -665,7 +769,8 @@ export async function searchMedexLiveUsingFetcher(
   };
 
   const rankedUrls = Array.from(brandUrlSet).sort((a, b) => scoreCandidateUrl(b) - scoreCandidateUrl(a));
-  const initialBatch = rankedUrls.slice(0, safeLimit);
+  const detailCap = Math.min(safeLimit, Math.max(4, remainingBudget()));
+  const initialBatch = rankedUrls.slice(0, detailCap);
   if (initialBatch.length === 0) {
     return [];
   }
@@ -680,7 +785,7 @@ export async function searchMedexLiveUsingFetcher(
         return cached.data;
       }
     }
-    const html = await fetchHtml(cleanUrl, 6500);
+    const html = await budgetedFetchHtml(cleanUrl, 6500);
     const parsed = parseMedexBrandDetailHtml(html, cleanUrl);
     if (!parsed) return null;
     const siblingUrls = extractSiblingBrandUrlsFromHtml(html);
@@ -692,7 +797,7 @@ export async function searchMedexLiveUsingFetcher(
   const fetchedMap = new Map<string, MedicineCatalogItem>();
   const discoveredSiblings = new Set<string>();
 
-  const firstSettled = await Promise.allSettled(initialBatch.map((u) => fetchBrandDetail(u)));
+  const firstSettled = await runWithConcurrency(initialBatch, concurrency, fetchBrandDetail);
   for (let i = 0; i < initialBatch.length; i++) {
     const r = firstSettled[i];
     if (r.status === 'fulfilled' && r.value?.item) {
@@ -706,18 +811,19 @@ export async function searchMedexLiveUsingFetcher(
     }
   }
 
-  // 5. Fetch remaining sibling variants ("Also available as:") discovered from matched brand pages
-  if (discoveredSiblings.size > 0 && fetchedMap.size < safeLimit) {
+  // 4. Fetch sibling variants ("Also available as:") if budget still allows
+  const sibSlotsLeft = Math.min(safeLimit - fetchedMap.size, remainingBudget());
+  if (discoveredSiblings.size > 0 && sibSlotsLeft > 0) {
     const siblingList = Array.from(discoveredSiblings)
       .filter((u) => {
         if (!qTokenLower) return true;
         const slug = u.split('/').pop()?.toLowerCase() || '';
-        return slug.includes(qTokenLower) || fetchedMap.size < 10;
+        return slug.includes(qTokenLower) || fetchedMap.size < 8;
       })
-      .slice(0, safeLimit - fetchedMap.size);
+      .slice(0, sibSlotsLeft);
 
     if (siblingList.length > 0) {
-      const sibSettled = await Promise.allSettled(siblingList.map((u) => fetchBrandDetail(u)));
+      const sibSettled = await runWithConcurrency(siblingList, concurrency, fetchBrandDetail);
       for (let i = 0; i < siblingList.length; i++) {
         const r = sibSettled[i];
         if (r.status === 'fulfilled' && r.value?.item) {
@@ -734,3 +840,4 @@ export async function searchMedexLiveUsingFetcher(
   }
   return items;
 }
+
