@@ -1197,9 +1197,50 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     });
   }, [transactions, dateRangePreset, startDateFilter, endDateFilter, txTypeFilter, staffRoleFilter]);
 
-  // Daily Accounting Summary Metrics
+  // Daily Accounting Summary Metrics (including Total Profit = Grand Total Sales Revenue - Total Purchase Cost)
   const dailyMetrics = useMemo(() => {
+    const todayStr = getTodayDateStr();
+    const invByMedId = new Map<string, InventoryItem>();
+    const invByKey = new Map<string, InventoryItem>();
+    for (const inv of inventory) {
+      if (inv.medicineId && !invByMedId.has(inv.medicineId)) {
+        invByMedId.set(inv.medicineId, inv);
+      }
+      const k = `${(inv.brandName || '').trim().toLowerCase()}__${(inv.strength || '').trim().toLowerCase()}`;
+      if (!invByKey.has(k)) invByKey.set(k, inv);
+    }
+
+    const computeSalePurchaseCost = (tx: Transaction): number => {
+      if (typeof tx.totalPurchaseCost === 'number' && Number.isFinite(tx.totalPurchaseCost) && tx.totalPurchaseCost >= 0) {
+        return tx.totalPurchaseCost;
+      }
+      const parsed = parseTransactionItemsDetailed(tx.itemsSummary || '', catalog);
+      if (parsed.length === 0) {
+        return Number(((tx.grandTotal || 0) * 0.88).toFixed(2));
+      }
+      let costSum = 0;
+      for (const line of parsed) {
+        const matched = line.matchedMedicine;
+        const cleanLower = (matched?.brandName || line.cleanName || '').trim().toLowerCase();
+        const strLower = (matched?.strength || '').trim().toLowerCase();
+        const invHit =
+          (matched?.id ? invByMedId.get(matched.id) : undefined) ||
+          invByKey.get(`${cleanLower}__${strLower}`) ||
+          inventory.find((i) => (i.brandName || '').trim().toLowerCase() === cleanLower);
+
+        const unitCost =
+          invHit && invHit.purchasePrice > 0
+            ? invHit.purchasePrice
+            : matched?.purchasePrice && matched.purchasePrice > 0
+            ? matched.purchasePrice
+            : Number(((line.unitPrice || 0) * 0.88).toFixed(2));
+        costSum += unitCost * (line.qty || 1);
+      }
+      return Number(costSum.toFixed(2));
+    };
+
     let totalSalesBill = 0;
+    let totalSalesPurchaseCost = 0;
     let salesCashCollected = 0;
     let salesDueGiven = 0;
     let dueCollectedLater = 0;
@@ -1209,23 +1250,40 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
 
     for (const tx of filteredTransactions) {
       if (tx.txType === 'sale') {
-        totalSalesBill += tx.grandTotal;
-        salesCashCollected += tx.paidAmount;
-        salesDueGiven += tx.dueAmount;
-        if (tx.staffRole === 'owner') ownerSales += tx.grandTotal;
-        else staffSales += tx.grandTotal;
+        totalSalesBill += tx.grandTotal || 0;
+        totalSalesPurchaseCost += computeSalePurchaseCost(tx);
+        salesCashCollected += tx.paidAmount || 0;
+        salesDueGiven += tx.dueAmount || 0;
+        if (tx.staffRole === 'owner') ownerSales += tx.grandTotal || 0;
+        else staffSales += tx.grandTotal || 0;
       } else if (tx.txType === 'due_payment') {
-        dueCollectedLater += tx.paidAmount;
+        dueCollectedLater += tx.paidAmount || 0;
       } else if (tx.txType === 'purchase') {
-        totalPurchaseBill += tx.grandTotal;
+        totalPurchaseBill += tx.grandTotal || 0;
       }
     }
 
+    let todaySalesRevenue = 0;
+    let todaySalesPurchaseCost = 0;
+    for (const tx of transactions) {
+      if (tx.txType === 'sale' && tx.dateStr === todayStr) {
+        todaySalesRevenue += tx.grandTotal || 0;
+        todaySalesPurchaseCost += computeSalePurchaseCost(tx);
+      }
+    }
+
+    const totalSalesProfit = Number((totalSalesBill - totalSalesPurchaseCost).toFixed(2));
+    const todayProfit = Number((todaySalesRevenue - todaySalesPurchaseCost).toFixed(2));
     const totalCashIn = salesCashCollected + dueCollectedLater;
     const netCashDrawer = totalCashIn - totalPurchaseBill;
 
     return {
       totalSalesBill,
+      totalSalesPurchaseCost,
+      totalSalesProfit,
+      todaySalesRevenue,
+      todaySalesPurchaseCost,
+      todayProfit,
       salesCashCollected,
       salesDueGiven,
       dueCollectedLater,
@@ -1235,7 +1293,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
       ownerSales,
       staffSales,
     };
-  }, [filteredTransactions]);
+  }, [filteredTransactions, transactions, inventory, catalog]);
 
   const parsedPreviewItems = useMemo(() => {
     if (!previewInvoice) return [];
@@ -1928,8 +1986,8 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
           </div>
         </div>
 
-        {/* 5-Column Daily Financial Summary Strip */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 bg-slate-50/70 border-b border-slate-200">
+        {/* 6-Column Daily Financial Summary Strip (including Total Daily Profit) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 bg-slate-50/70 border-b border-slate-200">
           <div className="p-4">
             <div className="text-xs text-slate-500">মোট বিক্রয় ইনভয়েস (Sales Bill)</div>
             <div className="text-xl font-bold font-mono tabular-nums text-teal-800 mt-1">
@@ -1938,6 +1996,27 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
             <div className="text-xs text-slate-500 mt-1 font-mono tabular-nums">
               Owner: ৳{dailyMetrics.ownerSales} · স্টাফ: ৳{dailyMetrics.staffSales}
             </div>
+          </div>
+
+          <div className="p-4 bg-emerald-50/60">
+            <div className="text-xs font-semibold text-emerald-900">
+              {dateRangePreset === 'today' ? 'আজকের মোট লাভ (Total Profit)' : 'দৈনিক/পিরিয়ড মোট লাভ (Profit)'}
+            </div>
+            <div
+              className={`text-xl font-bold font-mono tabular-nums mt-1 ${
+                dailyMetrics.totalSalesProfit >= 0 ? 'text-emerald-700' : 'text-rose-600'
+              }`}
+            >
+              ৳{dailyMetrics.totalSalesProfit.toLocaleString('en-BD', { minimumFractionDigits: 2 })}
+            </div>
+            <div className="text-[11px] text-emerald-800 mt-1 font-mono tabular-nums">
+              বিক্রয় ৳{dailyMetrics.totalSalesBill.toLocaleString('en-BD', { maximumFractionDigits: 0 })} − ক্রয় খরচ ৳{dailyMetrics.totalSalesPurchaseCost.toLocaleString('en-BD', { maximumFractionDigits: 0 })}
+            </div>
+            {dateRangePreset !== 'today' && (
+              <div className="text-[10.5px] font-semibold text-teal-800 mt-0.5 font-mono">
+                আজকের লাভ: ৳{dailyMetrics.todayProfit.toLocaleString('en-BD', { minimumFractionDigits: 2 })}
+              </div>
+            )}
           </div>
 
           <div className="p-4">

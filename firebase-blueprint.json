@@ -274,6 +274,10 @@
         "grandTotal": {
           "type": "number"
         },
+        "totalPurchaseCost": {
+          "type": "number",
+          "description": "Total purchase cost of sold items for daily profit calculation"
+        },
         "paidAmount": {
           "type": "number"
         },

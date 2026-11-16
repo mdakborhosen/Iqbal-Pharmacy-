@@ -39,7 +39,7 @@ import { AppLanguage } from '../i18n';
 import {
   CustomInvoiceSettings,
   isMandatoryOwner,
-  isMasterAppOwner,
+  isStrictPlatformAdmin,
   ShopBranch,
   ShopProfile,
   ShopRegistration,
@@ -72,6 +72,15 @@ interface StaffAndShopViewProps {
   onDeleteStaffMember: (id: string) => Promise<void>;
   onApproveShopRegistration?: (regId: string) => Promise<void>;
   onRejectShopRegistration?: (regId: string) => Promise<void>;
+  onCreateShopAccountByAdmin?: (params: {
+    shopName: string;
+    ownerName: string;
+    phone: string;
+    email?: string;
+    address?: string;
+    password: string;
+    autoApprove?: boolean;
+  }) => Promise<void>;
 }
 
 export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
@@ -94,11 +103,12 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
   onDeleteStaffMember,
   onApproveShopRegistration,
   onRejectShopRegistration,
+  onCreateShopAccountByAdmin,
 }) => {
   // Navigation Sub-Tabs
+  const isStrictOwnerBoot = isCloudLoggedIn && isStrictPlatformAdmin(cloudSession);
   const [activeTab, setActiveTab] = useState<'staff' | 'branches' | 'invoice_designer' | 'admin_approvals'>(() =>
-    isCloudLoggedIn &&
-    (isMasterAppOwner(cloudSession) || isMasterAppOwner(activeStaff)) &&
+    isStrictOwnerBoot &&
     shopRegistrations.some((r) => r.status === 'pending_approval')
       ? 'admin_approvals'
       : 'staff'
@@ -199,10 +209,63 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
     setAddress(shopProfile.address || '');
   }, [shopProfile, defaultBranches, defaultInvoiceSettings]);
 
-  // Check if current user is Master App Owner (01629845006 / mhakbor2001@gmail.com / 01812358839)
-  const isAppOwner =
-    isCloudLoggedIn &&
-    (isMasterAppOwner(cloudSession) || isMasterAppOwner(activeStaff));
+  // Admin Create New Shop Account Form State (STRICTLY ONLY for 01629845006 / mhakbor2001@gmail.com)
+  const [showCreateShopForm, setShowCreateShopForm] = useState(false);
+  const [newShopName, setNewShopName] = useState('');
+  const [newShopOwnerName, setNewShopOwnerName] = useState('');
+  const [newShopPhone, setNewShopPhone] = useState('');
+  const [newShopEmail, setNewShopEmail] = useState('');
+  const [newShopAddress, setNewShopAddress] = useState('');
+  const [newShopPassword, setNewShopPassword] = useState('');
+  const [showNewShopPassword, setShowNewShopPassword] = useState(false);
+  const [newShopAutoApprove, setNewShopAutoApprove] = useState(true);
+  const [creatingNewShop, setCreatingNewShop] = useState(false);
+  const [createShopFeedback, setCreateShopFeedback] = useState<string | null>(null);
+
+  // Strict Check: ONLY 01629845006 / mhakbor2001@gmail.com can see App Owner Controls & create new shop accounts
+  const isAppOwner = isCloudLoggedIn && isStrictPlatformAdmin(cloudSession);
+
+  useEffect(() => {
+    if (!isAppOwner && activeTab === 'admin_approvals') {
+      setActiveTab('staff');
+    }
+  }, [isAppOwner, activeTab]);
+
+  const handleCreateNewShopSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isAppOwner || !onCreateShopAccountByAdmin) return;
+    if (!newShopName.trim() || !newShopOwnerName.trim() || !newShopPhone.trim() || !newShopPassword.trim()) {
+      setCreateShopFeedback('দোকানের নাম, মালিকের নাম, মোবাইল ও পাসওয়ার্ড পূরণ করুন।');
+      return;
+    }
+    setCreatingNewShop(true);
+    setCreateShopFeedback(null);
+    try {
+      await onCreateShopAccountByAdmin({
+        shopName: newShopName.trim(),
+        ownerName: newShopOwnerName.trim(),
+        phone: newShopPhone.trim(),
+        email: newShopEmail.trim() || undefined,
+        address: newShopAddress.trim() || undefined,
+        password: newShopPassword.trim(),
+        autoApprove: newShopAutoApprove,
+      });
+      setNewShopName('');
+      setNewShopOwnerName('');
+      setNewShopPhone('');
+      setNewShopEmail('');
+      setNewShopAddress('');
+      setNewShopPassword('');
+      setShowCreateShopForm(false);
+      setCreateShopFeedback('নতুন শপ একাউন্ট সফলভাবে তৈরি ও যুক্ত করা হয়েছে!');
+      setTimeout(() => setCreateShopFeedback(null), 4000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setCreateShopFeedback(msg || 'শপ একাউন্ট তৈরি করতে সমস্যা হয়েছে');
+    } finally {
+      setCreatingNewShop(false);
+    }
+  };
 
   // Toggle table password visibility
   const toggleTablePassword = (staffId: string) => {
@@ -544,7 +607,7 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
           <p className="text-xs text-slate-600">
             {isCloudLoggedIn
               ? `লগইনকৃত আইডি: ${cloudSession?.displayName || 'দোকান মালিক'} · মোবাইল: ${cloudSession?.phone || shopProfile.phone}`
-              : 'নতুন শপ একাউন্ট খুললে অ্যাপস মালিকের অনুমোদন সাপেক্ষে চালু হবে।'}
+              : 'সব ডিভাইসে লাইভ ডেটা সিঙ্ক ও পরিচালনার জন্য আপনার একাউন্টে লগইন করুন।'}
           </p>
         </div>
 
@@ -576,7 +639,7 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
               className="px-4 py-2 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-md flex items-center gap-2 cursor-pointer shadow-xs"
             >
               <LogIn className="w-4 h-4" />
-              <span>লগইন / নতুন শপ একাউন্ট</span>
+              <span>লগইন করুন</span>
             </button>
           )}
         </div>
@@ -605,7 +668,7 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
               className="px-5 py-2.5 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-lg inline-flex items-center gap-2 cursor-pointer shadow-xs"
             >
               <LogIn className="w-4 h-4" />
-              <span>{lang === 'bn' ? 'লগইন / নতুন শপ একাউন্ট' : 'Login / New Shop Account'}</span>
+              <span>{lang === 'bn' ? 'লগইন করুন' : 'Login'}</span>
             </button>
           </div>
         </div>
@@ -1353,28 +1416,175 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
         </div>
       )}
 
-      {/* TAB 4: APP OWNER SHOP APPROVALS DASHBOARD (Visible to Master Owner) */}
+      {/* TAB 4: APP OWNER SHOP APPROVALS DASHBOARD (Visible STRICTLY to 01629845006 / mhakbor2001@gmail.com) */}
       {activeTab === 'admin_approvals' && isAppOwner && (
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs space-y-4 p-5">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4 text-rose-700" />
-                <span>অ্যাপস মালিক কন্ট্রোল প্যানেল: শপ একাউন্ট অনুমোদন ও তালিকা</span>
+                <span>অ্যাপস মালিক কন্ট্রোল প্যানেল: শপ একাউন্ট অনুমোদন ও নতুন একাউন্ট তৈরি</span>
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                নতুন নিবন্ধিত শপ একাউন্ট অনুমোদন দিলে তারা সফটওয়্যারে কাজ করার সম্পূর্ণ এক্সেস পাবে
+                শুধুমাত্র 01629845006 / mhakbor2001@gmail.com থেকে নতুন শপ একাউন্ট তৈরি ও অনুমোদন/বাতিল করা যাবে
               </p>
             </div>
-            <div className="flex items-center gap-2 text-xs">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
               <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 font-bold border border-amber-200">
                 অপেক্ষমান: {shopRegistrations.filter((r) => r.status === 'pending_approval').length}টি
               </span>
               <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold border border-emerald-200">
                 অনুমোদিত: {shopRegistrations.filter((r) => r.status === 'approved').length}টি
               </span>
+              {onCreateShopAccountByAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setShowCreateShopForm((prev) => !prev)}
+                  className="px-3.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>{showCreateShopForm ? 'ফর্ম বন্ধ করুন' : 'নতুন শপ একাউন্ট যুক্ত করুন'}</span>
+                </button>
+              )}
             </div>
           </div>
+
+          {createShopFeedback && (
+            <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold flex items-center justify-between">
+              <span>{createShopFeedback}</span>
+              <button
+                type="button"
+                onClick={() => setCreateShopFeedback(null)}
+                className="text-emerald-700 hover:text-emerald-950 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          {showCreateShopForm && onCreateShopAccountByAdmin && (
+            <form
+              onSubmit={handleCreateNewShopSubmit}
+              className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3"
+            >
+              <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                  <Store className="w-4 h-4 text-teal-700" />
+                  <span>নতুন শপ / Owner একাউন্ট তৈরি করুন (অ্যাডমিন কন্ট্রোল)</span>
+                </div>
+                <span className="text-[10px] font-semibold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                  Admin: 01629845006 / mhakbor2001@gmail.com
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">দোকানের নাম (Shop Name) *</label>
+                  <input
+                    type="text"
+                    required
+                    value={newShopName}
+                    onChange={(e) => setNewShopName(e.target.value)}
+                    placeholder="যেমন: মদিনা ফার্মেসী"
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">মালিকের নাম (Owner Name) *</label>
+                  <input
+                    type="text"
+                    required
+                    value={newShopOwnerName}
+                    onChange={(e) => setNewShopOwnerName(e.target.value)}
+                    placeholder="যেমন: মো. করিম"
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">মোবাইল নম্বর *</label>
+                  <input
+                    type="text"
+                    required
+                    value={newShopPhone}
+                    onChange={(e) => setNewShopPhone(e.target.value)}
+                    placeholder="017XXXXXXXX"
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-600"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">ইমেইল / জিমেইল (ঐচ্ছিক)</label>
+                  <input
+                    type="email"
+                    value={newShopEmail}
+                    onChange={(e) => setNewShopEmail(e.target.value)}
+                    placeholder="shop@gmail.com"
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-600"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">ঠিকানা (ঐচ্ছিক)</label>
+                  <input
+                    type="text"
+                    value={newShopAddress}
+                    onChange={(e) => setNewShopAddress(e.target.value)}
+                    placeholder="বাজার রোড, জেলা"
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                  />
+                </div>
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="font-semibold text-slate-700">লগইন পাসওয়ার্ড *</label>
+                    <button
+                      type="button"
+                      onClick={() => setShowNewShopPassword((p) => !p)}
+                      className="text-[11px] text-teal-700 hover:text-teal-900 cursor-pointer inline-flex items-center gap-1"
+                    >
+                      {showNewShopPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                      {showNewShopPassword ? 'লুকান' : 'দেখুন'}
+                    </button>
+                  </div>
+                  <input
+                    type={showNewShopPassword ? 'text' : 'password'}
+                    required
+                    value={newShopPassword}
+                    onChange={(e) => setNewShopPassword(e.target.value)}
+                    placeholder="কমপক্ষে ৬ অক্ষর"
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-600"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-200 text-xs">
+                <label className="inline-flex items-center gap-2 cursor-pointer font-medium text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={newShopAutoApprove}
+                    onChange={(e) => setNewShopAutoApprove(e.target.checked)}
+                    className="w-4 h-4 rounded text-emerald-700 border-slate-300 cursor-pointer"
+                  />
+                  <span>তৈরির সাথে সাথেই সরাসরি অনুমোদিত (Approved) করুন</span>
+                </label>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateShopForm(false)}
+                    className="px-3.5 py-2 text-slate-600 hover:text-slate-900 bg-white border border-slate-300 rounded-lg font-semibold cursor-pointer"
+                  >
+                    বাতিল
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={creatingNewShop}
+                    className="px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white font-bold rounded-lg cursor-pointer disabled:opacity-50 flex items-center gap-1.5 shadow-xs"
+                  >
+                    <ShieldCheck className="w-4 h-4" />
+                    <span>{creatingNewShop ? 'তৈরি হচ্ছে...' : 'নতুন শপ একাউন্ট তৈরি করুন'}</span>
+                  </button>
+                </div>
+              </div>
+            </form>
+          )}
 
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">

@@ -216,6 +216,7 @@ export interface Transaction {
   vat?: number; // Optional VAT / Tax (ভ্যাট টাকা ৳)
   vatPercent?: number; // Optional VAT % (ভ্যাট হার)
   grandTotal: number;
+  totalPurchaseCost?: number; // Total purchase cost (ক্রয় খরচ) of items sold in this transaction
   amount?: number;
   category?: string;
   staffId?: string;
@@ -306,6 +307,36 @@ export function isMasterAppOwner(target?: {
     digits.endsWith('1629845006') ||
     target.id === 'staff-owner-1' ||
     target.staffId === 'staff-owner-1'
+  );
+}
+
+// Strict Platform Super-Admin check: ONLY 01629845006 or mhakbor2001@gmail.com
+export function isStrictPlatformAdmin(target?: {
+  email?: string | null;
+  phone?: string | null;
+  ident?: string | null;
+} | string | null): boolean {
+  if (!target) return false;
+  if (typeof target === 'string') {
+    const clean = target.trim().toLowerCase();
+    const digits = clean.replace(/[^0-9]/g, '');
+    return (
+      clean === 'mhakbor2001@gmail.com' ||
+      digits.endsWith('01629845006') ||
+      digits.endsWith('1629845006')
+    );
+  }
+  const email = (target.email || '').trim().toLowerCase();
+  const ident = (target.ident || '').trim().toLowerCase();
+  const phoneDigits = (target.phone || '').replace(/[^0-9]/g, '');
+  const identDigits = (target.ident || '').replace(/[^0-9]/g, '');
+  return (
+    email === 'mhakbor2001@gmail.com' ||
+    ident === 'mhakbor2001@gmail.com' ||
+    phoneDigits.endsWith('01629845006') ||
+    phoneDigits.endsWith('1629845006') ||
+    identDigits.endsWith('01629845006') ||
+    identDigits.endsWith('1629845006')
   );
 }
 

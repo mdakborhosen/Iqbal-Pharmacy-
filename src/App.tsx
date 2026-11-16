@@ -138,6 +138,7 @@ import {
   PurchasePackUnit,
   isMandatoryOwner,
   isMasterAppOwner,
+  isStrictPlatformAdmin,
   ShopNotice,
   ShopProfile,
   ShopRegistration,
@@ -580,6 +581,9 @@ function buildTransactionCloudPayload(tx: Transaction, ownerId = SHARED_PHARMACY
     updatedAt: serverTimestamp(),
   };
 
+  if (typeof tx.totalPurchaseCost === 'number' && !Number.isNaN(tx.totalPurchaseCost)) {
+    payload.totalPurchaseCost = sanitizeNumber(tx.totalPurchaseCost);
+  }
   if (tx.patientAge) payload.patientAge = sanitizeString(tx.patientAge, 30);
   if (tx.patientSex) payload.patientSex = sanitizeString(tx.patientSex, 30);
   if (tx.selectedSeal) payload.selectedSeal = tx.selectedSeal;
@@ -3300,7 +3304,7 @@ export default function App() {
       // 5. Evaluate Credentials & App Owner Approval Status
       const targetUser = (matchedCloudUser || matchedStaffDoc) as Record<string, any> | null;
       if (!targetUser) {
-        const err = 'এই মোবাইল বা ইমেইলে কোনো ফার্মেসী একাউন্ট পাওয়া যায়নি! অনুগ্রহ করে প্রথমে "নতুন Owner আইডি খুলুন" ট্যাবে গিয়ে একাউন্ট তৈরি করুন।';
+        const err = 'এই মোবাইল বা ইমেইলে কোনো ফার্মেসী একাউন্ট পাওয়া যায়নি! নতুন শপ একাউন্ট শুধুমাত্র 01629845006 / mhakbor2001@gmail.com থেকে তৈরি করা যাবে।';
         setLoginErrorMessage(err);
         showToast(err);
         setCloudLoginLoading(false);
@@ -3579,257 +3583,40 @@ export default function App() {
 
   const handleRegisterOwnerSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isCloudLoggedIn || !isStrictPlatformAdmin(cloudSession)) {
+      const err = 'নতুন শপ একাউন্ট শুধুমাত্র 01629845006 / mhakbor2001@gmail.com থেকে লগইন করে তৈরি করা যাবে।';
+      setLoginErrorMessage(err);
+      showToast(err);
+      return;
+    }
     if (!registerOwnerName.trim() || !registerPhone.trim() || !registerPassword.trim()) {
       showToast('দয়া করে মালিকের নাম, মোবাইল নম্বর ও পাসওয়ার্ড পূরণ করুন!');
       return;
     }
     setCloudLoginLoading(true);
     try {
-      const rawEmail = registerEmail.trim();
-      const phoneDigits = registerPhone.replace(/[^0-9]/g, '');
-      const isValidEmailFormat = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail);
-      const cleanEmail = isValidEmailFormat
-        ? rawEmail.toLowerCase()
-        : `${phoneDigits || 'owner'}@iqbalpharmacy.bd`;
-
-      const isAppAdminOwner = isMasterAppOwner({ email: cleanEmail, phone: phoneDigits });
-
-      if (isAppAdminOwner) {
-        try {
-          localStorage.removeItem(LOGGED_OUT_FLAG_KEY);
-          sessionStorage.removeItem(EXPLICIT_LOGOUT_KEY);
-        } catch {
-          // ignore
-        }
-      }
-
-      // Prevent duplicate users: Check if an owner/staff account with this phone or email already exists
-      const existingUser = staffList.find((s) => {
-        const sDigits = (s.phone || '').replace(/[^0-9]/g, '');
-        return (
-          (phoneDigits.length >= 6 && (sDigits === phoneDigits || sDigits.endsWith(phoneDigits))) ||
-          (isValidEmailFormat && s.email && s.email.toLowerCase() === cleanEmail)
-        );
-      });
-
-      const session = await registerNewShopOwnerAccount({
-        shopName: registerShopName.trim() || 'ইকবাল ফার্মেসী',
-        ownerName: registerOwnerName.trim(),
-        email: cleanEmail,
-        phone: registerPhone.trim(),
-        password: registerPassword.trim(),
-        autoSaveSession: isAppAdminOwner,
-      });
-
-      const targetShopId = session.shopId || computeCurrentShopId(session);
-      const isExistingShopSession = targetShopId === effectiveShopId;
-
-      const updatedProfile: ShopProfile = isExistingShopSession
-        ? {
-            ...shopProfile,
-            id: targetShopId,
-            shopId: targetShopId,
-            shopName: session.shopName,
-            phone: session.phone,
-            updatedAtMs: Date.now(),
-          }
-        : {
-            id: targetShopId,
-            shopId: targetShopId,
-            ownerId: session.uid,
-            shopName: session.shopName,
-            licenseNo: '',
-            phone: session.phone,
-            address: '',
-            branches: [
-              {
-                id: 'branch-1',
-                name: 'প্রধান শাখা',
-                address: '',
-                phone: session.phone,
-                isDefault: true,
-              },
-            ],
-            activeBranchId: 'branch-1',
-            customInvoiceSettings: {
-              invoiceTitle: session.shopName,
-              tagline: 'সুলভ মূল্যে জেনুইন ঔষধের বিশ্বস্ত প্রতিষ্ঠান',
-              address: '',
-              phone: session.phone,
-              sealType: 'paid',
-              customSealText: 'PAID · পরিশোধিত',
-            },
-            updatedAtMs: Date.now(),
-          };
-
-      const bd11 = phoneDigits.length >= 10 ? '0' + phoneDigits.slice(-10) : phoneDigits;
-      const deterministicStaffId = phoneDigits.length >= 6
-        ? `staff_owner_${bd11}`
-        : `staff_owner_${cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 32)}`;
-      const isMand = isMandatoryOwner({ phone: session.phone, email: cleanEmail, id: session.staffId || deterministicStaffId });
-      const staffId =
-        isMand && targetShopId === 'shop_iqbal_pharmacy'
-          ? 'staff-owner-1'
-          : getCanonicalDocId(session.staffId || deterministicStaffId, targetShopId);
-
-      const assignedRole: StaffMember['roleTitle'] = 'owner';
-      const assignedName = isMand ? 'Owner' : (registerOwnerName.trim() || 'Owner');
-
-      const ownerStaff: StaffMember = {
-        id: staffId,
-        shopId: targetShopId,
-        ownerId: session.uid,
-        name: assignedName,
-        roleTitle: assignedRole,
-        isMandatoryOwner: true,
-        phone: session.phone,
-        email: session.email,
-        password: registerPassword.trim(),
-        shift: 'সারাদিন (মূল তত্ত্বাবধান)',
-        counterName: 'কাউন্টার ১ (Owner)',
-        active: true,
-        updatedAtMs: Date.now(),
-      };
-
-      const scopedStaffDocKey = getScopedFirestoreDocId(targetShopId, staffId);
-      await fireAndRaceFirestoreWrites([
-        {
-          promise: setDoc(
-            doc(db, 'shops', targetShopId),
-            buildShopCloudPayload(updatedProfile, session.uid, targetShopId)
-          ),
-          operationType: OperationType.WRITE,
-          path: `shops/${targetShopId}`,
-        },
-        {
-          promise: setDoc(
-            doc(db, 'staff', scopedStaffDocKey),
-            buildStaffCloudPayload(ownerStaff, session.uid, targetShopId)
-          ),
-          operationType: OperationType.WRITE,
-          path: `staff/${scopedStaffDocKey}`,
-        },
-      ], 1200);
-
-      // Register into multi-device universal global cloud database
-      registerGlobalCloudUser({
-        id: staffId,
-        shopId: targetShopId,
-        staffId,
-        ownerId: session.uid,
-        name: assignedName,
-        ownerName: assignedName,
-        phone: session.phone,
-        email: session.email,
-        password: registerPassword.trim(),
-        shopName: session.shopName,
-        role: assignedRole,
-        roleTitle: assignedRole,
-        status: isAppAdminOwner ? 'approved' : 'pending_approval',
-        isApproved: isAppAdminOwner,
-        updatedAtMs: Date.now(),
-      }).catch(() => {});
-
-      const registrationPayload: ShopRegistration = {
-        id: `shop_reg_${bd11 || phoneDigits || Date.now()}`,
-        shopId: targetShopId,
+      await handleCreateShopAccountByAdmin({
         shopName: registerShopName.trim() || 'ফার্মেসী',
         ownerName: registerOwnerName.trim(),
         phone: registerPhone.trim(),
-        email: cleanEmail,
+        email: registerEmail.trim() || undefined,
         password: registerPassword.trim(),
-        address: '',
-        status: isAppAdminOwner ? 'approved' : 'pending_approval',
-        isApproved: isAppAdminOwner,
-        registeredAtMs: Date.now(),
-        updatedAtMs: Date.now(),
-      };
-
-      // Write registration to Server, Global Cloud & Firestore
-      upsertServerShopRegistration(registrationPayload).catch(() => {});
-      Promise.race([
-        setDoc(doc(db, 'shop_registrations', registrationPayload.id), registrationPayload, { merge: true }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000)),
-      ]).catch(() => {});
-
-      setShopRegistrations((prev) => [
-        registrationPayload,
-        ...prev.filter((r) => r.id !== registrationPayload.id),
-      ]);
-      saveLocal('shop_registrations_cache', [
-        registrationPayload,
-        ...shopRegistrations.filter((r) => r.id !== registrationPayload.id),
-      ]);
-
-      if (!isAppAdminOwner) {
-        // Do NOT overwrite currently logged-in shop session or staffList while awaiting approval
-        saveShopCloudSession(cloudSession);
-        setCloudLoginLoading(false);
-        setCloudAuthTab('login');
-        setCloudLoginEmail(session.phone || cleanEmail);
-        setCloudLoginPassword(registerPassword.trim());
-        const msg = `আপনার শপ একাউন্ট (${session.shopName}) তৈরি হয়েছে এবং পেন্ডিং অবস্থায় আছে! 01629845006 / mhakbor2001@gmail.com কর্তৃক এপ্রুভ করা হলে আপনি লগইন করতে পারবেন।`;
-        setLoginErrorMessage(msg);
-        showToast('শপ একাউন্ট পেন্ডিং অবস্থায় জমা হয়েছে! অনুমোদনের পর লগইন করা যাবে।');
-        return;
-      }
-
-      setShopProfile(updatedProfile);
-      saveLocal(STORAGE_KEYS.SHOP, updatedProfile);
-      saveLocal(getScopedStorageKey(STORAGE_KEYS.SHOP, targetShopId), updatedProfile);
-
-      setStaffList((prev) => {
-        const basePrev = isExistingShopSession
-          ? prev.filter((s) => !s.shopId || s.shopId === targetShopId)
-          : [];
-        const next = deduplicateStaffMembers([ownerStaff, ...basePrev], targetShopId);
-        saveLocal(STORAGE_KEYS.STAFF, next);
-        saveLocal(getScopedStorageKey(STORAGE_KEYS.STAFF, targetShopId), next);
-        return next;
+        autoApprove: true,
       });
-
-      setActiveStaff(ownerStaff);
-      setCloudSession(session);
-      setCloudLoginEmail(session.phone);
-      setCloudLoginPhone(session.phone);
-      setCloudLoginPassword(registerPassword.trim());
+      setRegisterShopName('');
+      setRegisterOwnerName('');
+      setRegisterPhone('');
+      setRegisterEmail('');
+      setRegisterPassword('');
       setLoginErrorMessage(null);
+      setCloudAuthTab('login');
       setShowCloudLoginModal(false);
-      setCloudLoginLoading(false);
-      showToast(`দোকানের আইডি (${session.shopName}) সফলভাবে তৈরি ও লগইন হয়েছে!`);
-
-      // Pull any existing cloud data in background
-      (async () => {
-        try {
-          await syncAllDataFromFirestore({ silent: true, shopIdOverride: targetShopId });
-          const cloudSnap = await fetchServerPharmacyState();
-          if (cloudSnap.hasData && cloudSnap.state) {
-            const rem = cloudSnap.state;
-            const remShopId = rem.shopProfile?.shopId || rem.cloudSession?.shopId || 'shop_iqbal_pharmacy';
-            if (remShopId === targetShopId) {
-              if (Array.isArray(rem.inventory) && rem.inventory.length > 0) {
-                setInventory((prev) => {
-                  const next = mergeEntityList(rem.inventory, isExistingShopSession ? prev : [], new Set(), true, targetShopId);
-                  saveLocal(STORAGE_KEYS.INVENTORY, next);
-                  saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, targetShopId), next);
-                  return next;
-                });
-              }
-              if (Array.isArray(rem.transactions) && rem.transactions.length > 0) {
-                setTransactions((prev) => {
-                  const next = mergeEntityList(rem.transactions, isExistingShopSession ? prev : [], new Set(), false, targetShopId);
-                  saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
-                  saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, targetShopId), next);
-                  return next;
-                });
-              }
-            }
-          }
-        } catch {}
-      })();
+      return;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
+      setLoginErrorMessage(msg || 'দয়া করে সঠিক তথ্য দিন');
       showToast(`রেজিস্ট্রেশন ত্রুটি: ${msg || 'দয়া করে সঠিক তথ্য দিন'}`);
+      return;
     } finally {
       setCloudLoginLoading(false);
     }
@@ -4845,6 +4632,9 @@ export default function App() {
     const subTotal = sanitizeNumber(
       posCart.reduce((acc, i) => acc + i.unitPrice * i.qty, 0)
     );
+    const totalPurchaseCost = sanitizeNumber(
+      posCart.reduce((acc, i) => acc + (Number(i.purchasePrice) || 0) * (Number(i.qty) || 0), 0)
+    );
     const discount = sanitizeNumber(params.discount, 0, subTotal);
     const grandTotal = sanitizeNumber(subTotal - discount);
     const paidAmount = sanitizeNumber(params.paidAmount, 0, grandTotal);
@@ -4896,6 +4686,7 @@ export default function App() {
       subTotal,
       discount,
       grandTotal,
+      totalPurchaseCost,
       paidAmount,
       dueAmount,
       paymentMethod: params.paymentMethod,
@@ -7603,6 +7394,221 @@ export default function App() {
     showToast('শপ একাউন্টটি ক্যানসেল / বাতিল করা হয়েছে');
   };
 
+  // Exclusive shop account creator — ONLY 01629845006 / mhakbor2001@gmail.com
+  const handleCreateShopAccountByAdmin = async (params: {
+    shopName: string;
+    ownerName: string;
+    phone: string;
+    email?: string;
+    address?: string;
+    password: string;
+    autoApprove?: boolean;
+  }) => {
+    if (!isCloudLoggedIn || !isStrictPlatformAdmin(cloudSession)) {
+      const err = 'নতুন শপ একাউন্ট শুধুমাত্র 01629845006 / mhakbor2001@gmail.com থেকে লগইন করে তৈরি করা যাবে!';
+      showToast(err);
+      throw new Error(err);
+    }
+
+    const cleanShopName = params.shopName.trim();
+    const cleanOwnerName = params.ownerName.trim();
+    const cleanPhone = params.phone.trim();
+    const cleanPassword = params.password.trim();
+    const cleanAddress = (params.address || '').trim();
+    if (!cleanShopName || !cleanOwnerName || !cleanPhone || !cleanPassword) {
+      throw new Error('দয়া করে দোকানের নাম, মালিকের নাম, মোবাইল নম্বর ও পাসওয়ার্ড পূরণ করুন!');
+    }
+
+    const rawEmail = (params.email || '').trim();
+    const phoneDigits = cleanPhone.replace(/[^0-9]/g, '');
+    const isValidEmailFormat = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail);
+    const cleanEmail = isValidEmailFormat
+      ? rawEmail.toLowerCase()
+      : `${phoneDigits || 'owner'}@iqbalpharmacy.bd`;
+
+    const bd11 = phoneDigits.length >= 10 ? '0' + phoneDigits.slice(-10) : phoneDigits;
+
+    // Prevent duplicate registrations with the same phone or valid email
+    const duplicateReg = shopRegistrations.find((r) => {
+      const rDigits = (r.phone || '').replace(/[^0-9]/g, '');
+      const phoneMatch =
+        phoneDigits.length >= 6 &&
+        (rDigits === phoneDigits ||
+          (phoneDigits.length >= 10 && rDigits.endsWith(phoneDigits.slice(-10))) ||
+          (rDigits.length >= 10 && phoneDigits.endsWith(rDigits.slice(-10))));
+      const emailMatch = isValidEmailFormat && r.email && r.email.toLowerCase() === cleanEmail;
+      return phoneMatch || emailMatch;
+    });
+    if (duplicateReg) {
+      throw new Error(`এই মোবাইল নম্বর বা ইমেইল দিয়ে ইতিমধ্যেই একটি শপ একাউন্ট (${duplicateReg.shopName}) রয়েছে!`);
+    }
+
+    const nowMs = Date.now();
+    const autoApprove = params.autoApprove !== false;
+    const actionBy = cloudSession?.phone || cloudSession?.email || '01629845006 / mhakbor2001@gmail.com';
+
+    // Create isolated shop account without touching the platform admin's active session
+    const session = await registerNewShopOwnerAccount({
+      shopName: cleanShopName,
+      ownerName: cleanOwnerName,
+      email: cleanEmail,
+      phone: cleanPhone,
+      password: cleanPassword,
+      autoSaveSession: false,
+    });
+    saveShopCloudSession(cloudSession);
+
+    const targetShopId = session.shopId || computeCurrentShopId(session);
+    const deterministicStaffId =
+      phoneDigits.length >= 6
+        ? `staff_owner_${bd11}`
+        : `staff_owner_${cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 32)}`;
+    const staffId = getCanonicalDocId(session.staffId || deterministicStaffId, targetShopId);
+
+    const newShopProfile: ShopProfile = {
+      id: targetShopId,
+      shopId: targetShopId,
+      ownerId: session.uid,
+      shopName: cleanShopName,
+      licenseNo: '',
+      phone: cleanPhone,
+      address: cleanAddress,
+      branches: [
+        {
+          id: 'branch-1',
+          name: 'প্রধান শাখা',
+          address: cleanAddress,
+          phone: cleanPhone,
+          isDefault: true,
+        },
+      ],
+      activeBranchId: 'branch-1',
+      customInvoiceSettings: {
+        invoiceTitle: cleanShopName,
+        tagline: 'সুলভ মূল্যে জেনুইন ঔষধের বিশ্বস্ত প্রতিষ্ঠান',
+        address: cleanAddress,
+        phone: cleanPhone,
+        sealType: 'paid',
+        customSealText: 'PAID · পরিশোধিত',
+      },
+      updatedAtMs: nowMs,
+    };
+
+    const ownerStaff: StaffMember = {
+      id: staffId,
+      shopId: targetShopId,
+      ownerId: session.uid,
+      name: cleanOwnerName || 'Owner',
+      roleTitle: 'owner',
+      isMandatoryOwner: true,
+      phone: cleanPhone,
+      email: cleanEmail,
+      password: cleanPassword,
+      shift: 'সারাদিন (মূল তত্ত্বাবধান)',
+      counterName: 'কাউন্টার ১ (Owner)',
+      active: true,
+      updatedAtMs: nowMs,
+    };
+
+    const status: ShopRegistration['status'] = autoApprove ? 'approved' : 'pending_approval';
+    const registrationPayload: ShopRegistration = {
+      id: `shop_reg_${bd11 || phoneDigits || nowMs}`,
+      shopId: targetShopId,
+      shopName: cleanShopName,
+      ownerName: cleanOwnerName,
+      phone: cleanPhone,
+      email: cleanEmail,
+      password: cleanPassword,
+      address: cleanAddress,
+      status,
+      isApproved: autoApprove,
+      registeredAtMs: nowMs,
+      ...(autoApprove ? { approvedAtMs: nowMs, approvedBy: actionBy } : {}),
+      updatedAtMs: nowMs,
+    };
+
+    const scopedStaffDocKey = getScopedFirestoreDocId(targetShopId, staffId);
+    const regUserKeys = Array.from(
+      new Set(
+        [
+          phoneDigits ? `user_phone_${phoneDigits}` : null,
+          bd11 ? `user_phone_${bd11}` : null,
+          phoneDigits.length >= 10 ? `user_phone_${phoneDigits.slice(-10)}` : null,
+          cleanEmail ? `user_email_${cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_')}` : null,
+        ].filter(Boolean) as string[]
+      )
+    );
+
+    const regUserPayload = {
+      id: staffId,
+      shopId: targetShopId,
+      staffId,
+      ownerId: session.uid,
+      name: cleanOwnerName,
+      ownerName: cleanOwnerName,
+      phone: cleanPhone,
+      email: cleanEmail,
+      password: cleanPassword,
+      shopName: cleanShopName,
+      role: 'owner',
+      roleTitle: 'owner',
+      status,
+      isApproved: autoApprove,
+      updatedAtMs: nowMs,
+    };
+
+    await fireAndRaceFirestoreWrites(
+      [
+        {
+          promise: setDoc(
+            doc(db, 'shops', targetShopId),
+            buildShopCloudPayload(newShopProfile, session.uid, targetShopId)
+          ),
+          operationType: OperationType.WRITE,
+          path: `shops/${targetShopId}`,
+        },
+        {
+          promise: setDoc(
+            doc(db, 'staff', scopedStaffDocKey),
+            buildStaffCloudPayload(ownerStaff, session.uid, targetShopId)
+          ),
+          operationType: OperationType.WRITE,
+          path: `staff/${scopedStaffDocKey}`,
+        },
+        {
+          promise: setDoc(
+            doc(db, 'shop_registrations', registrationPayload.id),
+            registrationPayload,
+            { merge: true }
+          ),
+          operationType: OperationType.WRITE,
+          path: `shop_registrations/${registrationPayload.id}`,
+        },
+        ...regUserKeys.map((k) => ({
+          promise: setDoc(doc(db, 'registered_users', k), regUserPayload, { merge: true }),
+          operationType: OperationType.WRITE,
+          path: `registered_users/${k}`,
+        })),
+      ],
+      1400
+    );
+
+    registerGlobalCloudUser(regUserPayload).catch(() => {});
+    upsertServerShopRegistration(registrationPayload).catch(() => {});
+
+    setShopRegistrations((prev) => {
+      const next = [registrationPayload, ...prev.filter((r) => r.id !== registrationPayload.id)];
+      saveLocal('shop_registrations_cache', next);
+      return next;
+    });
+
+    showToast(
+      autoApprove
+        ? `নতুন শপ একাউন্ট (${cleanShopName}) তৈরি ও অনুমোদন করা হয়েছে!`
+        : `নতুন শপ একাউন্ট (${cleanShopName}) পেন্ডিং তালিকায় যুক্ত হয়েছে!`
+    );
+  };
+
   const handleUpdateNotice = async (notice: ShopNotice | null) => {
     const targetShopId = effectiveShopId;
     const updatedShop: ShopProfile = {
@@ -7919,8 +7925,8 @@ export default function App() {
                   </div>
                   <p className="text-amber-900 leading-relaxed">
                     {lang === 'bn'
-                      ? 'লগআউট অবস্থায় ক্রয়-বিক্রয়, ইনভেন্টরি, হিসাব ও সেটিংস বন্ধ থাকবে। কাজ শুরু করতে আপনার একাউন্টে লগইন করুন অথবা নতুন শপ একাউন্ট তৈরি করুন।'
-                      : 'POS, inventory, ledger, and settings are locked while logged out. Please log in or create a new shop account to continue.'}
+                      ? 'লগআউট অবস্থায় ক্রয়-বিক্রয়, ইনভেন্টরি, হিসাব ও সেটিংস বন্ধ থাকবে। কাজ শুরু করতে আপনার একাউন্টে লগইন করুন।'
+                      : 'POS, inventory, ledger, and settings are locked while logged out. Please log in to continue.'}
                   </p>
                 </div>
               </div>
@@ -7932,243 +7938,79 @@ export default function App() {
                   <span>ফার্মেসী ও ডেন্টাল ম্যানেজমেন্ট সিস্টেম</span>
                 </div>
                 <h1 className="text-lg font-bold text-slate-900">
-                  {cloudAuthTab === 'register_owner'
-                    ? 'নতুন শপ / Owner একাউন্ট তৈরি করুন'
-                    : 'এডমিন লগইন (Owner ও স্টাফ)'}
+                  এডমিন লগইন (Owner ও স্টাফ)
                 </h1>
               </div>
 
-              {/* Auth Mode Tabs */}
-              <div className="flex border-b border-slate-200">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCloudAuthTab('login');
-                    setLoginErrorMessage(null);
-                  }}
-                  className={`flex-1 py-2.5 text-xs font-bold text-center border-b-2 cursor-pointer transition-colors ${
-                    cloudAuthTab === 'login'
-                      ? 'border-teal-700 text-teal-800'
-                      : 'border-transparent text-slate-500 hover:text-slate-900'
-                  }`}
-                >
-                  লগইন (Owner ও স্টাফ)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCloudAuthTab('register_owner');
-                    setLoginErrorMessage(null);
-                  }}
-                  className={`flex-1 py-2.5 text-xs font-bold text-center border-b-2 cursor-pointer transition-colors ${
-                    cloudAuthTab === 'register_owner'
-                      ? 'border-teal-700 text-teal-800'
-                      : 'border-transparent text-slate-500 hover:text-slate-900'
-                  }`}
-                >
-                  নতুন শপ একাউন্ট তৈরি
-                </button>
-              </div>
+              {/* Login Form (Exclusive login-only screen when logged out) */}
+              <form onSubmit={handleUniversalLoginSubmit} className="space-y-3.5">
+                {loginErrorMessage && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 font-semibold leading-relaxed">
+                    ⚠️ {loginErrorMessage}
+                  </div>
+                )}
 
-              {/* TAB 1: Login Form */}
-              {cloudAuthTab === 'login' && (
-                <form onSubmit={handleUniversalLoginSubmit} className="space-y-3.5">
-                  {loginErrorMessage && (
-                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 font-semibold leading-relaxed">
-                      ⚠️ {loginErrorMessage}
-                    </div>
-                  )}
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    মোবাইল নম্বর অথবা ইমেইল / জিমেইল *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={cloudLoginEmail}
+                    onChange={(e) => setCloudLoginEmail(e.target.value)}
+                    placeholder="018XXXXXXXX অথবা example@gmail.com"
+                    className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-600"
+                  />
+                </div>
 
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">
-                      মোবাইল নম্বর অথবা ইমেইল / জিমেইল *
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-medium text-slate-700">
+                      লগইন পাসওয়ার্ড *
                     </label>
-                    <input
-                      type="text"
-                      required
-                      value={cloudLoginEmail}
-                      onChange={(e) => setCloudLoginEmail(e.target.value)}
-                      placeholder="018XXXXXXXX অথবা example@gmail.com"
-                      className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-600"
-                    />
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-medium text-slate-700">
-                        লগইন পাসওয়ার্ড *
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => setShowLoginPassword(!showLoginPassword)}
-                        className="text-[11px] text-teal-700 hover:text-teal-900 cursor-pointer inline-flex items-center gap-1"
-                      >
-                        {showLoginPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                        {showLoginPassword ? 'লুকান' : 'দেখুন'}
-                      </button>
-                    </div>
-                    <input
-                      type={showLoginPassword ? 'text' : 'password'}
-                      required
-                      value={cloudLoginPassword}
-                      onChange={(e) => setCloudLoginPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-600"
-                    />
-                  </div>
-
-                  <div className="flex flex-col sm:flex-row items-center gap-2 pt-1">
-                    <button
-                      type="submit"
-                      disabled={cloudLoginLoading}
-                      className="w-full sm:flex-1 py-2.5 px-4 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-lg cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5 shadow-xs"
-                    >
-                      <LogIn className="w-4 h-4" />
-                      {cloudLoginLoading ? 'লগইন হচ্ছে...' : 'লগইন করুন (Owner / Staff)'}
-                    </button>
                     <button
                       type="button"
-                      disabled={cloudLoginLoading}
-                      onClick={handleGoogleCloudLogin}
-                      className="w-full sm:w-auto py-2.5 px-3.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg cursor-pointer disabled:opacity-50"
+                      onClick={() => setShowLoginPassword(!showLoginPassword)}
+                      className="text-[11px] text-teal-700 hover:text-teal-900 cursor-pointer inline-flex items-center gap-1"
                     >
-                      Google লগইন
+                      {showLoginPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                      {showLoginPassword ? 'লুকান' : 'দেখুন'}
                     </button>
                   </div>
+                  <input
+                    type={showLoginPassword ? 'text' : 'password'}
+                    required
+                    value={cloudLoginPassword}
+                    onChange={(e) => setCloudLoginPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-600"
+                  />
+                </div>
 
-                  <div className="text-center pt-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCloudAuthTab('register_owner');
-                        setLoginErrorMessage(null);
-                      }}
-                      className="text-xs text-teal-700 hover:text-teal-900 font-semibold cursor-pointer underline"
-                    >
-                      নতুন শপ / Owner একাউন্ট তৈরি করবেন? এখানে ক্লিক করুন →
-                    </button>
-                  </div>
-                </form>
-              )}
+                <div className="flex flex-col sm:flex-row items-center gap-2 pt-1">
+                  <button
+                    type="submit"
+                    disabled={cloudLoginLoading}
+                    className="w-full sm:flex-1 py-2.5 px-4 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-lg cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5 shadow-xs"
+                  >
+                    <LogIn className="w-4 h-4" />
+                    {cloudLoginLoading ? 'লগইন হচ্ছে...' : 'লগইন করুন (Owner / Staff)'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={cloudLoginLoading}
+                    onClick={handleGoogleCloudLogin}
+                    className="w-full sm:w-auto py-2.5 px-3.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg cursor-pointer disabled:opacity-50"
+                  >
+                    Google লগইন
+                  </button>
+                </div>
 
-              {/* TAB 2: Create New Shop Owner Account Form */}
-              {cloudAuthTab === 'register_owner' && (
-                <form onSubmit={handleRegisterOwnerSubmit} className="space-y-3">
-                  {loginErrorMessage && (
-                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 font-semibold leading-relaxed">
-                      ℹ️ {loginErrorMessage}
-                    </div>
-                  )}
-
-                  <div className="p-3 bg-teal-50 border border-teal-200 rounded-lg text-xs text-teal-900 leading-relaxed">
-                    <strong>নতুন শপ একাউন্ট:</strong> আপনার ফার্মেসীর নাম, মালিকের নাম, মোবাইল নম্বর ও পাসওয়ার্ড দিয়ে নতুন শপ একাউন্ট তৈরি করুন।
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">
-                      দোকানের নাম (Shop Name) *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={registerShopName}
-                      onChange={(e) => setRegisterShopName(e.target.value)}
-                      placeholder="যেমন: ইকবাল ফার্মেসী"
-                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1">
-                        মালিকের নাম (Owner Name) *
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={registerOwnerName}
-                        onChange={(e) => setRegisterOwnerName(e.target.value)}
-                        placeholder="যেমন: ইকবাল মাহমুদ"
-                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1">
-                        মোবাইল নম্বর *
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={registerPhone}
-                        onChange={(e) => setRegisterPhone(e.target.value)}
-                        placeholder="018XXXXXXXX"
-                        className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">
-                      ইমেইল / জিমেইল (ঐচ্ছিক)
-                    </label>
-                    <input
-                      type="email"
-                      value={registerEmail}
-                      onChange={(e) => setRegisterEmail(e.target.value)}
-                      placeholder="owner@gmail.com"
-                      className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
-                    />
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-medium text-slate-700">
-                        পাসওয়ার্ড সেট করুন *
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => setShowRegisterPassword(!showRegisterPassword)}
-                        className="text-[11px] text-teal-700 hover:text-teal-900 cursor-pointer inline-flex items-center gap-1"
-                      >
-                        {showRegisterPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                        {showRegisterPassword ? 'লুকান' : 'দেখুন'}
-                      </button>
-                    </div>
-                    <input
-                      type={showRegisterPassword ? 'text' : 'password'}
-                      required
-                      value={registerPassword}
-                      onChange={(e) => setRegisterPassword(e.target.value)}
-                      placeholder="নূন্যতম ৬ অক্ষর"
-                      className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
-                    />
-                  </div>
-
-                  <div className="pt-1">
-                    <button
-                      type="submit"
-                      disabled={cloudLoginLoading}
-                      className="w-full py-2.5 px-4 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-lg cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5 shadow-xs"
-                    >
-                      <ShieldCheck className="w-4 h-4" />
-                      {cloudLoginLoading ? 'একাউন্ট তৈরি হচ্ছে...' : 'নতুন শপ একাউন্ট তৈরি করুন'}
-                    </button>
-                  </div>
-
-                  <div className="text-center pt-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCloudAuthTab('login');
-                        setLoginErrorMessage(null);
-                      }}
-                      className="text-xs text-teal-700 hover:text-teal-900 font-semibold cursor-pointer underline"
-                    >
-                      ইতিমধ্যে একাউন্ট আছে? লগইন করুন →
-                    </button>
-                  </div>
-                </form>
-              )}
+                <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-600 text-center">
+                  নতুন শপ একাউন্ট শুধুমাত্র অ্যাপস অ্যাডমিন (<span className="font-mono font-semibold text-slate-800">01629845006 / mhakbor2001@gmail.com</span>) লগইন করে তৈরি করতে পারবেন।
+                </div>
+              </form>
             </div>
           </div>
         </main>
@@ -8740,9 +8582,9 @@ export default function App() {
             </div>
           )}
 
-          {/* Master Admin Pending Shop Registrations Alert */}
+          {/* Strict Platform Admin Pending Shop Registrations Alert (ONLY 01629845006 / mhakbor2001@gmail.com) */}
           {isCloudLoggedIn &&
-            (isMasterAppOwner(cloudSession) || isMasterAppOwner(activeStaff)) &&
+            isStrictPlatformAdmin(cloudSession) &&
             shopRegistrations.filter((r) => r.status === 'pending_approval').length > 0 && (
               <div className="mb-4 px-4 py-2.5 bg-rose-50 border border-rose-300 text-rose-950 text-xs font-medium rounded-md flex flex-wrap items-center justify-between gap-2 no-print">
                 <div className="flex items-center gap-2">
@@ -8792,6 +8634,7 @@ export default function App() {
                   }}
                   onOpenScanner={() => setShowScannerModal(true)}
                   onUpdateNotice={handleUpdateNotice}
+                  onQuickRestock={handleQuickRestock}
                 />
               )}
 
@@ -8921,6 +8764,7 @@ export default function App() {
                   shopRegistrations={shopRegistrations}
                   onApproveShopRegistration={handleApproveShopRegistration}
                   onRejectShopRegistration={handleRejectShopRegistration}
+                  onCreateShopAccountByAdmin={handleCreateShopAccountByAdmin}
                 />
               )}
         </main>
@@ -8937,7 +8781,7 @@ export default function App() {
                   <span>ইকবাল ফার্মেসী · ক্লাউড ও মাল্টি-ডিভাইস সিঙ্ক</span>
                 </div>
                 <h3 className="text-base font-bold text-slate-900 mt-0.5">
-                  {cloudAuthTab === 'register_owner'
+                  {cloudAuthTab === 'register_owner' && isCloudLoggedIn && isStrictPlatformAdmin(cloudSession)
                     ? 'দোকানের নতুন Owner আইডি রেজিস্ট্রেশন'
                     : 'দোকান ক্লাউড লগইন (Owner ও স্টাফ)'}
                 </h3>
@@ -8986,34 +8830,36 @@ export default function App() {
               </div>
             )}
 
-            {/* Tabs for Login vs Register New Owner */}
-            <div className="flex border-b border-slate-200">
-              <button
-                type="button"
-                onClick={() => setCloudAuthTab('login')}
-                className={`flex-1 py-2 text-xs font-bold text-center border-b-2 cursor-pointer transition-colors ${
-                  cloudAuthTab === 'login'
-                    ? 'border-teal-700 text-teal-800'
-                    : 'border-transparent text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                Owner ও স্টাফ লগইন
-              </button>
-              <button
-                type="button"
-                onClick={() => setCloudAuthTab('register_owner')}
-                className={`flex-1 py-2 text-xs font-bold text-center border-b-2 cursor-pointer transition-colors ${
-                  cloudAuthTab === 'register_owner'
-                    ? 'border-teal-700 text-teal-800'
-                    : 'border-transparent text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                নতুন Owner আইডি খুলুন
-              </button>
-            </div>
+            {/* Tabs for Login vs Register New Owner (Tab 2 ONLY visible to 01629845006 / mhakbor2001@gmail.com) */}
+            {isCloudLoggedIn && isStrictPlatformAdmin(cloudSession) && (
+              <div className="flex border-b border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setCloudAuthTab('login')}
+                  className={`flex-1 py-2 text-xs font-bold text-center border-b-2 cursor-pointer transition-colors ${
+                    cloudAuthTab === 'login'
+                      ? 'border-teal-700 text-teal-800'
+                      : 'border-transparent text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  Owner ও স্টাফ লগইন
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCloudAuthTab('register_owner')}
+                  className={`flex-1 py-2 text-xs font-bold text-center border-b-2 cursor-pointer transition-colors ${
+                    cloudAuthTab === 'register_owner'
+                      ? 'border-teal-700 text-teal-800'
+                      : 'border-transparent text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  নতুন Owner আইডি খুলুন
+                </button>
+              </div>
+            )}
 
             {/* TAB 1: Universal Login (Owner or Staff by Email/Mobile + Password) */}
-            {cloudAuthTab === 'login' && (
+            {(cloudAuthTab === 'login' || !(isCloudLoggedIn && isStrictPlatformAdmin(cloudSession))) && (
               <form onSubmit={handleUniversalLoginSubmit} className="space-y-3.5">
                 {loginErrorMessage && (
                   <div className="p-3 bg-red-50 border border-red-200 rounded-md text-xs text-red-700 font-semibold flex items-center gap-2">
@@ -9081,23 +8927,29 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="text-center pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setCloudAuthTab('register_owner')}
-                    className="text-xs text-teal-700 hover:text-teal-900 font-semibold cursor-pointer underline"
-                  >
-                    দোকানের নতুন Owner আইডি খুলবেন? এখানে ক্লিক করুন →
-                  </button>
-                </div>
+                {isCloudLoggedIn && isStrictPlatformAdmin(cloudSession) ? (
+                  <div className="text-center pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setCloudAuthTab('register_owner')}
+                      className="text-xs text-teal-700 hover:text-teal-900 font-semibold cursor-pointer underline"
+                    >
+                      নতুন শপ / Owner একাউন্ট তৈরি করবেন? এখানে ক্লিক করুন →
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-center text-slate-500 pt-1">
+                    নতুন শপ একাউন্ট শুধুমাত্র <span className="font-mono font-semibold">01629845006 / mhakbor2001@gmail.com</span> থেকে তৈরি করা যাবে।
+                  </p>
+                )}
               </form>
             )}
 
-            {/* TAB 2: Register New Shop Owner Account */}
-            {cloudAuthTab === 'register_owner' && (
+            {/* TAB 2: Register New Shop Owner Account (ONLY visible to 01629845006 / mhakbor2001@gmail.com) */}
+            {cloudAuthTab === 'register_owner' && isCloudLoggedIn && isStrictPlatformAdmin(cloudSession) && (
               <form onSubmit={handleRegisterOwnerSubmit} className="space-y-3">
                 <div className="p-3 bg-teal-50 border border-teal-200 rounded-md text-xs text-teal-900 leading-relaxed">
-                  <strong>দোকান মালিকের (Owner) নতুন আইডি:</strong> নিজের ফার্মেসীর নাম, মোবাইল নম্বর ও পাসওয়ার্ড দিয়ে একাউন্ট তৈরি করুন। পরবর্তীতে আপনি এই একাউন্ট থেকেই আপনার সকল স্টাফদের আইডি ও পাসওয়ার্ড তৈরি করতে পারবেন।
+                  <strong>দোকান মালিকের (Owner) নতুন আইডি:</strong> নতুন ফার্মেসীর নাম, মোবাইল নম্বর ও পাসওয়ার্ড দিয়ে একাউন্ট তৈরি করুন। তৈরি হওয়া একাউন্ট সরাসরি অনুমোদিত থাকবে এবং মালিক নিজে লগইন করে কাজ করতে পারবেন।
                 </div>
 
                 <div>
@@ -9109,7 +8961,7 @@ export default function App() {
                     required
                     value={registerShopName}
                     onChange={(e) => setRegisterShopName(e.target.value)}
-                    placeholder="যেমন: ইকবাল ফার্মেসী"
+                    placeholder="যেমন: মদিনা ফার্মেসী"
                     className="w-full px-3 py-2 text-sm border border-slate-200 rounded-md"
                   />
                 </div>
@@ -9124,7 +8976,7 @@ export default function App() {
                       required
                       value={registerOwnerName}
                       onChange={(e) => setRegisterOwnerName(e.target.value)}
-                      placeholder="যেমন: ইকবাল মাহমুদ"
+                      placeholder="যেমন: মো. করিম"
                       className="w-full px-3 py-2 text-sm border border-slate-200 rounded-md"
                     />
                   </div>
@@ -9137,7 +8989,7 @@ export default function App() {
                       required
                       value={registerPhone}
                       onChange={(e) => setRegisterPhone(e.target.value)}
-                      placeholder="018XXXXXXXX"
+                      placeholder="017XXXXXXXX"
                       className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-md"
                     />
                   </div>
@@ -9187,24 +9039,8 @@ export default function App() {
                     className="w-full py-2.5 px-4 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-md cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
                   >
                     <ShieldCheck className="w-4 h-4" />
-                    {cloudLoginLoading ? 'একাউন্ট তৈরি হচ্ছে...' : 'নতুন Owner আইডি তৈরি ও লগইন করুন'}
+                    {cloudLoginLoading ? 'একাউন্ট তৈরি হচ্ছে...' : 'নতুন শপ / Owner আইডি তৈরি করুন'}
                   </button>
-                </div>
-
-                <div className="mt-2 p-2.5 bg-amber-50 border border-amber-200 rounded text-[11px] text-amber-900 leading-normal space-y-1">
-                  <div className="font-semibold flex items-center gap-1 text-amber-950">
-                    <span>☁️ Cloudflare Pages ও Firestore ডেপ্লয় নোট:</span>
-                  </div>
-                  <p>
-                    Cloudflare (যেমন: <code className="bg-amber-100 px-1 py-0.5 rounded">*.pages.dev</code>) এ অ্যাপ ডেপ্লয় করার পর Firebase Console এ যান:
-                  </p>
-                  <ul className="list-disc pl-4 space-y-0.5 text-[10.5px]">
-                    <li><strong>Authentication &gt; Settings &gt; Authorized Domains:</strong> আপনার ক্লাউডফ্লেয়ার ডোমেন যুক্ত করুন।</li>
-                    <li><strong>Authentication &gt; Sign-in method:</strong> Email/Password এবং Anonymous চালু রাখুন।</li>
-                  </ul>
-                  <p className="text-[10px] text-amber-800">
-                    (ডোমেন অনুমোদন ছাড়াও আপনার অফলাইন ও লোকাল রেজিস্টার্ড একাউন্ট স্বয়ংক্রিয়ভাবে কার্যকর থাকবে)।
-                  </p>
                 </div>
 
                 <div className="text-center pt-1">
@@ -9213,7 +9049,7 @@ export default function App() {
                     onClick={() => setCloudAuthTab('login')}
                     className="text-xs text-teal-700 hover:text-teal-900 font-semibold cursor-pointer underline"
                   >
-                    ইতিমধ্যে একাউন্ট আছে? লগইন করুন →
+                    লগইন ট্যাবে ফিরে যান →
                   </button>
                 </div>
               </form>

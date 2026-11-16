@@ -153,30 +153,37 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       'স্ট্যাটাস (Status)',
     ];
 
+    const csvCell = (val: string | undefined | null) =>
+      `"${String(val || '').replace(/"/g, '""')}"`;
+
     const rows = inventory.map((item) => {
-      const isLow = item.stockQty <= item.minStockLevel;
+      const stock = Number(item.stockQty || 0);
+      const minLvl = Number(item.minStockLevel || 0);
+      const purPrice = Number(item.purchasePrice || 0);
+      const salePrice = Number(item.unitPrice || 0);
+      const isLow = stock < minLvl;
       const isExp = isExpiringSoon(item.expiryDate);
       const status = isExp ? 'মেয়াদ উত্তীর্ণের পথে' : isLow ? 'স্টক স্বল্প' : 'স্বাভাবিক';
-      const totPur = item.stockQty * item.purchasePrice;
-      const totMrp = item.stockQty * item.unitPrice;
+      const totPur = stock * purPrice;
+      const totMrp = stock * salePrice;
 
       return [
-        `"${item.brandName.replace(/"/g, '""')}"`,
-        `"${item.genericName.replace(/"/g, '""')}"`,
-        `"${item.companyName.replace(/"/g, '""')}"`,
-        `"${item.dosageForm.replace(/"/g, '""')}"`,
-        `"${item.strength.replace(/"/g, '""')}"`,
-        `"${item.packSize.replace(/"/g, '""')}"`,
-        `"${item.batchNo.replace(/"/g, '""')}"`,
-        `"${item.expiryDate}"`,
-        `"${item.shelfLocation.replace(/"/g, '""')}"`,
-        item.stockQty,
-        item.minStockLevel,
-        item.purchasePrice.toFixed(2),
-        item.unitPrice.toFixed(2),
+        csvCell(item.brandName),
+        csvCell(item.genericName),
+        csvCell(item.companyName),
+        csvCell(item.dosageForm),
+        csvCell(item.strength),
+        csvCell(item.packSize),
+        csvCell(item.batchNo),
+        csvCell(item.expiryDate),
+        csvCell(item.shelfLocation),
+        stock,
+        minLvl,
+        purPrice.toFixed(2),
+        salePrice.toFixed(2),
         totPur.toFixed(2),
         totMrp.toFixed(2),
-        `"${status}"`,
+        csvCell(status),
       ].join(',');
     });
 
@@ -189,6 +196,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   // Live MedEx search on main Inventory search bar & modal catalog search bar

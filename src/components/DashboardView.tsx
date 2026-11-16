@@ -13,6 +13,7 @@ import {
   AlertCircle,
   Bell,
   Package,
+  PackagePlus,
   ShoppingCart,
   ArrowRight,
   Megaphone,
@@ -52,6 +53,7 @@ interface DashboardViewProps {
   onNavigate: (section: any, subTab?: string) => void;
   onOpenScanner?: () => void;
   onUpdateNotice?: (notice: ShopNotice | null) => Promise<void> | void;
+  onQuickRestock?: (item: InventoryItem, addQty: number) => Promise<void>;
 }
 
 export const toBengaliDigits = (num: number | string): string => {
@@ -85,6 +87,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onNavigate,
   onOpenScanner,
   onUpdateNotice,
+  onQuickRestock,
 }) => {
   // Live Scrolling Notice State for https://iqbal-pharmacy.pages.dev/
   const [noticeText, setNoticeText] = useState(shopProfile?.notice?.text || '');
@@ -304,10 +307,39 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [lowStockFilter, setLowStockFilter] = useState<'all' | 'zero'>('all');
   const [lowStockSearch, setLowStockSearch] = useState('');
 
-  // 3. Calculate Low Stock Items list
+  const [restockingItemId, setRestockingItemId] = useState<string | null>(null);
+  const [showAllLowStockWidget, setShowAllLowStockWidget] = useState(false);
+
+  // Explicit list of real inventory medicines whose stockQty has fallen below minStockLevel
+  const belowMinStockItems = useMemo(() => {
+    return inventory
+      .filter((item) => (item.stockQty ?? 0) < (item.minStockLevel ?? 10))
+      .sort((a, b) => {
+        const diffA = (a.stockQty ?? 0) - (a.minStockLevel ?? 10);
+        const diffB = (b.stockQty ?? 0) - (b.minStockLevel ?? 10);
+        return diffA - diffB;
+      });
+  }, [inventory]);
+
+  const handleWidgetQuickRestock = async (item: InventoryItem) => {
+    if (!onQuickRestock) {
+      onNavigate('inventory');
+      return;
+    }
+    const minLvl = item.minStockLevel ?? 10;
+    const addQty = Math.max(100, minLvl * 2 - (item.stockQty ?? 0));
+    setRestockingItemId(item.id);
+    try {
+      await onQuickRestock(item, addQty);
+    } finally {
+      setRestockingItemId(null);
+    }
+  };
+
+  // 3. Calculate Low Stock Items list (for modal & bell)
   const lowStockItems = useMemo(() => {
     const actualLow = inventory.filter(
-      (item) => (item.stockQty ?? 0) <= (item.minStockLevel || 10)
+      (item) => (item.stockQty ?? 0) < (item.minStockLevel ?? 10)
     );
     if (actualLow.length > 0) {
       return [...actualLow].sort((a, b) => {
@@ -942,6 +974,139 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </section>
 
+      {/* EXPLICIT DASHBOARD WIDGET: কম স্টকের ওষুধের তালিকা ও দ্রুত রি-স্টক (Low Stock & Quick Restock Widget) */}
+      <section className="bg-white border border-amber-300/90 rounded-2xl p-4 sm:p-5 shadow-xs space-y-3.5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-amber-100 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-2xs">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-sm sm:text-base font-extrabold text-slate-900">
+                  স্বল্প স্টক সতর্কতা ও দ্রুত রি-স্টক (Low Stock Alert)
+                </h2>
+                <span
+                  className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${
+                    belowMinStockItems.length > 0
+                      ? 'bg-rose-100 text-rose-800 border-rose-200'
+                      : 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                  }`}
+                >
+                  {belowMinStockItems.length > 0
+                    ? `${toBengaliDigits(belowMinStockItems.length)} টি ওষুধ Min Stock এর নিচে`
+                    : 'সব স্টক পর্যাপ্ত'}
+                </span>
+              </div>
+              <p className="text-[11.5px] text-slate-500 mt-0.5">
+                যেসব ওষুধের বর্তমান স্টক তাদের নির্ধারিত সর্বনিম্ন সীমার (minStockLevel) নিচে নেমে গেছে — সরাসরি ১ ক্লিকে রি-স্টক করুন
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {belowMinStockItems.length > 6 && (
+              <button
+                type="button"
+                onClick={() => setShowAllLowStockWidget((p) => !p)}
+                className="px-3 py-1.5 text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 rounded-lg transition-colors cursor-pointer"
+              >
+                {showAllLowStockWidget
+                  ? 'সংক্ষেপ করুন ▲'
+                  : `সবগুলো দেখুন (${toBengaliDigits(belowMinStockItems.length)}) ▼`}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onNavigate('inventory')}
+              className="px-3 py-1.5 text-xs font-bold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-lg transition-colors cursor-pointer"
+            >
+              ইনভেন্টরি পেজ →
+            </button>
+          </div>
+        </div>
+
+        {belowMinStockItems.length === 0 ? (
+          <div className="p-4 rounded-xl bg-emerald-50/70 border border-emerald-200 text-xs text-emerald-900 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 font-semibold">
+              <Check className="w-4 h-4 text-emerald-700 shrink-0" />
+              <span>সকল ঔষধের বর্তমান মজুদ তাদের নির্ধারিত ন্যূনতম সীমার (minStockLevel) উপরে রয়েছে।</span>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+            {(showAllLowStockWidget ? belowMinStockItems : belowMinStockItems.slice(0, 6)).map((med) => {
+              const curStock = med.stockQty ?? 0;
+              const minLvl = med.minStockLevel ?? 10;
+              const shortage = Math.max(1, minLvl - curStock);
+              const isZero = curStock <= 0;
+              const restockAmount = Math.max(100, minLvl * 2 - curStock);
+              const isRestocking = restockingItemId === med.id;
+
+              return (
+                <div
+                  key={med.id}
+                  className={`p-3 rounded-xl border flex flex-col justify-between gap-2.5 transition-all ${
+                    isZero
+                      ? 'bg-rose-50/60 border-rose-300'
+                      : 'bg-amber-50/50 border-amber-200'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-bold text-xs sm:text-sm text-slate-900 truncate">
+                          {med.brandName}
+                        </div>
+                        <div className="text-[11px] text-slate-600 truncate">
+                          {med.dosageForm} · {med.strength}
+                        </div>
+                      </div>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                          isZero
+                            ? 'bg-rose-600 text-white'
+                            : 'bg-amber-200 text-amber-950'
+                        }`}
+                      >
+                        {isZero ? 'স্টক শূন্য' : 'স্টক কম'}
+                      </span>
+                    </div>
+                    <div className="text-[10.5px] text-slate-500 truncate mt-0.5">
+                      {med.companyName} {med.shelfLocation ? `· র‍্যাক: ${med.shelfLocation}` : ''}
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-amber-200/70 flex items-center justify-between gap-2">
+                    <div className="text-[11px] font-mono">
+                      <div className={isZero ? 'font-bold text-rose-700' : 'font-bold text-amber-800'}>
+                        মজুদ: {toBengaliDigits(curStock)} / সীমা: {toBengaliDigits(minLvl)}
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        ঘাটতি: {toBengaliDigits(shortage)} পিস
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={isRestocking}
+                      onClick={() => handleWidgetQuickRestock(med)}
+                      className="px-2.5 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-[11px] font-bold flex items-center gap-1 shadow-2xs transition-all active:scale-95 cursor-pointer disabled:opacity-50 shrink-0"
+                      title={`দ্রুত +${restockAmount} পিস স্টক যোগ করুন`}
+                    >
+                      <PackagePlus className="w-3.5 h-3.5" />
+                      <span>
+                        {isRestocking ? 'যোগ হচ্ছে...' : `+${toBengaliDigits(restockAmount)} রি-স্টক`}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
       {/* SECTION 2: দ্রুত অ্যাকশন বাটনসমূহ (Quick Action Grid - 5 Items) */}
       <section className="bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200/90 shadow-2xs">
         <div className="text-xs font-bold text-slate-700 mb-2.5 px-0.5">
@@ -1458,6 +1623,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
                           {/* Action Buttons */}
                           <div className="mt-3 pt-2.5 border-t border-slate-200/80 flex items-center justify-end gap-2">
+                            {onQuickRestock && !String(med.id || '').startsWith('ls-fallback-') && (
+                              <button
+                                type="button"
+                                disabled={restockingItemId === med.id}
+                                onClick={() => handleWidgetQuickRestock(med)}
+                                className="flex items-center gap-1 px-3 py-1 bg-indigo-700 hover:bg-indigo-800 text-white rounded-lg text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                              >
+                                <PackagePlus className="w-3 h-3" />
+                                <span>
+                                  {restockingItemId === med.id
+                                    ? 'যোগ হচ্ছে...'
+                                    : `+${toBengaliDigits(Math.max(100, (med.minStockLevel ?? 10) * 2 - (med.stockQty ?? 0)))} দ্রুত রি-স্টক`}
+                                </span>
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => {
