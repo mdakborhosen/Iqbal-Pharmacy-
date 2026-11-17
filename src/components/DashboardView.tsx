@@ -309,6 +309,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const [restockingItemId, setRestockingItemId] = useState<string | null>(null);
   const [showAllLowStockWidget, setShowAllLowStockWidget] = useState(false);
+  const [customRestockQtyMap, setCustomRestockQtyMap] = useState<Record<string, string>>({});
 
   // Explicit list of real inventory medicines whose stockQty has fallen below minStockLevel
   const belowMinStockItems = useMemo(() => {
@@ -321,16 +322,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       });
   }, [inventory]);
 
+  const getDefaultRestockQty = (item: InventoryItem): number => {
+    const minLvl = item.minStockLevel ?? 10;
+    return Math.max(100, minLvl * 2 - (item.stockQty ?? 0));
+  };
+
   const handleWidgetQuickRestock = async (item: InventoryItem) => {
     if (!onQuickRestock) {
       onNavigate('inventory');
       return;
     }
-    const minLvl = item.minStockLevel ?? 10;
-    const addQty = Math.max(100, minLvl * 2 - (item.stockQty ?? 0));
+    const rawVal = customRestockQtyMap[item.id];
+    const parsedVal = rawVal !== undefined ? Math.floor(Number(rawVal)) : getDefaultRestockQty(item);
+    if (!Number.isFinite(parsedVal) || parsedVal <= 0) return;
+
     setRestockingItemId(item.id);
     try {
-      await onQuickRestock(item, addQty);
+      await onQuickRestock(item, parsedVal);
+      setCustomRestockQtyMap((prev) => {
+        const next = { ...prev };
+        delete next[item.id];
+        return next;
+      });
     } finally {
       setRestockingItemId(null);
     }
@@ -1040,7 +1053,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               const minLvl = med.minStockLevel ?? 10;
               const shortage = Math.max(1, minLvl - curStock);
               const isZero = curStock <= 0;
-              const restockAmount = Math.max(100, minLvl * 2 - curStock);
+              const defaultRestockAmount = getDefaultRestockQty(med);
+              const customQtyStr =
+                customRestockQtyMap[med.id] !== undefined
+                  ? customRestockQtyMap[med.id]
+                  : String(defaultRestockAmount);
+              const parsedCustomQty = Math.floor(Number(customQtyStr));
+              const isValidCustomQty = Number.isFinite(parsedCustomQty) && parsedCustomQty > 0;
               const isRestocking = restockingItemId === med.id;
 
               return (
@@ -1077,7 +1096,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </div>
                   </div>
 
-                  <div className="pt-2 border-t border-amber-200/70 flex items-center justify-between gap-2">
+                  <div className="pt-2 border-t border-amber-200/70 flex flex-wrap items-center justify-between gap-2">
                     <div className="text-[11px] font-mono">
                       <div className={isZero ? 'font-bold text-rose-700' : 'font-bold text-amber-800'}>
                         মজুদ: {toBengaliDigits(curStock)} / সীমা: {toBengaliDigits(minLvl)}
@@ -1087,18 +1106,42 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       </div>
                     </div>
 
-                    <button
-                      type="button"
-                      disabled={isRestocking}
-                      onClick={() => handleWidgetQuickRestock(med)}
-                      className="px-2.5 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-[11px] font-bold flex items-center gap-1 shadow-2xs transition-all active:scale-95 cursor-pointer disabled:opacity-50 shrink-0"
-                      title={`দ্রুত +${restockAmount} পিস স্টক যোগ করুন`}
-                    >
-                      <PackagePlus className="w-3.5 h-3.5" />
-                      <span>
-                        {isRestocking ? 'যোগ হচ্ছে...' : `+${toBengaliDigits(restockAmount)} রি-স্টক`}
-                      </span>
-                    </button>
+                    <div className="flex items-center rounded-lg border border-teal-400 bg-white overflow-hidden shadow-2xs shrink-0">
+                      <span className="pl-2 pr-0.5 text-[11px] font-bold text-teal-800 select-none">+</span>
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={customQtyStr}
+                        onChange={(e) =>
+                          setCustomRestockQtyMap((prev) => ({
+                            ...prev,
+                            [med.id]: e.target.value,
+                          }))
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (isValidCustomQty) handleWidgetQuickRestock(med);
+                          }
+                        }}
+                        placeholder="সংখ্যা"
+                        aria-label="কাস্টম রি-স্টক সংখ্যা"
+                        className="w-14 py-1 pr-1 text-[11px] font-mono font-bold text-slate-900 bg-transparent focus:outline-none text-center"
+                      />
+                      <button
+                        type="button"
+                        disabled={isRestocking || !isValidCustomQty}
+                        onClick={() => handleWidgetQuickRestock(med)}
+                        className="px-2.5 py-1.5 bg-teal-700 hover:bg-teal-800 text-white text-[11px] font-bold flex items-center gap-1 transition-all active:scale-95 cursor-pointer disabled:opacity-50 shrink-0"
+                        title={`দ্রুত +${isValidCustomQty ? parsedCustomQty : 0} পিস স্টক যোগ করুন`}
+                      >
+                        <PackagePlus className="w-3.5 h-3.5" />
+                        <span>
+                          {isRestocking ? 'যোগ হচ্ছে...' : 'রি-স্টক'}
+                        </span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -1622,43 +1665,77 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           </div>
 
                           {/* Action Buttons */}
-                          <div className="mt-3 pt-2.5 border-t border-slate-200/80 flex items-center justify-end gap-2">
-                            {onQuickRestock && !String(med.id || '').startsWith('ls-fallback-') && (
+                          <div className="mt-3 pt-2.5 border-t border-slate-200/80 flex flex-wrap items-center justify-between sm:justify-end gap-2">
+                            {onQuickRestock && !String(med.id || '').startsWith('ls-fallback-') && (() => {
+                              const defaultModalQty = getDefaultRestockQty(med);
+                              const customModalQtyStr =
+                                customRestockQtyMap[med.id] !== undefined
+                                  ? customRestockQtyMap[med.id]
+                                  : String(defaultModalQty);
+                              const parsedModalQty = Math.floor(Number(customModalQtyStr));
+                              const isValidModalQty = Number.isFinite(parsedModalQty) && parsedModalQty > 0;
+                              return (
+                                <div className="flex items-center rounded-lg border border-indigo-300 bg-white overflow-hidden shadow-2xs shrink-0">
+                                  <span className="pl-2 pr-0.5 text-xs font-bold text-indigo-700 select-none">+</span>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    step={1}
+                                    value={customModalQtyStr}
+                                    onChange={(e) =>
+                                      setCustomRestockQtyMap((prev) => ({
+                                        ...prev,
+                                        [med.id]: e.target.value,
+                                      }))
+                                    }
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        if (isValidModalQty) handleWidgetQuickRestock(med);
+                                      }
+                                    }}
+                                    placeholder="সংখ্যা"
+                                    aria-label="কাস্টম রি-স্টক সংখ্যা"
+                                    className="w-16 py-1 pr-1 text-xs font-mono font-bold text-slate-900 bg-transparent focus:outline-none text-center"
+                                  />
+                                  <button
+                                    type="button"
+                                    disabled={restockingItemId === med.id || !isValidModalQty}
+                                    onClick={() => handleWidgetQuickRestock(med)}
+                                    className="flex items-center gap-1 px-2.5 py-1.5 bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-bold transition-all active:scale-95 cursor-pointer disabled:opacity-50 shrink-0"
+                                    title={`কাস্টম +${isValidModalQty ? parsedModalQty : 0} ইউনিট দ্রুত রি-স্টক করুন`}
+                                  >
+                                    <PackagePlus className="w-3.5 h-3.5" />
+                                    <span>
+                                      {restockingItemId === med.id ? 'যোগ হচ্ছে...' : 'দ্রুত রি-স্টক'}
+                                    </span>
+                                  </button>
+                                </div>
+                              );
+                            })()}
+                            <div className="flex items-center gap-2">
                               <button
                                 type="button"
-                                disabled={restockingItemId === med.id}
-                                onClick={() => handleWidgetQuickRestock(med)}
-                                className="flex items-center gap-1 px-3 py-1 bg-indigo-700 hover:bg-indigo-800 text-white rounded-lg text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                                onClick={() => {
+                                  setIsLowStockModalOpen(false);
+                                  onNavigate('inventory');
+                                }}
+                                className="px-2.5 py-1.5 text-slate-700 hover:bg-white rounded-lg text-xs font-semibold border border-slate-200 cursor-pointer"
                               >
-                                <PackagePlus className="w-3 h-3" />
-                                <span>
-                                  {restockingItemId === med.id
-                                    ? 'যোগ হচ্ছে...'
-                                    : `+${toBengaliDigits(Math.max(100, (med.minStockLevel ?? 10) * 2 - (med.stockQty ?? 0)))} দ্রুত রি-স্টক`}
-                                </span>
+                                ইনভেন্টরি দেখুন
                               </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setIsLowStockModalOpen(false);
-                                onNavigate('inventory');
-                              }}
-                              className="px-2.5 py-1 text-slate-700 hover:bg-white rounded-lg text-xs font-semibold border border-slate-200 cursor-pointer"
-                            >
-                              ইনভেন্টরি দেখুন
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setIsLowStockModalOpen(false);
-                                onNavigate('pos_accounts', 'purchase_entry');
-                              }}
-                              className="flex items-center gap-1 px-3 py-1 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer"
-                            >
-                              <ShoppingCart className="w-3 h-3" />
-                              <span>রি-অর্ডার কার্টে নিন</span>
-                            </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsLowStockModalOpen(false);
+                                  onNavigate('pos_accounts', 'purchase_entry');
+                                }}
+                                className="flex items-center gap-1 px-3 py-1.5 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer"
+                              >
+                                <ShoppingCart className="w-3 h-3" />
+                                <span>রি-অর্ডার কার্টে নিন</span>
+                              </button>
+                            </div>
                           </div>
                         </div>
                       );
