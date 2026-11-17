@@ -28,6 +28,7 @@ import { Transaction } from '../types';
 import { parseTransactionItemsDetailed, formatCleanMoney } from '../data/bdMedicines';
 import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { db, withAsyncTimeout } from '../firebase';
+import { fetchServerPharmacyState } from '../utils/persistentStorage';
 
 interface InvoiceVerificationModalProps {
   isOpen: boolean;
@@ -51,13 +52,13 @@ export const InvoiceVerificationModal: React.FC<InvoiceVerificationModalProps> =
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const printContainerRef = useRef<HTMLDivElement | null>(null);
 
-  // Sync initial query if passed or changed
+  // Sync initial query when modal opens or query changes
   useEffect(() => {
-    if (initialQuery) {
+    if (isOpen && initialQuery && initialQuery.trim()) {
       setSearchTerm(initialQuery);
       performSearch(initialQuery);
     }
-  }, [initialQuery]);
+  }, [isOpen, initialQuery]);
 
   // Generate QR for active invoice
   useEffect(() => {
@@ -185,6 +186,34 @@ export const InvoiceVerificationModal: React.FC<InvoiceVerificationModalProps> =
         console.warn('Firestore invoice search fallback:', firestoreErr);
       }
 
+      // 3. Fallback to universal backend server state so public verification works on any mobile device
+      if (allFound.length === 0) {
+        try {
+          const snap = await withAsyncTimeout(fetchServerPharmacyState(), 2500, null as any);
+          const serverTxs = snap?.hasData && Array.isArray(snap.state?.transactions)
+            ? snap.state.transactions
+            : [];
+          for (const tx of serverTxs) {
+            if (!tx) continue;
+            const invNo = (tx.invoiceNo || '').toLowerCase();
+            const partyId = (tx.partyId || '').toLowerCase();
+            const partyPhone = (tx.partyPhone || '').replace(/[^0-9]/g, '');
+            const partyName = (tx.partyName || '').toLowerCase();
+            const matched =
+              invNo === cleanQ ||
+              invNo.includes(cleanQ) ||
+              (partyId && (partyId === cleanQ || partyId.includes(cleanQ))) ||
+              (partyName && partyName.includes(cleanQ)) ||
+              (digitsOnly.length >= 5 && partyPhone && partyPhone.includes(digitsOnly));
+            if (matched && !allFound.some((x) => x.invoiceNo === tx.invoiceNo)) {
+              allFound.push(tx);
+            }
+          }
+        } catch {
+          // ignore fallback error
+        }
+      }
+
       // Sort results descending by latest date first (সর্বশেষ তারিখের ক্রম অনুসারে)
       allFound.sort((a, b) => {
         const dateA = a.dateStr || '';
@@ -221,20 +250,23 @@ export const InvoiceVerificationModal: React.FC<InvoiceVerificationModalProps> =
 
   const handleCopyVerificationLink = (invNo: string) => {
     const url = `https://iqbal-pharmacy.pages.dev/?verify=${encodeURIComponent(invNo)}`;
-    navigator.clipboard?.writeText(url);
+    try {
+      navigator.clipboard?.writeText(url)?.catch(() => {});
+    } catch {
+      // ignore clipboard permission error
+    }
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2500);
   };
 
-  if (!isOpen) return null;
-
   // Determine patient summary if multiple invoices found for a patient
+  // MUST stay before early `if (!isOpen) return null` so React hook count stays constant across renders
   const patientSummary = useMemo(() => {
     if (matchedInvoices.length === 0) return null;
     const first = matchedInvoices[0];
-    const totalAmount = matchedInvoices.reduce((sum, t) => sum + (t.grandTotal || t.amount || 0), 0);
-    const totalPaid = matchedInvoices.reduce((sum, t) => sum + (t.paidAmount || 0), 0);
-    const totalDue = matchedInvoices.reduce((sum, t) => sum + (t.dueAmount || 0), 0);
+    const totalAmount = matchedInvoices.reduce((sum, t) => sum + (Number(t.grandTotal ?? t.amount) || 0), 0);
+    const totalPaid = matchedInvoices.reduce((sum, t) => sum + (Number(t.paidAmount) || 0), 0);
+    const totalDue = matchedInvoices.reduce((sum, t) => sum + (Number(t.dueAmount) || 0), 0);
     return {
       name: first.partyName || 'সাধারণ ক্রেতা / রোগী',
       patientId: first.partyId || 'N/A',
@@ -245,6 +277,8 @@ export const InvoiceVerificationModal: React.FC<InvoiceVerificationModalProps> =
       totalDue,
     };
   }, [matchedInvoices]);
+
+  if (!isOpen) return null;
 
   const parsedItems = activeInvoice ? parseTransactionItemsDetailed(activeInvoice.itemsSummary || '') : [];
 
@@ -365,9 +399,9 @@ export const InvoiceVerificationModal: React.FC<InvoiceVerificationModalProps> =
           {/* Quick Helper / Sample Tags */}
           <div className="mt-2.5 flex items-center flex-wrap gap-1.5 text-[11px] text-slate-500">
             <span className="font-semibold text-slate-600">উদাহরণ:</span>
-            {localTransactions.slice(0, 3).map((t) => (
+            {localTransactions.filter((t) => t && t.invoiceNo).slice(0, 3).map((t) => (
               <button
-                key={t.id}
+                key={t.id || t.invoiceNo}
                 type="button"
                 onClick={() => {
                   setSearchTerm(t.invoiceNo);
@@ -495,7 +529,9 @@ export const InvoiceVerificationModal: React.FC<InvoiceVerificationModalProps> =
                 </div>
 
                 {/* Clinical Findings / Vitals (If available) */}
-                {activeInvoice.dentalClinical && Object.keys(activeInvoice.dentalClinical).length > 0 && (
+                {activeInvoice.dentalClinical &&
+                  typeof activeInvoice.dentalClinical === 'object' &&
+                  Object.keys(activeInvoice.dentalClinical).length > 0 && (
                   <div className="mb-3 p-2.5 rounded-lg bg-teal-50/60 border border-teal-200 text-xs">
                     <div className="flex items-center gap-1.5 text-teal-900 font-bold text-[11px] pb-1 border-b border-teal-200 mb-1.5">
                       <Stethoscope className="w-3.5 h-3.5 text-teal-700" />
@@ -505,7 +541,7 @@ export const InvoiceVerificationModal: React.FC<InvoiceVerificationModalProps> =
                       {Object.entries(activeInvoice.dentalClinical).map(([k, v]) => (
                         <div key={k} className="bg-white/80 p-1 rounded border border-teal-100">
                           <span className="text-teal-800 font-semibold block">{k}:</span>
-                          <span className="text-slate-800">{v}</span>
+                          <span className="text-slate-800">{String(v ?? '')}</span>
                         </div>
                       ))}
                     </div>
@@ -591,41 +627,41 @@ export const InvoiceVerificationModal: React.FC<InvoiceVerificationModalProps> =
                   <div className="w-full sm:w-56 space-y-1 text-right text-xs">
                     <div className="flex justify-between text-slate-600">
                       <span>সাবটোটাল:</span>
-                      <span className="font-mono font-semibold">৳{formatCleanMoney(activeInvoice.subTotal)}</span>
+                      <span className="font-mono font-semibold">৳{formatCleanMoney(activeInvoice.subTotal ?? activeInvoice.grandTotal ?? 0)}</span>
                     </div>
-                    {activeInvoice.vat !== undefined && activeInvoice.vat > 0 && (
+                    {Number(activeInvoice.vat || 0) > 0 && (
                       <div className="flex justify-between text-amber-800 font-medium">
                         <span>ভ্যাট / ট্যাক্স (VAT):</span>
-                        <span className="font-mono">+৳{formatCleanMoney(activeInvoice.vat)}</span>
+                        <span className="font-mono">+৳{formatCleanMoney(activeInvoice.vat ?? 0)}</span>
                       </div>
                     )}
-                    {activeInvoice.discount > 0 && (
+                    {Number(activeInvoice.discount || 0) > 0 && (
                       <div className="flex justify-between text-rose-700 font-medium">
                         <span>বিশেষ ছাড়:</span>
-                        <span className="font-mono">-৳{formatCleanMoney(activeInvoice.discount)}</span>
+                        <span className="font-mono">-৳{formatCleanMoney(activeInvoice.discount ?? 0)}</span>
                       </div>
                     )}
                     <div className="flex justify-between text-slate-900 font-black text-sm border-t border-slate-300 pt-1">
                       <span>সর্বমোট প্রদেয় বিল:</span>
-                      <span className="font-mono text-teal-900">৳{formatCleanMoney(activeInvoice.grandTotal)}</span>
+                      <span className="font-mono text-teal-900">৳{formatCleanMoney(activeInvoice.grandTotal ?? 0)}</span>
                     </div>
                     <div className="flex justify-between text-emerald-800 font-semibold">
                       <span>পরিশোধ (Paid):</span>
-                      <span className="font-mono">৳{formatCleanMoney(activeInvoice.paidAmount)}</span>
+                      <span className="font-mono">৳{formatCleanMoney(activeInvoice.paidAmount ?? 0)}</span>
                     </div>
                     <div className="flex justify-between font-bold border-t border-slate-200 pt-0.5">
-                      <span className={activeInvoice.dueAmount > 0 ? 'text-rose-700' : 'text-emerald-700'}>
-                        {activeInvoice.dueAmount > 0 ? 'বকেয়া (DUE):' : 'স্ট্যাটাস:'}
+                      <span className={Number(activeInvoice.dueAmount || 0) > 0 ? 'text-rose-700' : 'text-emerald-700'}>
+                        {Number(activeInvoice.dueAmount || 0) > 0 ? 'বকেয়া (DUE):' : 'স্ট্যাটাস:'}
                       </span>
                       <span
                         className={`font-mono ${
-                          activeInvoice.dueAmount > 0
+                          Number(activeInvoice.dueAmount || 0) > 0
                             ? 'text-rose-700 font-black'
                             : 'text-emerald-700 font-bold'
                         }`}
                       >
-                        {activeInvoice.dueAmount > 0
-                          ? `৳${formatCleanMoney(activeInvoice.dueAmount)}`
+                        {Number(activeInvoice.dueAmount || 0) > 0
+                          ? `৳${formatCleanMoney(activeInvoice.dueAmount ?? 0)}`
                           : 'সম্পূর্ণ পরিশোধিত (PAID)'}
                       </span>
                     </div>
