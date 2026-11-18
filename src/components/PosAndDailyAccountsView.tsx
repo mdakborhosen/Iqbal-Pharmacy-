@@ -5,11 +5,14 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   Camera,
+  Check,
+  Copy,
   CreditCard,
   Edit3,
   FileText,
   Heart,
   Info,
+  MessageCircle,
   Minus,
   Package,
   PackageCheck,
@@ -26,6 +29,10 @@ import {
   X,
   Zap,
 } from 'lucide-react';
+import {
+  buildTransactionInvoiceWhatsAppText,
+  getWhatsAppShareHref,
+} from '../utils/whatsappShare';
 import {
   BD_PHARMA_COMPANIES,
   computePurchaseCartTotals,
@@ -1300,6 +1307,31 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     return parseTransactionItemsDetailed(previewInvoice.itemsSummary);
   }, [previewInvoice]);
 
+  const [copiedPreviewInvoiceWhatsApp, setCopiedPreviewInvoiceWhatsApp] = useState(false);
+
+  const previewInvoiceWhatsAppText = useMemo(() => {
+    if (!previewInvoice) return '';
+    return buildTransactionInvoiceWhatsAppText(previewInvoice, catalog, {
+      shopName: shopProfile.shopName || 'ইকবাল ফার্মেসী',
+    });
+  }, [previewInvoice, catalog, shopProfile.shopName]);
+
+  const previewInvoiceWhatsAppHref = useMemo(
+    () => getWhatsAppShareHref(previewInvoiceWhatsAppText),
+    [previewInvoiceWhatsAppText]
+  );
+
+  const handleCopyPreviewInvoiceWhatsApp = async () => {
+    if (!previewInvoiceWhatsAppText) return;
+    try {
+      await navigator.clipboard?.writeText(previewInvoiceWhatsAppText);
+      setCopiedPreviewInvoiceWhatsApp(true);
+      setTimeout(() => setCopiedPreviewInvoiceWhatsApp(false), 2000);
+    } catch {
+      // Clipboard fallback ignored silently
+    }
+  };
+
   const updatePurchaseRowUnitAndFormula = (
     item: PurchaseCartItem,
     packUnit: PurchasePackUnit,
@@ -1864,6 +1896,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
             onClearPurchaseCart={onClearPurchaseCart}
             catalog={catalog}
             activeStaff={activeStaff}
+            shopName={shopProfile.shopName || 'ইকবাল ফার্মেসী'}
             isEditingPurchase={isEditingPurchase}
             onPreviewCurrentPurchaseInvoice={handlePreviewCurrentPurchaseInvoice}
             onSearchMedexLive={onSearchMedexLive}
@@ -2237,6 +2270,22 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                               <FileText className="w-3.5 h-3.5" />
                               দাম ছাড়া
                             </button>
+                          )}
+                          {(tx.txType === 'purchase' || tx.txType === 'sale') && (
+                            <a
+                              href={getWhatsAppShareHref(
+                                buildTransactionInvoiceWhatsAppText(tx, catalog, {
+                                  shopName: shopProfile.shopName || 'ইকবাল ফার্মেসী',
+                                })
+                              )}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-2 py-1 text-xs font-semibold text-white bg-[#25D366] hover:bg-[#1ebe5d] rounded transition-colors inline-flex items-center gap-1 whitespace-nowrap shrink-0 shadow-2xs"
+                              title="WhatsApp এ ইনভয়েস শেয়ার করুন"
+                            >
+                              <MessageCircle className="w-3.5 h-3.5" />
+                              <span>WhatsApp</span>
+                            </a>
                           )}
                           <button
                             type="button"
@@ -3460,6 +3509,34 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
             </div>
               {/* Modal Bottom Buttons (no-print) */}
               <div className="flex flex-wrap items-center justify-end gap-2 pt-3 border-t border-slate-200 no-print mt-2">
+                <a
+                  href={previewInvoiceWhatsAppHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-4 py-2 text-xs font-bold text-white bg-[#25D366] hover:bg-[#1ebe5d] rounded-md flex items-center gap-1.5 shadow-xs transition-colors"
+                  title="প্রোডাক্টের নাম, কোয়ান্টিটি, দাম ও মোট দাম WhatsApp এ শেয়ার করুন"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  <span>WhatsApp এ শেয়ার</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={handleCopyPreviewInvoiceWhatsApp}
+                  className="px-3 py-2 text-xs font-semibold text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md flex items-center gap-1 cursor-pointer transition-colors"
+                  title="ইনভয়েস টেক্সট কপি করুন"
+                >
+                  {copiedPreviewInvoiceWhatsApp ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-700" />
+                      <span>কপি হয়েছে</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>কপি</span>
+                    </>
+                  )}
+                </button>
                 {(previewInvoice.txType === 'sale' || previewInvoice.txType === 'purchase') && (
                   <button
                     type="button"
