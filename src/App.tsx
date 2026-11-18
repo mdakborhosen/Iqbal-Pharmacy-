@@ -585,6 +585,7 @@ function buildTransactionCloudPayload(tx: Transaction, ownerId = SHARED_PHARMACY
   if (typeof tx.totalPurchaseCost === 'number' && !Number.isNaN(tx.totalPurchaseCost)) {
     payload.totalPurchaseCost = sanitizeNumber(tx.totalPurchaseCost);
   }
+  if (tx.category) payload.category = sanitizeString(tx.category, 60);
   if (tx.patientAge) payload.patientAge = sanitizeString(tx.patientAge, 30);
   if (tx.patientSex) payload.patientSex = sanitizeString(tx.patientSex, 30);
   if (tx.selectedSeal) payload.selectedSeal = tx.selectedSeal;
@@ -5328,7 +5329,7 @@ export default function App() {
     showToast(`ভাউচার (${existingTx.invoiceNo}) সফলভাবে এডিট করা হয়েছে!`);
   };
 
-  // Payment Now handler for full or partial payment of any invoice due
+  // Payment / Collection handler for full or partial due of any Purchase (বকেয়া পরিশোধ) or Sale (বকেয়া আদায়) invoice
   const handlePayInvoiceDue = async (params: {
     invoiceTx: Transaction;
     paymentAmount: number;
@@ -5341,6 +5342,7 @@ export default function App() {
     const amt = sanitizeNumber(paymentAmount, 0, invoiceTx.dueAmount);
     if (amt <= 0) return null;
 
+    const isPurchaseInvoice = invoiceTx.txType === 'purchase';
     const newPaidAmount = sanitizeNumber(invoiceTx.paidAmount + amt);
     const newDueAmount = Math.max(0, sanitizeNumber(invoiceTx.dueAmount - amt));
 
@@ -5354,29 +5356,36 @@ export default function App() {
       updatedAtMs: nowMs,
     };
 
-    // 2. Create due_payment transaction for accounting & history
+    // 2. Create due_payment (for Purchase due paid -> বকেয়া পরিশোধ) or due_collection (for Sale due received -> বকেয়া আদায়)
     const dueTxId = `tx_due_${nowMs}`;
     const staffRoleVal: 'owner' | 'staff' =
       activeStaff.roleTitle === 'owner' ? 'owner' : 'staff';
     const operatorDisplayName = getOperatorName(activeStaff);
+    const randSuffix = Math.floor(100 + Math.random() * 900);
+    const dateStamp = getTodayDateStr().replace(/-/g, '').slice(2);
 
     const dueTx: Transaction = {
       id: dueTxId,
       shopId: effectiveShopId,
       ownerId: effectiveCloudUid,
-      txType: 'due_payment',
-      invoiceNo: `DUE-${getTodayDateStr().replace(/-/g, '').slice(2)}-${Math.floor(
-        100 + Math.random() * 900
-      )}`,
+      txType: isPurchaseInvoice ? 'due_payment' : 'due_collection',
+      category: isPurchaseInvoice ? 'purchase_due_payment' : 'sale_due_collection',
+      invoiceNo: isPurchaseInvoice
+        ? `PAY-${dateStamp}-${randSuffix}`
+        : `COL-${dateStamp}-${randSuffix}`,
       dateStr: getTodayDateStr(),
       partyId: invoiceTx.partyId,
       partyName: invoiceTx.partyName,
       partyPhone: invoiceTx.partyPhone,
       itemsSummary: sanitizeString(
         note ||
-          `ইনভয়েস (${invoiceTx.invoiceNo}) বকেয়া পরিশোধ - ৳${amt.toFixed(2)} (${
-            newDueAmount === 0 ? 'সম্পূর্ণ পরিশোধ' : 'আংশিক পরিশোধ'
-          })`,
+          (isPurchaseInvoice
+            ? `ক্রয় ইনভয়েস (${invoiceTx.invoiceNo}) বকেয়া পরিশোধ - ৳${amt.toFixed(2)} (${
+                newDueAmount === 0 ? 'সম্পূর্ণ পরিশোধ' : 'আংশিক পরিশোধ'
+              })`
+            : `বিক্রয় ইনভয়েস (${invoiceTx.invoiceNo}) বকেয়া আদায় - ৳${amt.toFixed(2)} (${
+                newDueAmount === 0 ? 'সম্পূর্ণ আদায়' : 'আংশিক আদায়'
+              })`),
         600
       ),
       totalCount: 1,
@@ -5392,9 +5401,9 @@ export default function App() {
       updatedAtMs: nowMs,
     };
 
-    // 3. Update customer ledger if party is a recorded customer
+    // 3. Update customer ledger ONLY for Sale invoice due collection (never for supplier Purchase invoice)
     let updatedCust: Customer | undefined;
-    if (invoiceTx.partyId && invoiceTx.partyId !== 'walk-in') {
+    if (!isPurchaseInvoice && invoiceTx.partyId && invoiceTx.partyId !== 'walk-in') {
       const cust = customers.find(
         (c) => getCanonicalDocId(c.id, effectiveShopId) === getCanonicalDocId(invoiceTx.partyId, effectiveShopId)
       );
@@ -5465,9 +5474,13 @@ export default function App() {
     }
 
     showToast(
-      `৳${amt.toFixed(2)} টাকা বকেয়া পরিশোধ সম্পন্ন হয়েছে! ${
-        newDueAmount === 0 ? '(সম্পূর্ণ বকেয়া পরিশোধিত)' : `(অবশিষ্ট বাকি: ৳${newDueAmount.toFixed(2)})`
-      }`
+      isPurchaseInvoice
+        ? `৳${amt.toFixed(2)} টাকা ক্রয় ইনভয়েসের বকেয়া পরিশোধ সম্পন্ন হয়েছে! ${
+            newDueAmount === 0 ? '(সম্পূর্ণ পরিশোধিত)' : `(অবশিষ্ট বাকি: ৳${newDueAmount.toFixed(2)})`
+          }`
+        : `৳${amt.toFixed(2)} টাকা বিক্রয় ইনভয়েসের বকেয়া আদায় সম্পন্ন হয়েছে! ${
+            newDueAmount === 0 ? '(সম্পূর্ণ আদায়)' : `(অবশিষ্ট বাকি: ৳${newDueAmount.toFixed(2)})`
+          }`
     );
     return updatedInvoice;
   };
@@ -6358,8 +6371,9 @@ export default function App() {
       id: txId,
       shopId: effectiveShopId,
       ownerId: effectiveCloudUid,
-      txType: 'due_payment',
-      invoiceNo: `DUE-${getTodayDateStr().replace(/-/g, '').slice(2)}-${Math.floor(
+      txType: 'due_collection',
+      category: 'sale_due_collection',
+      invoiceNo: `COL-${getTodayDateStr().replace(/-/g, '').slice(2)}-${Math.floor(
         100 + Math.random() * 900
       )}`,
       dateStr: getTodayDateStr(),

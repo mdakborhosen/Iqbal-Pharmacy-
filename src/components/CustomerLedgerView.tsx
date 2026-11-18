@@ -10,7 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import { formatTransactionItemsList } from '../data/bdMedicines';
-import { Customer, StaffMember, Transaction } from '../types';
+import { Customer, getDueTransactionKind, StaffMember, Transaction } from '../types';
 
 interface CustomerLedgerViewProps {
   customers: Customer[];
@@ -96,11 +96,14 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
 
   const customerHistory = useMemo(() => {
     if (!activeCustomer) return [];
-    return transactions.filter(
-      (tx) =>
+    return transactions.filter((tx) => {
+      if (tx.txType === 'purchase') return false;
+      if (getDueTransactionKind(tx, transactions) === 'due_payment') return false;
+      return (
         tx.partyId === activeCustomer.id ||
         tx.partyName.toLowerCase() === activeCustomer.name.toLowerCase()
-    );
+      );
+    });
   }, [transactions, activeCustomer]);
 
   const totals = useMemo(() => {
@@ -501,7 +504,7 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
                               <span className="text-teal-700">ওষুধ ক্রয় মেমো</span>
                             ) : (
                               <span className="text-emerald-700">
-                                বকেয়া জমা ({tx.paymentMethod})
+                                বকেয়া আদায় ({tx.paymentMethod})
                               </span>
                             )}
                           </td>

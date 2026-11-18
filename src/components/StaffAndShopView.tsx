@@ -38,6 +38,7 @@ import { ShopCloudSession } from '../firebase';
 import { AppLanguage } from '../i18n';
 import {
   CustomInvoiceSettings,
+  getDueTransactionKind,
   isMandatoryOwner,
   isStrictPlatformAdmin,
   ShopBranch,
@@ -295,7 +296,8 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
     >();
 
     for (const tx of transactions) {
-      if (tx.txType === 'sale' || tx.txType === 'due_payment') {
+      const dueKind = getDueTransactionKind(tx, transactions);
+      if (tx.txType === 'sale' || dueKind === 'due_collection') {
         const key = tx.staffRole === 'owner' ? 'Owner' : tx.staffName;
         const prev = map.get(key) || {
           memoCount: 0,

@@ -17,7 +17,7 @@ import {
   AlertCircle,
   Download,
 } from 'lucide-react';
-import { Transaction, ShopProfile, InventoryItem } from '../types';
+import { Transaction, ShopProfile, InventoryItem, getDueTransactionKind } from '../types';
 
 export const toBengaliDigits = (num: number | string): string => {
   const bnDigits = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
@@ -753,7 +753,9 @@ export const MonthlyReportModal: React.FC<MonthlyReportModalProps> = ({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 font-mono">
-                      {monthTransactions.map((tx) => (
+                      {monthTransactions.map((tx) => {
+                        const dueKind = getDueTransactionKind(tx, transactions);
+                        return (
                         <tr key={tx.id || tx.invoiceNo} className="hover:bg-slate-50">
                           <td className="p-2 sm:p-2.5 font-bold text-slate-900">
                             {tx.invoiceNo || 'INV-01'}
@@ -766,10 +768,20 @@ export const MonthlyReportModal: React.FC<MonthlyReportModalProps> = ({
                               className={`px-2 py-0.5 rounded text-[10px] font-sans font-bold ${
                                 tx.txType === 'sale'
                                   ? 'bg-emerald-100 text-emerald-800'
+                                  : dueKind === 'due_collection'
+                                  ? 'bg-teal-100 text-teal-800'
+                                  : dueKind === 'due_payment'
+                                  ? 'bg-rose-100 text-rose-800'
                                   : 'bg-blue-100 text-blue-800'
                               }`}
                             >
-                              {tx.txType === 'sale' ? 'বিক্রয়' : 'ক্রয়'}
+                              {tx.txType === 'sale'
+                                ? 'বিক্রয়'
+                                : dueKind === 'due_collection'
+                                ? 'বকেয়া আদায়'
+                                : dueKind === 'due_payment'
+                                ? 'বকেয়া পরিশোধ'
+                                : 'ক্রয়'}
                             </span>
                           </td>
                           <td className="p-2 sm:p-2.5 text-slate-800 font-sans text-[11px]">
@@ -788,7 +800,8 @@ export const MonthlyReportModal: React.FC<MonthlyReportModalProps> = ({
                             {tx.paymentMethod === 'cash' ? 'নগদ' : tx.paymentMethod || 'ক্যাশ'}
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

@@ -59,6 +59,7 @@ import {
   CartItem,
   Customer,
   DentalClinicalDetails,
+  getDueTransactionKind,
   InventoryItem,
   InvoiceSealType,
   MedicineCatalogItem,
@@ -525,9 +526,9 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
   >('all');
   const [startDateFilter, setStartDateFilter] = useState<string>(getTodayDateStr());
   const [endDateFilter, setEndDateFilter] = useState<string>(getTodayDateStr());
-  const [txTypeFilter, setTxTypeFilter] = useState<'ALL' | 'sale' | 'purchase' | 'due_payment'>(
-    'ALL'
-  );
+  const [txTypeFilter, setTxTypeFilter] = useState<
+    'ALL' | 'sale' | 'purchase' | 'due_collection' | 'due_payment'
+  >('ALL');
   const [staffRoleFilter, setStaffRoleFilter] = useState<'ALL' | 'owner' | 'staff'>('ALL');
   const [previewInvoice, setPreviewInvoice] = useState<Transaction | null>(null);
   const [invoicePrintWithPrice, setInvoicePrintWithPrice] = useState<boolean>(true);
@@ -1199,7 +1200,13 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
         if (endDateFilter && tx.dateStr > endDateFilter) return false;
       }
 
-      if (txTypeFilter !== 'ALL' && tx.txType !== txTypeFilter) return false;
+      if (txTypeFilter !== 'ALL') {
+        if (txTypeFilter === 'due_collection' || txTypeFilter === 'due_payment') {
+          if (getDueTransactionKind(tx, transactions) !== txTypeFilter) return false;
+        } else if (tx.txType !== txTypeFilter) {
+          return false;
+        }
+      }
       if (staffRoleFilter !== 'ALL' && tx.staffRole !== staffRoleFilter) return false;
       return true;
     });
@@ -1252,11 +1259,14 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     let salesCashCollected = 0;
     let salesDueGiven = 0;
     let dueCollectedLater = 0;
+    let purchaseDuePaidLater = 0;
+    let purchaseCashPaid = 0;
     let totalPurchaseBill = 0;
     let ownerSales = 0;
     let staffSales = 0;
 
     for (const tx of filteredTransactions) {
+      const dueKind = getDueTransactionKind(tx, transactions);
       if (tx.txType === 'sale') {
         totalSalesBill += tx.grandTotal || 0;
         totalSalesPurchaseCost += computeSalePurchaseCost(tx);
@@ -1264,10 +1274,13 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
         salesDueGiven += tx.dueAmount || 0;
         if (tx.staffRole === 'owner') ownerSales += tx.grandTotal || 0;
         else staffSales += tx.grandTotal || 0;
-      } else if (tx.txType === 'due_payment') {
+      } else if (dueKind === 'due_collection') {
         dueCollectedLater += tx.paidAmount || 0;
+      } else if (dueKind === 'due_payment') {
+        purchaseDuePaidLater += tx.paidAmount || 0;
       } else if (tx.txType === 'purchase') {
         totalPurchaseBill += tx.grandTotal || 0;
+        purchaseCashPaid += tx.paidAmount || 0;
       }
     }
 
@@ -1283,7 +1296,8 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     const totalSalesProfit = Number((totalSalesBill - totalSalesPurchaseCost).toFixed(2));
     const todayProfit = Number((todaySalesRevenue - todaySalesPurchaseCost).toFixed(2));
     const totalCashIn = salesCashCollected + dueCollectedLater;
-    const netCashDrawer = totalCashIn - totalPurchaseBill;
+    const totalCashOutPurchase = purchaseCashPaid + purchaseDuePaidLater;
+    const netCashDrawer = totalCashIn - totalCashOutPurchase;
 
     return {
       totalSalesBill,
@@ -1295,6 +1309,9 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
       salesCashCollected,
       salesDueGiven,
       dueCollectedLater,
+      purchaseDuePaidLater,
+      purchaseCashPaid,
+      totalCashOutPurchase,
       totalPurchaseBill,
       totalCashIn,
       netCashDrawer,
@@ -2072,11 +2089,13 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
           </div>
 
           <div className="p-4">
-            <div className="text-xs text-slate-500">প্রডাক্ট ক্রয় ইনভয়েস (Purchase Bill)</div>
+            <div className="text-xs text-slate-500">প্রডাক্ট ক্রয় ও বকেয়া পরিশোধ</div>
             <div className="text-xl font-bold font-mono tabular-nums text-indigo-900 mt-1">
               ৳{dailyMetrics.totalPurchaseBill.toLocaleString('en-BD', { minimumFractionDigits: 2 })}
             </div>
-            <div className="text-xs text-slate-500 mt-1">কোম্পানি ক্রয় ও স্টক-ইন খরচ</div>
+            <div className="text-xs text-slate-500 mt-1 font-mono tabular-nums">
+              নগদ ক্রয়: ৳{dailyMetrics.purchaseCashPaid} · বকেয়া পরিশোধ: ৳{dailyMetrics.purchaseDuePaidLater}
+            </div>
           </div>
 
           <div className="p-4">
@@ -2088,7 +2107,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
             >
               ৳{dailyMetrics.netCashDrawer.toLocaleString('en-BD', { minimumFractionDigits: 2 })}
             </div>
-            <div className="text-xs text-slate-500 mt-1">মোট নগদ জমা বিয়োগ ক্রয় খরচ</div>
+            <div className="text-xs text-slate-500 mt-1">মোট আদায় বিয়োগ নগদ ক্রয় ও বকেয়া পরিশোধ</div>
           </div>
         </div>
 
@@ -2099,7 +2118,8 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
               { id: 'ALL', label: 'সকল ইনভয়েস ও লেনদেন' },
               { id: 'sale', label: 'বিক্রয় ইনভয়েস (স্টক কমেছে)' },
               { id: 'purchase', label: 'ক্রয় ইনভয়েস (স্টক বেড়েছে)' },
-              { id: 'due_payment', label: 'বকেয়া আদায় (Due Collection)' },
+              { id: 'due_collection', label: 'বকেয়া আদায় (বিক্রয়)' },
+              { id: 'due_payment', label: 'বকেয়া পরিশোধ (ক্রয়)' },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -2179,10 +2199,15 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                               স্টক বৃদ্ধি (+{tx.totalCount} পিস)
                             </div>
                           </div>
+                        ) : getDueTransactionKind(tx, transactions) === 'due_payment' ? (
+                          <div>
+                            <span className="font-bold text-rose-700">বকেয়া পরিশোধ</span>
+                            <div className="text-[11px] text-rose-500">ক্রয় বকেয়া পরিশোধ</div>
+                          </div>
                         ) : (
                           <div>
                             <span className="font-bold text-emerald-700">বকেয়া আদায়</span>
-                            <div className="text-[11px] text-slate-400">লেজার জমা</div>
+                            <div className="text-[11px] text-emerald-600">বিক্রয় বকেয়া আদায়</div>
                           </div>
                         )}
                         <div className="text-[10px] text-slate-400 uppercase mt-0.5">
@@ -2225,11 +2250,19 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                             <button
                               type="button"
                               onClick={() => openPaymentModal(tx)}
-                              className="mt-1 px-2 py-0.5 text-[10px] font-bold text-white bg-red-600 hover:bg-red-700 rounded shadow-2xs cursor-pointer whitespace-nowrap flex items-center gap-1"
-                              title="বকেয়া পরিশোধ করুন (Full বা Partial Payment)"
+                              className={`mt-1 px-2 py-0.5 text-[10px] font-bold text-white rounded shadow-2xs cursor-pointer whitespace-nowrap flex items-center gap-1 ${
+                                tx.txType === 'purchase'
+                                  ? 'bg-rose-600 hover:bg-rose-700'
+                                  : 'bg-emerald-600 hover:bg-emerald-700'
+                              }`}
+                              title={
+                                tx.txType === 'purchase'
+                                  ? 'ক্রয় ইনভয়েসের বকেয়া পরিশোধ করুন (Full বা Partial)'
+                                  : 'বিক্রয় ইনভয়েসের বকেয়া আদায় করুন (Full বা Partial)'
+                              }
                             >
                               <CreditCard className="w-2.5 h-2.5" />
-                              <span>Payment Now</span>
+                              <span>{tx.txType === 'purchase' ? 'বকেয়া পরিশোধ' : 'বকেয়া আদায়'}</span>
                             </button>
                           </div>
                         ) : (
@@ -3266,10 +3299,18 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                               <button
                                 type="button"
                                 onClick={() => openPaymentModal(previewInvoice)}
-                                className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white font-bold text-[11px] rounded shadow-xs transition-colors flex items-center gap-1 cursor-pointer"
+                                className={`px-3 py-1 text-white font-bold text-[11px] rounded shadow-xs transition-colors flex items-center gap-1 cursor-pointer ${
+                                  previewInvoice.txType === 'purchase'
+                                    ? 'bg-rose-600 hover:bg-rose-700'
+                                    : 'bg-emerald-600 hover:bg-emerald-700'
+                                }`}
                               >
                                 <CreditCard className="w-3 h-3" />
-                                <span>Payment Now (বকেয়া পরিশোধ)</span>
+                                <span>
+                                  {previewInvoice.txType === 'purchase'
+                                    ? 'বকেয়া পরিশোধ (Pay Due)'
+                                    : 'বকেয়া আদায় (Collect Due)'}
+                                </span>
                               </button>
                             </div>
                           )}
@@ -3613,15 +3654,20 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
           </div>
         )}
 
-      {/* Payment Now Modal (Full / Partial Payment for any invoice with Due) */}
-      {showPaymentModal && selectedPaymentInvoice && (
+      {/* Due Settlement Modal: বকেয়া পরিশোধ (Purchase) vs বকেয়া আদায় (Sale) */}
+      {showPaymentModal && selectedPaymentInvoice && (() => {
+        const isPurchaseDueModal = selectedPaymentInvoice.txType === 'purchase';
+        const actionWordBn = isPurchaseDueModal ? 'পরিশোধ' : 'আদায়';
+        return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
           <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-5 space-y-4 border border-slate-200">
             <div className="flex items-center justify-between border-b pb-3 border-slate-200">
               <div className="flex items-center gap-2">
-                <CreditCard className="w-5 h-5 text-red-600" />
+                <CreditCard className={`w-5 h-5 ${isPurchaseDueModal ? 'text-rose-600' : 'text-emerald-600'}`} />
                 <h3 className="text-base font-bold text-slate-900">
-                  বকেয়া পরিশোধ (Payment Now)
+                  {isPurchaseDueModal
+                    ? 'বকেয়া পরিশোধ (ক্রয় ইনভয়েস)'
+                    : 'বকেয়া আদায় (বিক্রয় ইনভয়েস)'}
                 </h3>
               </div>
               <button
@@ -3643,7 +3689,9 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                 <span className="font-mono font-bold text-slate-900">{selectedPaymentInvoice.invoiceNo}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">পার্টি / ক্রেতা:</span>
+                <span className="text-slate-500">
+                  {isPurchaseDueModal ? 'সরবরাহকারী / কোম্পানি:' : 'পার্টি / ক্রেতা:'}
+                </span>
                 <span className="font-semibold text-slate-800">{selectedPaymentInvoice.partyName || '—'}</span>
               </div>
               <div className="flex justify-between">
@@ -3651,7 +3699,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                 <span className="font-mono text-slate-700">৳{selectedPaymentInvoice.grandTotal.toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">পূর্বে পরিশোধিত:</span>
+                <span className="text-slate-500">পূর্বে {actionWordBn}:</span>
                 <span className="font-mono text-emerald-700">৳{selectedPaymentInvoice.paidAmount.toFixed(2)}</span>
               </div>
               <div className="flex justify-between border-t border-slate-200 pt-1.5 font-bold text-sm">
@@ -3663,7 +3711,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
             {/* Payment Mode Selection */}
             <div className="space-y-2">
               <label className="block text-xs font-bold text-slate-800">
-                পরিশোধের ধরণ নির্বাচন করুন:
+                {actionWordBn}ের ধরণ নির্বাচন করুন:
               </label>
               <div className="grid grid-cols-2 gap-2">
                 <button
@@ -3678,7 +3726,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                       : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
                   }`}
                 >
-                  <div className="text-[13px]">সম্পূর্ণ পরিশোধ (Full)</div>
+                  <div className="text-[13px]">সম্পূর্ণ {actionWordBn} (Full)</div>
                   <div className="font-mono text-emerald-700 mt-0.5">
                     ৳{selectedPaymentInvoice.dueAmount.toFixed(2)}
                   </div>
@@ -3698,7 +3746,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                       : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
                   }`}
                 >
-                  <div className="text-[13px]">আংশিক পরিশোধ (Partial)</div>
+                  <div className="text-[13px]">আংশিক {actionWordBn} (Partial)</div>
                   <div className="text-[10px] text-slate-500 font-normal mt-0.5">
                     ইচ্ছামতো পরিমাণ দিন
                   </div>
@@ -3709,7 +3757,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
             {/* Payment Amount Input */}
             <div className="space-y-1">
               <label className="block text-xs font-bold text-slate-800">
-                পরিশোধের পরিমাণ (৳):
+                {actionWordBn}ের পরিমাণ (৳):
               </label>
               <input
                 type="number"
@@ -3719,7 +3767,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                 value={isFullPayment ? selectedPaymentInvoice.dueAmount : paymentAmountInput}
                 disabled={isFullPayment}
                 onChange={(e) => setPaymentAmountInput(e.target.value)}
-                placeholder="পরিশোধের পরিমাণ দিন"
+                placeholder={`${actionWordBn}ের পরিমাণ দিন`}
                 className="w-full px-3 py-2 text-base font-mono font-bold text-slate-900 border border-slate-300 rounded-lg focus:border-teal-600 focus:outline-none disabled:bg-slate-100"
               />
               {!isFullPayment && (
@@ -3751,7 +3799,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
             {/* Payment Method */}
             <div className="space-y-1">
               <label className="block text-xs font-bold text-slate-800">
-                পরিশোধের মাধ্যম (Payment Method):
+                {actionWordBn}ের মাধ্যম (Method):
               </label>
               <div className="grid grid-cols-4 gap-1.5 text-xs">
                 {(['cash', 'bkash', 'nagad', 'card'] as const).map((method) => (
@@ -3786,7 +3834,11 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                 type="text"
                 value={paymentNoteInput}
                 onChange={(e) => setPaymentNoteInput(e.target.value)}
-                placeholder="যেমন: কাস্টমার বকেয়া পরিশোধ করেছেন"
+                placeholder={
+                  isPurchaseDueModal
+                    ? 'যেমন: কোম্পানির ক্রয় বকেয়া পরিশোধ করা হলো'
+                    : 'যেমন: কাস্টমারের বকেয়া আদায় হলো'
+                }
                 className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-md focus:border-teal-600 focus:outline-none"
               />
             </div>
@@ -3808,21 +3860,26 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                 type="button"
                 onClick={handleConfirmPaymentNow}
                 disabled={submittingPayment}
-                className="flex-1 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 disabled:bg-slate-300 rounded-lg shadow-xs cursor-pointer flex items-center justify-center gap-1.5"
+                className={`flex-1 py-2 text-xs font-bold text-white disabled:bg-slate-300 rounded-lg shadow-xs cursor-pointer flex items-center justify-center gap-1.5 ${
+                  isPurchaseDueModal
+                    ? 'bg-rose-600 hover:bg-rose-700'
+                    : 'bg-emerald-600 hover:bg-emerald-700'
+                }`}
               >
                 {submittingPayment ? (
-                  <span>পরিশোধ প্রসেস হচ্ছে...</span>
+                  <span>{actionWordBn} প্রসেস হচ্ছে...</span>
                 ) : (
                   <>
                     <CreditCard className="w-3.5 h-3.5" />
-                    <span>পরিশোধ নিশ্চিত করুন</span>
+                    <span>বকেয়া {actionWordBn} নিশ্চিত করুন</span>
                   </>
                 )}
               </button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Monthly Sales & Purchase Printable PDF Report Modal */}
       <MonthlyReportModal

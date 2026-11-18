@@ -230,7 +230,11 @@
         },
         "txType": {
           "type": "string",
-          "enum": ["sale", "purchase", "due_payment"]
+          "enum": ["sale", "purchase", "due_payment", "due_collection"]
+        },
+        "category": {
+          "type": "string",
+          "maxLength": 60
         },
         "invoiceNo": {
           "type": "string",

@@ -199,7 +199,7 @@ export interface Transaction {
   id: string;
   shopId?: string;
   ownerId: string;
-  txType: 'sale' | 'purchase' | 'due_payment';
+  txType: 'sale' | 'purchase' | 'due_payment' | 'due_collection';
   invoiceNo: string;
   dateStr: string;
   partyId: string;
@@ -230,6 +230,42 @@ export interface Transaction {
   createdAt?: unknown;
   updatedAt?: unknown;
   updatedAtMs?: number;
+}
+
+/**
+ * Classifies a due settlement transaction accurately:
+ * - Sale invoice due received / customer ledger collection -> 'due_collection' (বকেয়া আদায়)
+ * - Purchase invoice due paid to supplier/company -> 'due_payment' (বকেয়া পরিশোধ)
+ */
+export function getDueTransactionKind(
+  tx: Pick<Transaction, 'txType' | 'category' | 'itemsSummary' | 'partyId'>,
+  allTransactions?: Pick<Transaction, 'txType' | 'invoiceNo'>[]
+): 'due_collection' | 'due_payment' | null {
+  if (tx.txType === 'due_collection') return 'due_collection';
+  if (tx.txType !== 'due_payment') return null;
+
+  const cat = (tx.category || '').trim().toLowerCase();
+  if (cat === 'sale_due_collection' || cat === 'due_collection') return 'due_collection';
+  if (cat === 'purchase_due_payment' || cat === 'due_payment') return 'due_payment';
+
+  const summary = (tx.itemsSummary || '').trim();
+  const invMatch = summary.match(/(?:ইনভয়েস|invoice)\s*\(([^)]+)\)/i);
+  if (invMatch && allTransactions && allTransactions.length > 0) {
+    const refNo = invMatch[1].trim().toLowerCase();
+    const refTx = allTransactions.find((t) => (t.invoiceNo || '').trim().toLowerCase() === refNo);
+    if (refTx?.txType === 'purchase') return 'due_payment';
+    if (refTx?.txType === 'sale') return 'due_collection';
+  }
+  if (/PUR-/i.test(summary) || /ক্রয়\s*ইনভয়েস/i.test(summary)) {
+    return 'due_payment';
+  }
+  if (/INV-/i.test(summary) || /বিক্রয়\s*ইনভয়েস/i.test(summary) || /বকেয়া\s*আদায়/i.test(summary)) {
+    return 'due_collection';
+  }
+  if ((tx.partyId || '').startsWith('sup_') || (tx.partyId || '').startsWith('supplier_')) {
+    return 'due_payment';
+  }
+  return 'due_collection';
 }
 
 export type StaffRoleTitle = 'owner' | 'sub_owner' | 'manager' | 'pharmacist' | 'salesman' | 'cashier';
