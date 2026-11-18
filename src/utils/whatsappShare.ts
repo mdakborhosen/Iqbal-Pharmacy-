@@ -165,21 +165,6 @@ export function buildPurchaseInvoiceWhatsAppTextFromCart(
   });
 
   const lines: string[] = [];
-  lines.push('*ক্রয় ইনভয়েস (Purchase Invoice)*');
-  if (opts.shopName?.trim()) {
-    lines.push(`প্রতিষ্ঠান: ${opts.shopName.trim()}`);
-  }
-  if (opts.invoiceNo?.trim()) {
-    lines.push(`ইনভয়েস নং: ${opts.invoiceNo.trim()}`);
-  }
-  if (opts.dateStr?.trim()) {
-    lines.push(`তারিখ: ${opts.dateStr.trim()}`);
-  }
-  if (opts.supplierCompany?.trim() && opts.supplierCompany.trim() !== 'সকল কোম্পানি') {
-    lines.push(`কোম্পানি: ${opts.supplierCompany.trim()}`);
-  }
-
-  lines.push('');
 
   validItems.forEach((item, idx) => {
     const m = computePurchaseItemMetrics(item);
@@ -205,18 +190,15 @@ export function buildPurchaseInvoiceWhatsAppTextFromCart(
   });
 
   lines.push('');
-  lines.push(`মোট: ${formatMoneyTaka(totals.subTotalTp)}`);
   if (totals.totalVat > 0) {
     lines.push(`ভ্যাট: ${formatMoneyTaka(totals.totalVat)}`);
   }
   if (totals.discount > 0) {
     lines.push(`ছাড়: ${formatMoneyTaka(totals.discount)}`);
   }
-  lines.push(`সর্বমোট: ${formatMoneyTaka(totals.grandTotal)}`);
+  lines.push(`মোট: ${formatMoneyTaka(totals.grandTotal)}`);
   lines.push(`পরিশোধিত: ${formatMoneyTaka(totals.paidAmount)}`);
-  if (totals.dueAmount > 0) {
-    lines.push(`বাকি: ${formatMoneyTaka(totals.dueAmount)}`);
-  }
+  lines.push(`বাকী: ${formatMoneyTaka(totals.dueAmount)}`);
 
   return lines.join('\n');
 }
@@ -228,37 +210,12 @@ export function buildPurchaseInvoiceWhatsAppTextFromCart(
 export function buildTransactionInvoiceWhatsAppText(
   tx: Transaction,
   catalog: MedicineCatalogItem[],
-  opts?: {
+  _opts?: {
     shopName?: string;
   }
 ): string {
   const parsedItems = parseTransactionItemsDetailed(tx.itemsSummary || '', catalog);
   const lines: string[] = [];
-
-  const title =
-    tx.txType === 'purchase'
-      ? '*ক্রয় ইনভয়েস (Purchase Invoice)*'
-      : tx.txType === 'sale'
-      ? '*বিক্রয় ইনভয়েস (Sales Invoice)*'
-      : '*ইনভয়েস / রশিদ*';
-
-  lines.push(title);
-  if (opts?.shopName?.trim()) {
-    lines.push(`প্রতিষ্ঠান: ${opts.shopName.trim()}`);
-  }
-  if (tx.invoiceNo?.trim()) {
-    lines.push(`ইনভয়েস নং: ${tx.invoiceNo.trim()}`);
-  }
-  if (tx.dateStr?.trim()) {
-    lines.push(`তারিখ: ${tx.dateStr.trim()}`);
-  }
-  if (tx.partyName?.trim()) {
-    lines.push(
-      `${tx.txType === 'purchase' ? 'কোম্পানি' : 'ক্রেতা'}: ${tx.partyName.trim()}`
-    );
-  }
-
-  lines.push('');
 
   parsedItems.forEach((pItem, idx) => {
     const rawName = pItem.cleanName || pItem.brandAndStrength;
@@ -308,18 +265,15 @@ export function buildTransactionInvoiceWhatsAppText(
   });
 
   lines.push('');
-  lines.push(`মোট: ${formatMoneyTaka(tx.subTotal ?? tx.grandTotal)}`);
   if (tx.vat !== undefined && tx.vat > 0) {
     lines.push(`ভ্যাট: ${formatMoneyTaka(tx.vat)}`);
   }
   if (tx.discount > 0) {
     lines.push(`ছাড়: ${formatMoneyTaka(tx.discount)}`);
   }
-  lines.push(`সর্বমোট: ${formatMoneyTaka(tx.grandTotal)}`);
+  lines.push(`মোট: ${formatMoneyTaka(tx.grandTotal)}`);
   lines.push(`পরিশোধিত: ${formatMoneyTaka(tx.paidAmount)}`);
-  if (tx.dueAmount > 0) {
-    lines.push(`বাকি: ${formatMoneyTaka(tx.dueAmount)}`);
-  }
+  lines.push(`বাকী: ${formatMoneyTaka(tx.dueAmount)}`);
 
   return lines.join('\n');
 }
