@@ -1,7 +1,9 @@
 import {
   computePurchaseCartTotals,
   computePurchaseItemMetrics,
+  dosageFormFromInvoicePrefix,
   formatCleanMoney,
+  getInvoiceFormPrefix,
   parseTransactionItemsDetailed,
 } from '../data/bdMedicines';
 import {
@@ -27,12 +29,56 @@ export function normalizeDigitsToEnglish(input: string): string {
   return (input || '').replace(/[০-৯]/g, (ch) => BENGALI_TO_ENG_DIGITS[ch] || ch);
 }
 
+/**
+ * Converts dosageForm or invoice prefix into a clean label prefix like "Tab.", "Cap.", "Supp.", "Syp."
+ */
+export function formatDosagePrefixLabel(formOrPrefix?: string): string {
+  const raw = (formOrPrefix || '').trim();
+  if (!raw) return '';
+
+  const p = getInvoiceFormPrefix(raw);
+  if (!p || p === 'item') return '';
+
+  switch (p) {
+    case 'tab':
+      return 'Tab.';
+    case 'cap':
+      return 'Cap.';
+    case 'syp':
+      return 'Syp.';
+    case 'susp':
+      return 'Susp.';
+    case 'supp':
+      return 'Supp.';
+    case 'inj':
+      return 'Inj.';
+    case 'drops':
+      return 'Drops.';
+    case 'eye drop':
+      return 'Eye Drop.';
+    case 'ear drop':
+      return 'Ear Drop.';
+    case 'nasal drop':
+      return 'Nasal Drop.';
+    case 'inhaler':
+      return 'Inhaler.';
+    case 'sachet':
+      return 'Sachet.';
+    case 'gel':
+      return 'Gel.';
+    default:
+      return `${p.charAt(0).toUpperCase()}${p.slice(1)}.`;
+  }
+}
+
 function normalizeStrengthToken(rawStrength: string): string {
   const cleaned = normalizeDigitsToEnglish(rawStrength || '').trim();
   if (!cleaned || /^standard$/i.test(cleaned)) return '';
 
-  // Remove "mg" directly following a number so "20 mg" -> "20" and "500mg+65mg" -> "500+65"
+  // Remove trailing words like "Bottle", "Vial", "Tube", "Ampoule" when attached to volume
   let token = cleaned
+    .replace(/\b(bottle|vial|tube|ampoule|pack|jar|sachet)\b/gi, '')
+    .trim()
     .replace(/\s*\+\s*/g, '+')
     .replace(/\s*\/\s*/g, '/')
     .replace(/(\d)\s*mg\b/gi, '$1')
@@ -45,45 +91,111 @@ function normalizeStrengthToken(rawStrength: string): string {
   return token;
 }
 
+function extractLiquidVolumeMl(packSize?: string): string {
+  if (!packSize) return '';
+  const norm = normalizeDigitsToEnglish(packSize);
+  const mlMatch = norm.match(/(\d+(?:\.\d+)?)\s*ml\b/i);
+  return mlMatch ? `${mlMatch[1]}ml` : '';
+}
+
+function isLiquidDosageForm(dosageForm?: string): boolean {
+  const f = (dosageForm || '').toLowerCase();
+  return (
+    f.includes('syp') ||
+    f.includes('syrup') ||
+    f.includes('susp') ||
+    f.includes('drop') ||
+    f.includes('solution') ||
+    f.includes('elixir')
+  );
+}
+
 /**
- * Formats medicine name concisely for WhatsApp sharing, e.g. ("Seclo", "20 mg") -> "Seclo-20",
- * ("Napa", "500 mg") -> "Napa-500", ("Seclo 20 mg") -> "Seclo-20".
+ * Formats medicine name concisely with optional dosage form prefix for WhatsApp sharing, e.g.:
+ * - ("Napa Extra", "", "Tablet") -> "Tab. Napa Extra"
+ * - ("Voltalin", "50 mg", "Suppository") -> "Supp. Voltalin-50"
+ * - ("Omidon", "60 ml (10 mg/5 ml)", "Syrup") -> "Syp. Omidon-60ml(10/5ml)"
+ * - ("Omidon", "10 mg/5 ml", "Syrup", "60 ml Bottle") -> "Syp. Omidon-60ml(10/5ml)"
  */
 export function formatCompactProductName(
   brandOrCombined: string,
-  strength?: string
+  strength?: string,
+  dosageForm?: string,
+  packSize?: string
 ): string {
   const rawBrand = (brandOrCombined || 'Custom Product').trim();
-  const explicitStrength = strength !== undefined ? normalizeStrengthToken(strength) : '';
+  const prefix = dosageForm ? formatDosagePrefixLabel(dosageForm) : '';
 
-  if (explicitStrength) {
+  let compactStr = strength !== undefined ? normalizeStrengthToken(strength) : '';
+  let baseName = rawBrand;
+
+  if (strength !== undefined) {
     const bLow = rawBrand.toLowerCase();
     const sLow = (strength || '').trim().toLowerCase();
-    const compactLow = explicitStrength.toLowerCase();
+    const cLow = compactStr.toLowerCase();
+
     if (
-      bLow.endsWith(`-${compactLow}`) ||
-      bLow.endsWith(` ${compactLow}`) ||
-      (sLow && (bLow.endsWith(sLow) || bLow.includes(sLow)))
+      compactStr &&
+      (bLow.endsWith(`-${cLow}`) ||
+        bLow.endsWith(` ${cLow}`) ||
+        (sLow && (bLow.endsWith(sLow) || bLow.includes(sLow))))
     ) {
-      // Normalize trailing "Brand 20 mg" -> "Brand-20"
-      return formatCompactProductName(rawBrand);
+      // Split out already-included strength so we can apply liquid pack ml cleanly if needed
+      const extracted = splitCombinedNameAndStrength(rawBrand);
+      baseName = extracted.base;
+      compactStr = extracted.strengthToken || compactStr;
+    } else if (!compactStr) {
+      const extracted = splitCombinedNameAndStrength(rawBrand);
+      baseName = extracted.base;
+      compactStr = extracted.strengthToken;
     }
-    return `${rawBrand}-${explicitStrength}`;
+  } else {
+    const extracted = splitCombinedNameAndStrength(rawBrand);
+    baseName = extracted.base;
+    compactStr = extracted.strengthToken;
   }
 
-  // Single combined string like "Seclo 20 mg", "Napa 500 mg", "Cef-3 200 mg", "Seclo-20"
-  const normRaw = normalizeDigitsToEnglish(rawBrand).trim();
+  // For liquid forms (Syp/Susp/Drops), if bottle volume (e.g. 60ml) is in packSize and not yet in strength:
+  if (isLiquidDosageForm(dosageForm)) {
+    const volMl = extractLiquidVolumeMl(packSize);
+    if (volMl) {
+      const hasLeadingVolume = /^\d+(?:\.\d+)?ml\b/i.test(compactStr);
+      if (!hasLeadingVolume) {
+        if (compactStr) {
+          const inner = compactStr.startsWith('(') && compactStr.endsWith(')')
+            ? compactStr
+            : `(${compactStr})`;
+          compactStr = `${volMl}${inner}`;
+        } else {
+          compactStr = volMl;
+        }
+      }
+    }
+  }
+
+  const nameWithStrength = compactStr ? `${baseName}-${compactStr}` : baseName;
+  if (prefix && !nameWithStrength.toLowerCase().startsWith(prefix.toLowerCase())) {
+    return `${prefix} ${nameWithStrength}`;
+  }
+  return nameWithStrength;
+}
+
+function splitCombinedNameAndStrength(rawName: string): {
+  base: string;
+  strengthToken: string;
+} {
+  const normRaw = normalizeDigitsToEnglish(rawName).trim();
   const match = normRaw.match(
-    /^(.+?)[\s-]+(\d+(?:\.\d+)?(?:\s*(?:mg|mcg|gm|g|ml|iu|%)?(?:\s*[+/]\s*\d+(?:\.\d+)?\s*(?:mg|mcg|gm|g|ml|iu|%)?)*))$/i
+    /^(.+?)[\s-]+(\d+(?:\.\d+)?(?:\s*(?:mg|mcg|gm|g|ml|iu|%)?(?:\s*[+/]\s*\d+(?:\.\d+)?\s*(?:mg|mcg|gm|g|ml|iu|%)?)*)(?:\s*\([^)]+\))?(?:\s*(?:bottle|vial|tube|ampoule))?)$/i
   );
   if (match) {
     const base = match[1].trim();
-    const strToken = normalizeStrengthToken(match[2]);
-    if (base && strToken) {
-      return `${base}-${strToken}`;
+    const strengthToken = normalizeStrengthToken(match[2]);
+    if (base && strengthToken) {
+      return { base, strengthToken };
     }
   }
-  return rawBrand;
+  return { base: rawName.trim(), strengthToken: '' };
 }
 
 export function formatMoneyTaka(amount: number): string {
@@ -117,7 +229,7 @@ export function getWhatsAppShareHref(text: string): string {
 
 /**
  * Builds WhatsApp message for Purchase Cart:
- * Shows ONLY numbered Product Name (e.g. Seclo-20) and Quantity (e.g. 1 Box / 1 Pcs).
+ * Shows ONLY numbered Dosage Prefix + Product Name (e.g. Tab. Napa Extra, Syp. Omidon-60ml(10/5ml)) and Quantity (e.g. 1 Box / 10 Pcs).
  */
 export function buildPurchaseCartWhatsAppText(
   purchaseCart: PurchaseCartItem[],
@@ -134,7 +246,12 @@ export function buildPurchaseCartWhatsAppText(
 
   return validItems
     .map((item, idx) => {
-      const productName = formatCompactProductName(item.brandName, item.strength);
+      const productName = formatCompactProductName(
+        item.brandName,
+        item.strength,
+        item.dosageForm,
+        item.packSize
+      );
       const qtyLabel = formatPurchaseQtyLabel(item);
       return `${idx + 1}. ${productName} — ${qtyLabel}`;
     })
@@ -143,7 +260,8 @@ export function buildPurchaseCartWhatsAppText(
 
 /**
  * Builds WhatsApp message for an active Purchase Invoice from Step 3 cart:
- * Shows Product Name (Seclo-20), Quantity (1 Box / 1 Pcs), Price (520 Taka), Line Total (520 Taka).
+ * Shows Dosage Prefix + Product Name, Quantity, Price (Taka), Line Total (Taka),
+ * followed by মোট, পরিশোধিত, বাকী.
  */
 export function buildPurchaseInvoiceWhatsAppTextFromCart(
   purchaseCart: PurchaseCartItem[],
@@ -168,7 +286,12 @@ export function buildPurchaseInvoiceWhatsAppTextFromCart(
 
   validItems.forEach((item, idx) => {
     const m = computePurchaseItemMetrics(item);
-    const productName = formatCompactProductName(item.brandName, item.strength);
+    const productName = formatCompactProductName(
+      item.brandName,
+      item.strength,
+      item.dosageForm,
+      item.packSize
+    );
     const qtyLabel = formatPurchaseQtyLabel(item);
 
     const isPackUnit =
@@ -205,7 +328,8 @@ export function buildPurchaseInvoiceWhatsAppTextFromCart(
 
 /**
  * Builds WhatsApp message for a saved/previewed Transaction Invoice (Purchase or Sale):
- * Shows Product Name (Seclo-20), Quantity (1 Box / 1 Pcs), Price (520 Taka), Line Total (520 Taka).
+ * Shows Dosage Prefix + Product Name, Quantity, Price (Taka), Line Total (Taka),
+ * followed by মোট, পরিশোধিত, বাকী.
  */
 export function buildTransactionInvoiceWhatsAppText(
   tx: Transaction,
@@ -219,7 +343,15 @@ export function buildTransactionInvoiceWhatsAppText(
 
   parsedItems.forEach((pItem, idx) => {
     const rawName = pItem.cleanName || pItem.brandAndStrength;
-    const productName = formatCompactProductName(rawName);
+    const dosageForm = pItem.formPrefix
+      ? dosageFormFromInvoicePrefix(pItem.formPrefix)
+      : pItem.matchedMedicine?.dosageForm;
+    const productName = formatCompactProductName(
+      rawName,
+      undefined,
+      pItem.formPrefix === 'item' ? undefined : dosageForm,
+      pItem.matchedMedicine?.packSize
+    );
 
     let qtyLabel = `${Math.max(1, pItem.qty || 1)} Pcs`;
     let unitPriceVal =
