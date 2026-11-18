@@ -24,6 +24,7 @@ import {
   buildPurchaseCartWhatsAppText,
   buildPurchaseInvoiceWhatsAppTextFromCart,
   getWhatsAppShareHref,
+  isDueEntryItem,
 } from '../utils/whatsappShare';
 import {
   BD_PHARMA_COMPANIES,
@@ -203,6 +204,79 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
   const [customPackSizeLabel, setCustomPackSizeLabel] = useState('');
   const [customBatch, setCustomBatch] = useState('B-2601');
   const [customExpiry, setCustomExpiry] = useState('2028-12-31');
+
+  // Due (বকেয়া) Amount Popup Modal State (amount starts strictly empty)
+  const [showDueModal, setShowDueModal] = useState(false);
+  const [dueAmountInput, setDueAmountInput] = useState('');
+  const [editingDueMedId, setEditingDueMedId] = useState<string | null>(null);
+
+  const openDueModal = (existingDueItem?: PurchaseCartItem) => {
+    if (existingDueItem) {
+      const m = computePurchaseItemMetrics(existingDueItem);
+      setEditingDueMedId(existingDueItem.medicineId);
+      setDueAmountInput(m.lineTotal > 0 ? String(m.lineTotal) : '');
+    } else {
+      setEditingDueMedId(null);
+      setDueAmountInput('');
+    }
+    setShowDueModal(true);
+  };
+
+  const handleDueModalSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const parsedAmount = parseFloat(dueAmountInput);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) return;
+
+    if (editingDueMedId) {
+      onUpdatePurchaseCartItemDetails(editingDueMedId, {
+        brandName: 'Due',
+        genericName: '',
+        strength: '',
+        dosageForm: 'Due',
+        packSize: '',
+        packUnit: 'piece',
+        packCount: 1,
+        unitsPerPack: 1,
+        qty: 1,
+        purchasePrice: parsedAmount,
+        unitPrice: parsedAmount,
+        packRate: parsedAmount,
+        customLineTotal: parsedAmount,
+        packDetailFormula: '',
+        updateStock: false,
+      });
+    } else {
+      await onAddCustomToPurchaseCart({
+        brandName: 'Due',
+        genericName: '',
+        companyName:
+          supplierCompany && supplierCompany !== 'সকল কোম্পানি'
+            ? supplierCompany
+            : 'Custom / General',
+        strength: '',
+        dosageForm: 'Due',
+        purchasePrice: parsedAmount,
+        unitPrice: parsedAmount,
+        qty: 1,
+        batchNo: '',
+        expiryDate: '',
+        updateStock: false,
+        saveToCatalog: false,
+        packUnit: 'piece',
+        packCount: 1,
+        unitsPerPack: 1,
+        packRate: parsedAmount,
+        packDetailFormula: '',
+        packSize: '',
+      });
+    }
+
+    setDueAmountInput('');
+    setEditingDueMedId(null);
+    setShowDueModal(false);
+    setProductSearch('');
+    setSelectedMed(null);
+  };
 
   // Unified inline click-to-edit state for Step 1, Step 2, Step 3 tables & money fields
   const [editingCell, setEditingCell] = useState<{
@@ -518,6 +592,12 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
 
   // Handle selecting a medicine from search
   const handleSelectMedicine = (med: MedicineCatalogItem) => {
+    if (isDueEntryItem(med)) {
+      setSelectedMed(null);
+      setProductSearch('');
+      openDueModal();
+      return;
+    }
     setSelectedMed(med);
     const displayLabel = med.variantDisplayName || med.brandName;
     setProductSearch(`${displayLabel} (${med.strength || med.dosageForm}) - ${med.companyName}`);
@@ -591,6 +671,44 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
   const handleAddCustomDrugSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!customBrand.trim()) return;
+
+    if (isDueEntryItem({ brandName: customBrand.trim(), dosageForm: customForm })) {
+      const dueAmt = parseFloat(customPackRate) || parseFloat(customTpPrice) || 0;
+      if (dueAmt <= 0) {
+        openDueModal();
+        return;
+      }
+      await onAddCustomToPurchaseCart({
+        brandName: 'Due',
+        genericName: '',
+        companyName:
+          customCompany.trim() ||
+          (supplierCompany && supplierCompany !== 'সকল কোম্পানি'
+            ? supplierCompany
+            : 'Custom / General'),
+        strength: '',
+        dosageForm: 'Due',
+        purchasePrice: dueAmt,
+        unitPrice: dueAmt,
+        qty: 1,
+        batchNo: '',
+        expiryDate: '',
+        updateStock: false,
+        saveToCatalog: false,
+        packUnit: 'piece',
+        packCount: 1,
+        unitsPerPack: 1,
+        packRate: dueAmt,
+        packDetailFormula: '',
+        packSize: '',
+      });
+      setCustomBrand('');
+      setCustomGeneric('');
+      setCustomTpPrice('');
+      setCustomPackRate('');
+      setShowCustomDrugForm(false);
+      return;
+    }
 
     const pCount = Math.max(1, parseInt(customPackCount, 10) || 1);
     const uPerPack =
@@ -960,13 +1078,23 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                 </h3>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setShowCustomDrugForm(!showCustomDrugForm)}
-                className="px-2.5 py-1 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-300 rounded cursor-pointer"
-              >
-                {showCustomDrugForm ? 'সার্চে ফিরে যান' : '+ নতুন কাস্টম প্রোডাক্ট যোগ করুন'}
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => openDueModal()}
+                  className="px-2.5 py-1 text-xs font-bold text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-300 rounded cursor-pointer"
+                  title="পূর্বের বকেয়া (Due) টাকা যোগ করুন"
+                >
+                  + বকেয়া (Due) যোগ করুন
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCustomDrugForm(!showCustomDrugForm)}
+                  className="px-2.5 py-1 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-300 rounded cursor-pointer"
+                >
+                  {showCustomDrugForm ? 'সার্চে ফিরে যান' : '+ নতুন কাস্টম প্রোডাক্ট যোগ করুন'}
+                </button>
+              </div>
             </div>
 
             {showCustomDrugForm ? (
@@ -983,85 +1111,127 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                       type="text"
                       required
                       value={customBrand}
-                      onChange={(e) => setCustomBrand(e.target.value)}
+                      onChange={(e) => {
+                        const nextName = e.target.value;
+                        setCustomBrand(nextName);
+                        if (isDueEntryItem({ brandName: nextName })) {
+                          setCustomStrength('');
+                          setCustomTpPrice('');
+                          setCustomPackRate('');
+                        }
+                      }}
                       placeholder="যেমন: Napa Extra, Seclo"
                       className="w-full px-2.5 py-1.5 border border-slate-300 rounded bg-white font-semibold"
                     />
                   </div>
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-0.5">জেনেরিক নাম</label>
-                    <input
-                      type="text"
-                      value={customGeneric}
-                      onChange={(e) => setCustomGeneric(e.target.value)}
-                      placeholder="যেমন: Paracetamol + Caffeine"
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded bg-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-0.5">প্রস্তুতকারক কোম্পানি</label>
-                    <input
-                      type="text"
-                      list="purchase-custom-company-list"
-                      value={customCompany}
-                      onChange={(e) => setCustomCompany(e.target.value)}
-                      placeholder="যেমন: Square Pharmaceuticals PLC"
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded bg-white"
-                    />
-                    <datalist id="purchase-custom-company-list">
-                      {BD_PHARMA_COMPANIES.map((c) => (
-                        <option key={c} value={c} />
-                      ))}
-                    </datalist>
-                  </div>
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-0.5">ধরণ (Form)</label>
-                    <select
-                      value={customForm}
-                      onChange={(e) => {
-                        const nextForm = e.target.value;
-                        setCustomForm(nextForm);
-                        const lower = nextForm.toLowerCase();
-                        const isLiquidOrSingle =
-                          lower.includes('syrup') ||
-                          lower.includes('susp') ||
-                          lower.includes('drop') ||
-                          lower.includes('inhaler') ||
-                          lower.includes('gel') ||
-                          lower.includes('injection') ||
-                          lower.includes('spray');
-                        if (isLiquidOrSingle) {
-                          setCustomPackUnit('piece');
-                          setCustomUnitsPerPack('1');
-                          const tp = parseFloat(customTpPrice) || 0;
-                          if (tp > 0) setCustomPackRate(tp.toFixed(2));
-                        } else {
-                          setCustomPackUnit('box');
-                          setCustomUnitsPerPack('100');
-                          const tp = parseFloat(customTpPrice) || 0;
-                          if (tp > 0) setCustomPackRate((tp * 100).toFixed(2));
-                        }
-                      }}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded bg-white"
-                    >
-                      {DOSAGE_FORM_OPTIONS.map((f) => (
-                        <option key={f.shortCode} value={f.value}>
-                          {f.value} ({f.shortCode})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-0.5">মাত্রা (Strength)</label>
-                    <input
-                      type="text"
-                      value={customStrength}
-                      onChange={(e) => setCustomStrength(e.target.value)}
-                      placeholder="যেমন: 500 mg, 20 mg, 100 ml"
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded bg-white"
-                    />
-                  </div>
+                  {!isDueEntryItem({ brandName: customBrand, dosageForm: customForm }) && (
+                    <>
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-0.5">জেনেরিক নাম</label>
+                        <input
+                          type="text"
+                          value={customGeneric}
+                          onChange={(e) => setCustomGeneric(e.target.value)}
+                          placeholder="যেমন: Paracetamol + Caffeine"
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-0.5">প্রস্তুতকারক কোম্পানি</label>
+                        <input
+                          type="text"
+                          list="purchase-custom-company-list"
+                          value={customCompany}
+                          onChange={(e) => setCustomCompany(e.target.value)}
+                          placeholder="যেমন: Square Pharmaceuticals PLC"
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded bg-white"
+                        />
+                        <datalist id="purchase-custom-company-list">
+                          {BD_PHARMA_COMPANIES.map((c) => (
+                            <option key={c} value={c} />
+                          ))}
+                        </datalist>
+                      </div>
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-0.5">ধরণ (Form)</label>
+                        <select
+                          value={customForm}
+                          onChange={(e) => {
+                            const nextForm = e.target.value;
+                            setCustomForm(nextForm);
+                            const lower = nextForm.toLowerCase();
+                            const isLiquidOrSingle =
+                              lower.includes('syrup') ||
+                              lower.includes('susp') ||
+                              lower.includes('drop') ||
+                              lower.includes('inhaler') ||
+                              lower.includes('gel') ||
+                              lower.includes('injection') ||
+                              lower.includes('spray');
+                            if (isLiquidOrSingle) {
+                              setCustomPackUnit('piece');
+                              setCustomUnitsPerPack('1');
+                              const tp = parseFloat(customTpPrice) || 0;
+                              if (tp > 0) setCustomPackRate(tp.toFixed(2));
+                            } else {
+                              setCustomPackUnit('box');
+                              setCustomUnitsPerPack('100');
+                              const tp = parseFloat(customTpPrice) || 0;
+                              if (tp > 0) setCustomPackRate((tp * 100).toFixed(2));
+                            }
+                          }}
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded bg-white"
+                        >
+                          {DOSAGE_FORM_OPTIONS.map((f) => (
+                            <option key={f.shortCode} value={f.value}>
+                              {f.value} ({f.shortCode})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-0.5">মাত্রা (Strength)</label>
+                        <input
+                          type="text"
+                          value={customStrength}
+                          onChange={(e) => setCustomStrength(e.target.value)}
+                          placeholder="যেমন: 500 mg, 20 mg, 100 ml"
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded bg-white"
+                        />
+                      </div>
+                    </>
+                  )}
                 </div>
+
+                {isDueEntryItem({ brandName: customBrand, dosageForm: customForm }) ? (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg flex flex-wrap items-end gap-3 text-xs">
+                    <div className="flex-1 min-w-[200px]">
+                      <label className="block font-bold text-rose-900 mb-1">
+                        বকেয়া টাকার পরিমাণ (৳) *
+                      </label>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0.01"
+                        required
+                        value={customPackRate}
+                        onChange={(e) => {
+                          setCustomPackRate(e.target.value);
+                          setCustomTpPrice(e.target.value);
+                        }}
+                        placeholder="টাকার পরিমাণ লিখুন (যেমন: 5070)"
+                        className="w-full px-3 py-1.5 border border-rose-300 rounded bg-white font-mono font-bold text-slate-900"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      className="py-1.5 px-4 bg-rose-700 hover:bg-rose-800 text-white font-bold rounded cursor-pointer shadow-xs"
+                    >
+                      + বকেয়া (Due) যোগ করুন
+                    </button>
+                  </div>
+                ) : (
+                <>
 
                 {/* Pack Size Configuration Row */}
                 <div className="p-2.5 bg-white/90 border border-indigo-200 rounded-lg space-y-2">
@@ -1261,6 +1431,8 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                     </button>
                   </div>
                 </div>
+                </>
+                )}
               </form>
             ) : (
               /* Standard Search & Pack Selector */
@@ -1291,8 +1463,26 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                   )}
 
                   {/* Search Autocomplete Dropdown */}
-                  {!selectedMed && (searchResults.length > 0 || medexSearching) && (
+                  {!selectedMed && (searchResults.length > 0 || medexSearching || /(due|বকেয়া)/i.test(productSearch)) && (
                     <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-64 overflow-y-auto z-30 divide-y divide-slate-100">
+                      {/(due|বকেয়া)/i.test(productSearch) && (
+                        <div
+                          onClick={() => openDueModal()}
+                          className="p-2.5 bg-rose-50 hover:bg-rose-100 cursor-pointer flex items-center justify-between text-xs transition-colors"
+                        >
+                          <div>
+                            <div className="font-bold text-rose-900">
+                              + Due (পূর্বের বকেয়া) যোগ করুন
+                            </div>
+                            <div className="text-[11px] text-rose-700">
+                              ক্লিক করলে টাকা লেখার পপআপ আসবে (কোনো mg/ml বা প্যাক সাইজ ছাড়া)
+                            </div>
+                          </div>
+                          <span className="px-2 py-0.5 rounded bg-rose-700 text-white font-bold text-[11px]">
+                            টাকা যোগ করুন
+                          </span>
+                        </div>
+                      )}
                       {medexSearching && (
                         <div className="px-3 py-1.5 bg-teal-50 text-[11px] font-medium text-teal-800 flex items-center gap-1.5">
                           <span className="w-2 h-2 rounded-full bg-teal-600 animate-ping" />
@@ -1308,9 +1498,11 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                           <div>
                             <div className="font-bold text-slate-900 flex items-center gap-1.5">
                               <span>{m.variantDisplayName || m.brandName}</span>
-                              <span className="font-normal text-slate-500">
-                                ({m.dosageForm} · {m.strength})
-                              </span>
+                              {!isDueEntryItem(m) && (
+                                <span className="font-normal text-slate-500">
+                                  ({m.dosageForm} · {m.strength})
+                                </span>
+                              )}
                               {m.source === 'medex' && (
                                 <span className="text-[9px] font-bold px-1 py-0.2 bg-teal-100 text-teal-800 rounded">
                                   MedEx
@@ -1318,15 +1510,18 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                               )}
                             </div>
                             <div className="text-[11px] text-teal-800 font-medium">
-                              {m.genericName} · <span className="text-slate-500">{m.companyName}</span>
+                              {isDueEntryItem(m) ? 'বকেয়া / Due এন্ট্রি' : `${m.genericName} · `}
+                              {!isDueEntryItem(m) && <span className="text-slate-500">{m.companyName}</span>}
                             </div>
                           </div>
-                          <div className="text-right font-mono font-bold text-indigo-900">
-                            টিপি: ৳{(m.purchasePrice || m.unitPrice * 0.88).toFixed(2)}
-                            <div className="text-[10px] text-slate-500 font-normal">
-                              MRP: ৳{m.unitPrice.toFixed(2)}
+                          {!isDueEntryItem(m) && (
+                            <div className="text-right font-mono font-bold text-indigo-900">
+                              টিপি: ৳{(m.purchasePrice || m.unitPrice * 0.88).toFixed(2)}
+                              <div className="text-[10px] text-slate-500 font-normal">
+                                MRP: ৳{m.unitPrice.toFixed(2)}
+                              </div>
                             </div>
-                          </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -1463,39 +1658,48 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100 pb-2">
               <div className="flex items-center gap-2">
                 <span className="font-bold text-xs text-slate-900">
-                  চালানে অন্তর্ভুক্ত আইটেমসমূহ ({purchaseCart.length}টি প্রডাক্ট, মোট {calculations.totalPcs} পিস)
+                  চালানে অন্তর্ভুক্ত আইটেমসমূহ (
+                  {purchaseCart.filter((i) => i.brandName && i.brandName.trim().length > 0).length}টি আইটেম, মোট{' '}
+                  {purchaseCart
+                    .filter((i) => i.brandName && i.brandName.trim().length > 0 && !isDueEntryItem(i))
+                    .reduce((sum, i) => sum + (Number(i.qty) || 0), 0)}{' '}
+                  পিস)
                 </span>
               </div>
-              {purchaseCart.length > 0 && (
+              {purchaseCart.some((i) => i.brandName && i.brandName.trim().length > 0) && (
                 <div className="flex flex-wrap items-center gap-2">
-                  <a
-                    href={cartWhatsAppHref}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-3 py-1.5 bg-[#25D366] hover:bg-[#1ebe5d] text-white font-bold text-xs rounded-md inline-flex items-center gap-1.5 shadow-2xs transition-colors"
-                    title="কার্টের প্রোডাক্টের নাম ও কোয়ান্টিটি WhatsApp এ শেয়ার করুন"
-                  >
-                    <MessageCircle className="w-3.5 h-3.5" />
-                    <span>WhatsApp এ শেয়ার</span>
-                  </a>
-                  <button
-                    type="button"
-                    onClick={() => handleCopyWhatsAppText('cart', cartWhatsAppText)}
-                    className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-semibold text-xs rounded-md inline-flex items-center gap-1 cursor-pointer transition-colors"
-                    title="কার্ট তালিকা কপি করুন"
-                  >
-                    {copiedWhatsAppType === 'cart' ? (
-                      <>
-                        <Check className="w-3.5 h-3.5 text-emerald-700" />
-                        <span>কপি হয়েছে</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>কপি</span>
-                      </>
-                    )}
-                  </button>
+                  {cartWhatsAppText.trim().length > 0 && (
+                    <>
+                      <a
+                        href={cartWhatsAppHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1.5 bg-[#25D366] hover:bg-[#1ebe5d] text-white font-bold text-xs rounded-md inline-flex items-center gap-1.5 shadow-2xs transition-colors"
+                        title="কার্টের প্রোডাক্টের নাম ও কোয়ান্টিটি WhatsApp এ শেয়ার করুন"
+                      >
+                        <MessageCircle className="w-3.5 h-3.5" />
+                        <span>WhatsApp এ শেয়ার</span>
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyWhatsAppText('cart', cartWhatsAppText)}
+                        className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-semibold text-xs rounded-md inline-flex items-center gap-1 cursor-pointer transition-colors"
+                        title="কার্ট তালিকা কপি করুন"
+                      >
+                        {copiedWhatsAppType === 'cart' ? (
+                          <>
+                            <Check className="w-3.5 h-3.5 text-emerald-700" />
+                            <span>কপি হয়েছে</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>কপি</span>
+                          </>
+                        )}
+                      </button>
+                    </>
+                  )}
                   <button
                     type="button"
                     onClick={onClearPurchaseCart}
@@ -1530,8 +1734,11 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-sans">
-                    {purchaseCart.map((item, idx) => {
+                    {purchaseCart
+                      .filter((i) => i.brandName && i.brandName.trim().length > 0)
+                      .map((item, idx) => {
                       const metrics = computePurchaseItemMetrics(item);
+                      const isDue = isDueEntryItem(item);
                       const isEdPack = editingCell?.medId === item.medicineId && editingCell.field === 'step1_pack';
                       const isEdQty = editingCell?.medId === item.medicineId && editingCell.field === 'step1_qty';
                       const isEdTp = editingCell?.medId === item.medicineId && editingCell.field === 'step1_tp';
@@ -1542,15 +1749,20 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                           <td className="py-2 px-3 font-mono text-slate-400 font-bold">{idx + 1}</td>
                           <td className="py-2 px-3">
                             <div className="font-bold text-slate-900">
-                              {item.brandName}{' '}
-                              <span className="text-[10px] text-slate-500 font-normal">
-                                ({item.dosageForm} {item.strength})
-                              </span>
+                              {item.brandName}
+                              {!isDue && (item.dosageForm || item.strength) ? (
+                                <>
+                                  {' '}
+                                  <span className="text-[10px] text-slate-500 font-normal">
+                                    ({[item.dosageForm, item.strength].filter(Boolean).join(' ')})
+                                  </span>
+                                </>
+                              ) : null}
                             </div>
                             <div className="text-[10.5px] text-teal-800">{item.companyName}</div>
                           </td>
                           <td className="py-2 px-2 text-center text-slate-600 font-mono">
-                            {isEdPack ? (
+                            {isDue ? null : isEdPack ? (
                               <div className="inline-flex flex-wrap items-center justify-center gap-1 bg-indigo-50 p-1 rounded border border-indigo-300">
                                 <select
                                   value={editingPackUnit}
@@ -1629,7 +1841,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                             )}
                           </td>
                           <td className="py-2 px-2 text-center font-bold font-mono text-indigo-950">
-                            {isEdQty ? (
+                            {isDue ? null : isEdQty ? (
                               <input
                                 type="number"
                                 min="1"
@@ -1655,7 +1867,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                             )}
                           </td>
                           <td className="py-2 px-3 text-right font-mono font-bold text-slate-800">
-                            {isEdTp ? (
+                            {isDue ? null : isEdTp ? (
                               <input
                                 type="number"
                                 step="any"
@@ -1682,7 +1894,16 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                             )}
                           </td>
                           <td className="py-2 px-3 text-right font-mono font-bold text-indigo-900">
-                            {isEdLineTp ? (
+                            {isDue ? (
+                              <button
+                                type="button"
+                                onClick={() => openDueModal(item)}
+                                className="px-2 py-0.5 rounded border border-dashed border-transparent hover:border-rose-300 hover:bg-rose-50 hover:text-rose-800 cursor-pointer"
+                                title="ক্লিক করে বকেয়া টাকা পরিবর্তন করুন"
+                              >
+                                ৳{metrics.lineTp.toFixed(2)}
+                              </button>
+                            ) : isEdLineTp ? (
                               <input
                                 type="number"
                                 step="any"
@@ -1764,7 +1985,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              {purchaseCart.length > 0 && (
+              {cartWhatsAppText.trim().length > 0 && (
                 <a
                   href={cartWhatsAppHref}
                   target="_blank"
@@ -1805,9 +2026,12 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 text-xs font-sans">
-                {purchaseCart.map((item, idx) => {
+                {purchaseCart
+                  .filter((i) => i.brandName && i.brandName.trim().length > 0)
+                  .map((item, idx) => {
                   const m = computePurchaseItemMetrics(item);
                   const { qty, tp, lineTp, vatRate, singleVat, lineVat, lineTotal: lineNetTotal } = m;
+                  const isDue = isDueEntryItem(item);
 
                   const isEdQty = editingCell?.medId === item.medicineId && editingCell.field === 'step2_qty';
                   const isEdLineTp = editingCell?.medId === item.medicineId && editingCell.field === 'step2_lineTp';
@@ -1819,116 +2043,134 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                       {/* Product Name & Pcs (Click Qty to Edit) */}
                       <td className="py-2.5 px-3">
                         <div className="font-bold text-slate-900 text-xs">
-                          {idx + 1}. {item.brandName}{' '}
-                          <span className="text-[10px] text-slate-500 font-normal">
-                            ({item.dosageForm} {item.strength})
-                          </span>
+                          {idx + 1}. {item.brandName}
+                          {!isDue && (item.dosageForm || item.strength) ? (
+                            <>
+                              {' '}
+                              <span className="text-[10px] text-slate-500 font-normal">
+                                ({[item.dosageForm, item.strength].filter(Boolean).join(' ')})
+                              </span>
+                            </>
+                          ) : null}
                         </div>
                         <div className="text-[10.5px] text-slate-500 flex items-center gap-1 mt-0.5">
-                          <span>{item.companyName} ·</span>
-                          {isEdQty ? (
-                            <input
-                              type="number"
-                              min="1"
-                              autoFocus
-                              value={editingVal}
-                              onChange={(e) => setEditingVal(e.target.value)}
-                              onBlur={commitCellEdit}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') commitCellEdit();
-                                if (e.key === 'Escape') setEditingCell(null);
-                              }}
-                              className="w-16 px-1 py-0.5 text-center border border-indigo-400 rounded bg-white text-xs font-bold font-mono"
-                            />
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => startCellEdit(item.medicineId, 'step2_qty', qty)}
-                              className="font-mono font-bold text-indigo-900 px-1 rounded border border-dashed border-transparent hover:border-indigo-300 hover:bg-indigo-50 cursor-pointer"
-                              title="ক্লিক করে পরিমাণ পরিবর্তন করুন"
-                            >
-                              {qty} পিস
-                            </button>
+                          <span>{item.companyName}</span>
+                          {!isDue && (
+                            <>
+                              <span>·</span>
+                              {isEdQty ? (
+                                <input
+                                  type="number"
+                                  min="1"
+                                  autoFocus
+                                  value={editingVal}
+                                  onChange={(e) => setEditingVal(e.target.value)}
+                                  onBlur={commitCellEdit}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') commitCellEdit();
+                                    if (e.key === 'Escape') setEditingCell(null);
+                                  }}
+                                  className="w-16 px-1 py-0.5 text-center border border-indigo-400 rounded bg-white text-xs font-bold font-mono"
+                                />
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => startCellEdit(item.medicineId, 'step2_qty', qty)}
+                                  className="font-mono font-bold text-indigo-900 px-1 rounded border border-dashed border-transparent hover:border-indigo-300 hover:bg-indigo-50 cursor-pointer"
+                                  title="ক্লিক করে পরিমাণ পরিবর্তন করুন"
+                                >
+                                  {qty} পিস
+                                </button>
+                              )}
+                            </>
                           )}
                         </div>
                       </td>
 
                       {/* Bonus Input */}
                       <td className="py-2.5 px-2 text-center">
-                        <input
-                          type="number"
-                          min="0"
-                          value={item.bonusQty || 0}
-                          onChange={(e) =>
-                            onUpdatePurchaseCartItemDetails(item.medicineId, {
-                              bonusQty: Math.max(0, parseInt(e.target.value, 10) || 0),
-                            })
-                          }
-                          className="w-16 text-center py-1 px-1 border border-slate-300 rounded font-mono font-bold text-emerald-800 bg-white"
-                        />
+                        {isDue ? null : (
+                          <input
+                            type="number"
+                            min="0"
+                            value={item.bonusQty || 0}
+                            onChange={(e) =>
+                              onUpdatePurchaseCartItemDetails(item.medicineId, {
+                                bonusQty: Math.max(0, parseInt(e.target.value, 10) || 0),
+                              })
+                            }
+                            className="w-16 text-center py-1 px-1 border border-slate-300 rounded font-mono font-bold text-emerald-800 bg-white"
+                          />
+                        )}
                       </td>
 
                       {/* Single TP Input */}
                       <td className="py-2.5 px-2 text-center">
-                        <input
-                          type="number"
-                          step="any"
-                          min="0.01"
-                          value={Number(tp.toFixed(4))}
-                          onChange={(e) => {
-                            const newCost = Math.max(0.01, parseFloat(e.target.value) || 0);
-                            onUpdatePurchaseCartItemDetails(item.medicineId, {
-                              purchasePrice: newCost,
-                              customLineTotal: undefined,
-                              packRate: Number((newCost * (item.unitsPerPack || 1)).toFixed(4)),
-                            });
-                          }}
-                          className="w-20 text-center py-1 px-1 border border-slate-300 rounded font-mono font-bold text-indigo-950 bg-white"
-                        />
+                        {isDue ? null : (
+                          <input
+                            type="number"
+                            step="any"
+                            min="0.01"
+                            value={Number(tp.toFixed(4))}
+                            onChange={(e) => {
+                              const newCost = Math.max(0.01, parseFloat(e.target.value) || 0);
+                              onUpdatePurchaseCartItemDetails(item.medicineId, {
+                                purchasePrice: newCost,
+                                customLineTotal: undefined,
+                                packRate: Number((newCost * (item.unitsPerPack || 1)).toFixed(4)),
+                              });
+                            }}
+                            className="w-20 text-center py-1 px-1 border border-slate-300 rounded font-mono font-bold text-indigo-950 bg-white"
+                          />
+                        )}
                       </td>
 
                       {/* VAT % Input */}
                       <td className="py-2.5 px-2 text-center">
-                        <input
-                          type="number"
-                          step="any"
-                          min="0"
-                          value={vatRate}
-                          onChange={(e) => {
-                            const rate = Math.max(0, parseFloat(e.target.value) || 0);
-                            const newSingleVat = Number(((tp * rate) / 100).toFixed(4));
-                            setPurVatStr('');
-                            onUpdatePurchaseCartItemDetails(item.medicineId, {
-                              vatPercent: rate,
-                              pieceVatAmount: newSingleVat,
-                              vatAmount: Number(((lineTp * rate) / 100).toFixed(2)),
-                              productVatMode: '%',
-                            });
-                          }}
-                          className="w-16 text-center py-1 px-1 border border-slate-300 rounded font-mono text-slate-800 bg-white"
-                        />
+                        {isDue ? null : (
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            value={vatRate}
+                            onChange={(e) => {
+                              const rate = Math.max(0, parseFloat(e.target.value) || 0);
+                              const newSingleVat = Number(((tp * rate) / 100).toFixed(4));
+                              setPurVatStr('');
+                              onUpdatePurchaseCartItemDetails(item.medicineId, {
+                                vatPercent: rate,
+                                pieceVatAmount: newSingleVat,
+                                vatAmount: Number(((lineTp * rate) / 100).toFixed(2)),
+                                productVatMode: '%',
+                              });
+                            }}
+                            className="w-16 text-center py-1 px-1 border border-slate-300 rounded font-mono text-slate-800 bg-white"
+                          />
+                        )}
                       </td>
 
                       {/* Single VAT Display / Input */}
                       <td className="py-2.5 px-2 text-center">
-                        <input
-                          type="number"
-                          step="any"
-                          min="0"
-                          value={singleVat}
-                          onChange={(e) => {
-                            const sVat = Math.max(0, parseFloat(e.target.value) || 0);
-                            const approxRate = tp > 0 ? Number(((sVat / tp) * 100).toFixed(2)) : 0;
-                            setPurVatStr('');
-                            onUpdatePurchaseCartItemDetails(item.medicineId, {
-                              pieceVatAmount: sVat,
-                              vatPercent: approxRate,
-                              vatAmount: Number((sVat * qty).toFixed(2)),
-                              productVatMode: 'piece_vat',
-                            });
-                          }}
-                          className="w-20 text-center py-1 px-1 border border-slate-200 rounded font-mono text-slate-700 bg-slate-50"
-                        />
+                        {isDue ? null : (
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            value={singleVat}
+                            onChange={(e) => {
+                              const sVat = Math.max(0, parseFloat(e.target.value) || 0);
+                              const approxRate = tp > 0 ? Number(((sVat / tp) * 100).toFixed(2)) : 0;
+                              setPurVatStr('');
+                              onUpdatePurchaseCartItemDetails(item.medicineId, {
+                                pieceVatAmount: sVat,
+                                vatPercent: approxRate,
+                                vatAmount: Number((sVat * qty).toFixed(2)),
+                                productVatMode: 'piece_vat',
+                              });
+                            }}
+                            className="w-20 text-center py-1 px-1 border border-slate-200 rounded font-mono text-slate-700 bg-slate-50"
+                          />
+                        )}
                       </td>
 
                       {/* Total TP (Click to Edit) */}
@@ -1951,7 +2193,11 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                         ) : (
                           <button
                             type="button"
-                            onClick={() => startCellEdit(item.medicineId, 'step2_lineTp', lineTp.toFixed(2))}
+                            onClick={() =>
+                              isDue
+                                ? openDueModal(item)
+                                : startCellEdit(item.medicineId, 'step2_lineTp', lineTp.toFixed(2))
+                            }
                             className="px-1.5 py-0.5 rounded border border-dashed border-transparent hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 cursor-pointer"
                             title="ক্লিক করে মোট টিপি পরিবর্তন করুন"
                           >
@@ -1962,7 +2208,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
 
                       {/* Total VAT (Click to Edit) */}
                       <td className="py-2.5 px-3 text-right font-mono font-bold text-indigo-800">
-                        {isEdLineVat ? (
+                        {isDue ? null : isEdLineVat ? (
                           <input
                             type="number"
                             step="any"
@@ -2009,7 +2255,11 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                         ) : (
                           <button
                             type="button"
-                            onClick={() => startCellEdit(item.medicineId, 'step2_lineTotal', lineNetTotal.toFixed(2))}
+                            onClick={() =>
+                              isDue
+                                ? openDueModal(item)
+                                : startCellEdit(item.medicineId, 'step2_lineTotal', lineNetTotal.toFixed(2))
+                            }
                             className="px-1.5 py-0.5 rounded border border-dashed border-transparent hover:border-indigo-300 hover:bg-indigo-50 cursor-pointer"
                             title="ক্লিক করে লাইন মোট টাকা পরিবর্তন করুন"
                           >
@@ -2020,46 +2270,56 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
 
                       {/* Batch & Expiry */}
                       <td className="py-2.5 px-2 text-center space-y-1">
-                        <input
-                          type="text"
-                          value={item.batchNo || 'B-2610'}
-                          onChange={(e) =>
-                            onUpdatePurchaseCartItemDetails(item.medicineId, {
-                              batchNo: e.target.value,
-                            })
-                          }
-                          placeholder="ব্যাচ নং"
-                          className="w-20 text-[10px] text-center px-1 py-0.5 border border-slate-300 rounded font-mono"
-                        />
-                        <input
-                          type="date"
-                          value={item.expiryDate || '2028-12-31'}
-                          onChange={(e) =>
-                            onUpdatePurchaseCartItemDetails(item.medicineId, {
-                              expiryDate: e.target.value,
-                            })
-                          }
-                          className="w-20 text-[10px] text-center px-0.5 py-0.5 border border-slate-300 rounded font-mono"
-                        />
+                        {isDue ? null : (
+                          <>
+                            <input
+                              type="text"
+                              value={item.batchNo || 'B-2610'}
+                              onChange={(e) =>
+                                onUpdatePurchaseCartItemDetails(item.medicineId, {
+                                  batchNo: e.target.value,
+                                })
+                              }
+                              placeholder="ব্যাচ নং"
+                              className="w-20 text-[10px] text-center px-1 py-0.5 border border-slate-300 rounded font-mono"
+                            />
+                            <input
+                              type="date"
+                              value={item.expiryDate || '2028-12-31'}
+                              onChange={(e) =>
+                                onUpdatePurchaseCartItemDetails(item.medicineId, {
+                                  expiryDate: e.target.value,
+                                })
+                              }
+                              className="w-20 text-[10px] text-center px-0.5 py-0.5 border border-slate-300 rounded font-mono"
+                            />
+                          </>
+                        )}
                       </td>
 
                       {/* Stock Checkbox */}
                       <td className="py-2.5 px-2 text-center">
-                        <label className="inline-flex items-center gap-1 cursor-pointer select-none">
-                          <input
-                            type="checkbox"
-                            checked={item.updateStock !== false}
-                            onChange={(e) =>
-                              onUpdatePurchaseCartItemDetails(item.medicineId, {
-                                updateStock: e.target.checked,
-                              })
-                            }
-                            className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
-                          />
-                          <span className="text-[10px] font-bold text-indigo-900">
-                            {item.updateStock !== false ? '✅ স্টক বৃদ্ধি' : '❌ স্টক বাড়বে না'}
+                        {isDue ? (
+                          <span className="text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded">
+                            বকেয়া / নন-স্টক
                           </span>
-                        </label>
+                        ) : (
+                          <label className="inline-flex items-center gap-1 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={item.updateStock !== false}
+                              onChange={(e) =>
+                                onUpdatePurchaseCartItemDetails(item.medicineId, {
+                                  updateStock: e.target.checked,
+                                })
+                              }
+                              className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
+                            />
+                            <span className="text-[10px] font-bold text-indigo-900">
+                              {item.updateStock !== false ? '✅ স্টক বৃদ্ধি' : '❌ স্টক বাড়বে না'}
+                            </span>
+                          </label>
+                        )}
                       </td>
                     </tr>
                   );
@@ -2337,9 +2597,12 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-sans">
-                  {purchaseCart.map((item, idx) => {
+                  {purchaseCart
+                    .filter((i) => i.brandName && i.brandName.trim().length > 0)
+                    .map((item, idx) => {
                     const m = computePurchaseItemMetrics(item);
                     const { qty, tp, lineTp, bonus, singleVat, lineVat, lineTotal } = m;
+                    const isDue = isDueEntryItem(item);
 
                     const isEdQty = editingCell?.medId === item.medicineId && editingCell.field === 'step3_qty';
                     const isEdBonus = editingCell?.medId === item.medicineId && editingCell.field === 'step3_bonus';
@@ -2354,15 +2617,20 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                         <td className="py-2 px-3 font-mono text-slate-400 font-bold">{idx + 1}</td>
                         <td className="py-2 px-3">
                           <div className="font-bold text-slate-900">
-                            {item.brandName}{' '}
-                            <span className="text-[10px] text-slate-500 font-normal">
-                              ({item.dosageForm} {item.strength})
-                            </span>
+                            {item.brandName}
+                            {!isDue && (item.dosageForm || item.strength) ? (
+                              <>
+                                {' '}
+                                <span className="text-[10px] text-slate-500 font-normal">
+                                  ({[item.dosageForm, item.strength].filter(Boolean).join(' ')})
+                                </span>
+                              </>
+                            ) : null}
                           </div>
                           <div className="text-[10.5px] text-teal-800">{item.companyName}</div>
                         </td>
                         <td className="py-2 px-2 text-center font-mono font-bold text-slate-900">
-                          {isEdQty ? (
+                          {isDue ? null : isEdQty ? (
                             <input
                               type="number"
                               min="1"
@@ -2388,7 +2656,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                           )}
                         </td>
                         <td className="py-2 px-2 text-center font-mono text-emerald-700 font-bold">
-                          {isEdBonus ? (
+                          {isDue ? null : isEdBonus ? (
                             <input
                               type="number"
                               min="0"
@@ -2414,7 +2682,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                           )}
                         </td>
                         <td className="py-2 px-3 text-right font-mono">
-                          {isEdTp ? (
+                          {isDue ? null : isEdTp ? (
                             <input
                               type="number"
                               step="any"
@@ -2441,7 +2709,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                           )}
                         </td>
                         <td className="py-2 px-3 text-right font-mono">
-                          {isEdSingleVat ? (
+                          {isDue ? null : isEdSingleVat ? (
                             <input
                               type="number"
                               step="any"
@@ -2486,7 +2754,11 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                           ) : (
                             <button
                               type="button"
-                              onClick={() => startCellEdit(item.medicineId, 'step3_lineTp', lineTp.toFixed(2))}
+                              onClick={() =>
+                                isDue
+                                  ? openDueModal(item)
+                                  : startCellEdit(item.medicineId, 'step3_lineTp', lineTp.toFixed(2))
+                              }
                               className="px-1.5 py-0.5 rounded border border-dashed border-transparent hover:border-indigo-300 hover:bg-indigo-50 cursor-pointer"
                               title="ক্লিক করে মোট টিপি পরিবর্তন করুন"
                             >
@@ -2495,7 +2767,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                           )}
                         </td>
                         <td className="py-2 px-3 text-right font-mono font-bold text-indigo-800">
-                          {isEdLineVat ? (
+                          {isDue ? null : isEdLineVat ? (
                             <input
                               type="number"
                               step="any"
@@ -2540,7 +2812,11 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                           ) : (
                             <button
                               type="button"
-                              onClick={() => startCellEdit(item.medicineId, 'step3_lineTotal', lineTotal.toFixed(2))}
+                              onClick={() =>
+                                isDue
+                                  ? openDueModal(item)
+                                  : startCellEdit(item.medicineId, 'step3_lineTotal', lineTotal.toFixed(2))
+                              }
                               className="px-1.5 py-0.5 rounded border border-dashed border-transparent hover:border-indigo-300 hover:bg-indigo-50 cursor-pointer"
                               title="ক্লিক করে লাইন মোট টাকা পরিবর্তন করুন"
                             >
@@ -2551,7 +2827,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                         <td className="py-2 px-2 text-center">
                           <button
                             type="button"
-                            onClick={() => setPurchaseStep(2)}
+                            onClick={() => (isDue ? openDueModal(item) : setPurchaseStep(2))}
                             className="px-2 py-0.5 text-[10.5px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded cursor-pointer"
                           >
                             ✏️ সংশোধন
@@ -2820,6 +3096,73 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
               </div>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Due (বকেয়া) Amount Entry Popup Modal */}
+      {showDueModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full p-5 space-y-4 border border-rose-200">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
+              <h3 className="text-sm font-bold text-rose-950">
+                {editingDueMedId ? 'বকেয়া (Due) টাকা সংশোধন করুন' : 'বকেয়া (Due) টাকা যোগ করুন'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDueModal(false);
+                  setDueAmountInput('');
+                  setEditingDueMedId(null);
+                }}
+                className="text-slate-400 hover:text-slate-700 p-1 rounded cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleDueModalSubmit} className="space-y-3 text-xs">
+              {supplierCompany && supplierCompany !== 'সকল কোম্পানি' && (
+                <div className="text-[11px] text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded border border-slate-200">
+                  সরবরাহকারী: <strong className="text-slate-900">{supplierCompany}</strong>
+                </div>
+              )}
+              <div>
+                <label className="block font-bold text-slate-800 mb-1">
+                  টাকার পরিমাণ (৳) *
+                </label>
+                <input
+                  type="number"
+                  step="any"
+                  min="0.01"
+                  required
+                  autoFocus
+                  value={dueAmountInput}
+                  onChange={(e) => setDueAmountInput(e.target.value)}
+                  placeholder="টাকার পরিমাণ লিখুন (যেমন: 5070)"
+                  className="w-full px-3 py-2 border border-rose-300 rounded-lg bg-white font-mono font-bold text-base text-slate-900 focus:outline-none focus:border-rose-600"
+                />
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowDueModal(false);
+                    setDueAmountInput('');
+                    setEditingDueMedId(null);
+                  }}
+                  className="px-3.5 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-xs font-bold text-white bg-rose-700 hover:bg-rose-800 rounded-lg cursor-pointer shadow-xs"
+                >
+                  {editingDueMedId ? 'আপডেট করুন' : 'কার্টে যোগ করুন'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

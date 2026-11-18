@@ -32,6 +32,7 @@ import {
 import {
   buildTransactionInvoiceWhatsAppText,
   getWhatsAppShareHref,
+  isDueEntryItem,
 } from '../utils/whatsappShare';
 import {
   BD_PHARMA_COMPANIES,
@@ -3028,13 +3029,24 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-200 bg-white">
-                              {parsedPreviewItems.map((pItem, idx) => (
+                              {parsedPreviewItems.map((pItem, idx) => {
+                                const isDueRow =
+                                  pItem.formPrefix === 'due' ||
+                                  isDueEntryItem({
+                                    brandName: pItem.cleanName || pItem.brandAndStrength,
+                                    formPrefix: pItem.formPrefix,
+                                  });
+                                return (
                                 <tr key={idx} className={idx % 2 === 1 ? 'bg-slate-50/50' : 'bg-white'}>
                                   <td className={`text-center font-bold text-slate-600 ${isDense ? 'py-0.5 px-1' : 'py-1.5 px-1.5'}`}>
                                     {idx + 1}
                                   </td>
                                   <td className={`text-slate-900 ${isDense ? 'py-0.5 px-1.5' : 'py-1.5 px-2.5'}`}>
-                                    {previewInvoice.txType === 'purchase' ? (
+                                    {isDueRow ? (
+                                      <div className={`font-bold text-slate-900 font-sans ${isDense ? 'text-[10px]' : 'text-xs'}`}>
+                                        {pItem.cleanName || 'Due'}
+                                      </div>
+                                    ) : previewInvoice.txType === 'purchase' ? (
                                       <div>
                                         <div className={`font-bold text-slate-900 font-sans ${isDense ? 'text-[10px]' : 'text-xs'}`}>
                                           {pItem.formPrefix ? `${pItem.formPrefix.toUpperCase()}. ` : ''}
@@ -3062,7 +3074,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                   </td>
                                   {previewInvoice.txType !== 'purchase' && (
                                     <td className={`text-center ${isDense ? 'py-0.5 px-1' : 'py-1.5 px-1'}`}>
-                                      {pItem.dosageInstruction ? (
+                                      {isDueRow ? null : pItem.dosageInstruction ? (
                                         <span className={`inline-block font-mono font-bold text-red-600 bg-rose-50 border border-rose-200 rounded ${
                                           isDense ? 'px-1 py-0 text-[9px]' : 'px-1.5 py-0.5 text-[10px]'
                                         }`}>
@@ -3081,7 +3093,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                   )}
                                   {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
                                     <td className={`text-center text-slate-700 ${isDense ? 'py-0.5 px-1' : 'py-1.5 px-1'}`}>
-                                      {previewInvoice.txType === 'purchase' ? (
+                                      {isDueRow ? null : previewInvoice.txType === 'purchase' ? (
                                         <div>
                                           {(() => {
                                             const pieceVat = pItem.pieceVatAmount || (pItem.vatAmount && pItem.qty > 0 ? Number((pItem.vatAmount / pItem.qty).toFixed(4)) : 0);
@@ -3114,17 +3126,21 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                     </td>
                                   )}
                                   <td className={`text-center font-bold text-slate-900 ${isDense ? 'py-0.5 px-1' : 'py-1.5 px-1'}`}>
-                                    <div>{pItem.qty} পিস</div>
-                                    {pItem.bonusQty && pItem.bonusQty > 0 ? (
-                                      <div className="text-[9.5px] font-mono text-amber-950 bg-amber-50 border border-amber-400 rounded-md px-1.5 py-0.5 font-bold whitespace-nowrap mt-1 inline-block shadow-2xs">
-                                        <div>+{pItem.bonusQty} বোনাস</div>
-                                        {pItem.bonusVatAmount && pItem.bonusVatAmount > 0 ? (
-                                          <div className="text-[8.5px] font-mono text-amber-950 font-bold">
-                                            ভ্যাট: ৳{formatCleanMoney(pItem.bonusVatAmount)}
+                                    {isDueRow ? null : (
+                                      <>
+                                        <div>{pItem.qty} পিস</div>
+                                        {pItem.bonusQty && pItem.bonusQty > 0 ? (
+                                          <div className="text-[9.5px] font-mono text-amber-950 bg-amber-50 border border-amber-400 rounded-md px-1.5 py-0.5 font-bold whitespace-nowrap mt-1 inline-block shadow-2xs">
+                                            <div>+{pItem.bonusQty} বোনাস</div>
+                                            {pItem.bonusVatAmount && pItem.bonusVatAmount > 0 ? (
+                                              <div className="text-[8.5px] font-mono text-amber-950 font-bold">
+                                                ভ্যাট: ৳{formatCleanMoney(pItem.bonusVatAmount)}
+                                              </div>
+                                            ) : null}
                                           </div>
                                         ) : null}
-                                      </div>
-                                    ) : null}
+                                      </>
+                                    )}
                                   </td>
                                   {(previewInvoice.txType !== 'sale' || invoicePrintWithPrice) && (
                                     <td className={`text-right font-bold text-slate-900 ${isDense ? 'py-0.5 px-1.5' : 'py-1.5 px-2'}`}>
@@ -3132,7 +3148,8 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                     </td>
                                   )}
                                 </tr>
-                              ))}
+                                );
+                              })}
                             </tbody>
                           </table>
                         </div>

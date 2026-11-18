@@ -29,15 +29,31 @@ export function normalizeDigitsToEnglish(input: string): string {
   return (input || '').replace(/[০-৯]/g, (ch) => BENGALI_TO_ENG_DIGITS[ch] || ch);
 }
 
+export function isDueEntryItem(item: {
+  brandName?: string;
+  dosageForm?: string;
+  medicineId?: string;
+  formPrefix?: string;
+}): boolean {
+  const b = (item.brandName || '').trim().toLowerCase();
+  const f = (item.dosageForm || '').trim().toLowerCase();
+  const id = (item.medicineId || '').trim().toLowerCase();
+  const fp = (item.formPrefix || '').trim().toLowerCase();
+  if (f === 'due' || fp === 'due' || id.startsWith('due_') || id.startsWith('due-')) {
+    return true;
+  }
+  return /^(due|previous\s*due|prev\s*due|বকেয়া|পূর্বের\s*বকেয়া)$/i.test(b);
+}
+
 /**
  * Converts dosageForm or invoice prefix into a clean label prefix like "Tab.", "Cap.", "Supp.", "Syp."
  */
 export function formatDosagePrefixLabel(formOrPrefix?: string): string {
   const raw = (formOrPrefix || '').trim();
-  if (!raw) return '';
+  if (!raw || raw.toLowerCase() === 'due') return '';
 
   const p = getInvoiceFormPrefix(raw);
-  if (!p || p === 'item') return '';
+  if (!p || p === 'item' || p === 'due') return '';
 
   switch (p) {
     case 'tab':
@@ -229,7 +245,8 @@ export function getWhatsAppShareHref(text: string): string {
 
 /**
  * Builds WhatsApp message for Purchase Cart:
- * Shows ONLY numbered Dosage Prefix + Product Name (e.g. Tab. Napa Extra, Syp. Omidon-60ml(10/5ml)) and Quantity (e.g. 1 Box / 10 Pcs).
+ * Shows ONLY numbered Dosage Prefix + Product Name and Quantity (e.g. 1 Box / 10 Pcs).
+ * Excludes Due / বকেয়া items completely so they are never copied in the order list.
  */
 export function buildPurchaseCartWhatsAppText(
   purchaseCart: PurchaseCartItem[],
@@ -239,9 +256,11 @@ export function buildPurchaseCartWhatsAppText(
     dateStr?: string;
   }
 ): string {
-  const validItems = purchaseCart.filter((i) => i.brandName && i.brandName.trim().length > 0);
+  const validItems = purchaseCart.filter(
+    (i) => i.brandName && i.brandName.trim().length > 0 && !isDueEntryItem(i)
+  );
   if (validItems.length === 0) {
-    return '(কার্টে কোনো প্রোডাক্ট নেই)';
+    return '';
   }
 
   return validItems
@@ -261,7 +280,7 @@ export function buildPurchaseCartWhatsAppText(
 /**
  * Builds WhatsApp message for an active Purchase Invoice from Step 3 cart:
  * Shows Dosage Prefix + Product Name, Quantity, Price (Taka), Line Total (Taka),
- * followed by মোট, পরিশোধিত, বাকী.
+ * followed by Due (if any), মোট, পরিশোধিত, বাকী.
  */
 export function buildPurchaseInvoiceWhatsAppTextFromCart(
   purchaseCart: PurchaseCartItem[],
@@ -283,8 +302,10 @@ export function buildPurchaseInvoiceWhatsAppTextFromCart(
   });
 
   const lines: string[] = [];
+  const medicineItems = validItems.filter((i) => !isDueEntryItem(i));
+  const dueItems = validItems.filter((i) => isDueEntryItem(i));
 
-  validItems.forEach((item, idx) => {
+  medicineItems.forEach((item, idx) => {
     const m = computePurchaseItemMetrics(item);
     const productName = formatCompactProductName(
       item.brandName,
@@ -312,7 +333,13 @@ export function buildPurchaseInvoiceWhatsAppTextFromCart(
     );
   });
 
-  lines.push('');
+  if (lines.length > 0) {
+    lines.push('');
+  }
+  if (dueItems.length > 0) {
+    const extraDueTotal = dueItems.reduce((acc, d) => acc + computePurchaseItemMetrics(d).lineTotal, 0);
+    lines.push(`Due: ${formatMoneyTaka(extraDueTotal)}`);
+  }
   if (totals.totalVat > 0) {
     lines.push(`ভ্যাট: ${formatMoneyTaka(totals.totalVat)}`);
   }
@@ -329,7 +356,7 @@ export function buildPurchaseInvoiceWhatsAppTextFromCart(
 /**
  * Builds WhatsApp message for a saved/previewed Transaction Invoice (Purchase or Sale):
  * Shows Dosage Prefix + Product Name, Quantity, Price (Taka), Line Total (Taka),
- * followed by মোট, পরিশোধিত, বাকী.
+ * followed by Due (if any), মোট, পরিশোধিত, বাকী.
  */
 export function buildTransactionInvoiceWhatsAppText(
   tx: Transaction,
@@ -341,7 +368,14 @@ export function buildTransactionInvoiceWhatsAppText(
   const parsedItems = parseTransactionItemsDetailed(tx.itemsSummary || '', catalog);
   const lines: string[] = [];
 
-  parsedItems.forEach((pItem, idx) => {
+  const medicineItems = parsedItems.filter(
+    (p) => !isDueEntryItem({ brandName: p.cleanName || p.brandAndStrength, formPrefix: p.formPrefix })
+  );
+  const dueItems = parsedItems.filter((p) =>
+    isDueEntryItem({ brandName: p.cleanName || p.brandAndStrength, formPrefix: p.formPrefix })
+  );
+
+  medicineItems.forEach((pItem, idx) => {
     const rawName = pItem.cleanName || pItem.brandAndStrength;
     const dosageForm = pItem.formPrefix
       ? dosageFormFromInvoicePrefix(pItem.formPrefix)
@@ -396,7 +430,13 @@ export function buildTransactionInvoiceWhatsAppText(
     );
   });
 
-  lines.push('');
+  if (lines.length > 0) {
+    lines.push('');
+  }
+  if (dueItems.length > 0) {
+    const extraDueTotal = dueItems.reduce((acc, d) => acc + (d.lineTotal || 0), 0);
+    lines.push(`Due: ${formatMoneyTaka(extraDueTotal)}`);
+  }
   if (tx.vat !== undefined && tx.vat > 0) {
     lines.push(`ভ্যাট: ${formatMoneyTaka(tx.vat)}`);
   }

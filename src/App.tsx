@@ -70,6 +70,7 @@ import { PosAndDailyAccountsView } from './components/PosAndDailyAccountsView';
 import { StaffAndShopView } from './components/StaffAndShopView';
 import { PublicHealthcarePortal } from './components/PublicHealthcarePortal';
 import { searchMedexLiveFromApi, syncMedexPricesFromApi } from './utils/medexLiveClient';
+import { isDueEntryItem } from './utils/whatsappShare';
 import {
   BD_COMPANIES_DIRECTORY,
   BD_GENERICS_DIRECTORY,
@@ -4213,20 +4214,23 @@ export default function App() {
   }) => {
     const isBlank = !params.brandName.trim();
     const cleanBrand = params.brandName.trim();
-    const cleanStrength = (params.strength || '').trim();
-    const cleanForm = (params.dosageForm || 'Tablet').trim();
-    const cleanGeneric = (params.genericName || cleanBrand || 'Custom Product').trim();
+    const isDue = !isBlank && isDueEntryItem({ brandName: cleanBrand, dosageForm: params.dosageForm });
+    const cleanStrength = isDue ? '' : (params.strength || '').trim();
+    const cleanForm = isDue ? 'Due' : (params.dosageForm || 'Tablet').trim();
+    const cleanGeneric = isDue ? '' : (params.genericName || cleanBrand || 'Custom Product').trim();
     const cleanCompany = (params.companyName || 'Custom / General').trim();
     const purchasePrice = isBlank ? 0 : Math.max(0.01, Number(params.purchasePrice) || 8.8);
-    const unitPrice =
-      typeof params.unitPrice === 'number' && params.unitPrice > 0
-        ? params.unitPrice
-        : Number((purchasePrice / 0.88).toFixed(2));
-    const qty = Math.max(1, Math.round(Number(params.qty) || 10));
-    const batchNo =
-      (params.batchNo || '').trim() || `B-${Math.floor(1000 + Math.random() * 9000)}`;
-    const expiryDate = (params.expiryDate || '').trim() || '2028-06-30';
-    const updateStock = params.updateStock !== false;
+    const unitPrice = isDue
+      ? purchasePrice
+      : typeof params.unitPrice === 'number' && params.unitPrice > 0
+      ? params.unitPrice
+      : Number((purchasePrice / 0.88).toFixed(2));
+    const qty = isDue ? 1 : Math.max(1, Math.round(Number(params.qty) || 10));
+    const batchNo = isDue
+      ? ''
+      : (params.batchNo || '').trim() || `B-${Math.floor(1000 + Math.random() * 9000)}`;
+    const expiryDate = isDue ? '' : (params.expiryDate || '').trim() || '2028-06-30';
+    const updateStock = isDue ? false : params.updateStock !== false;
 
     setPurchaseCart((prev) => {
       if (isBlank) {
@@ -4268,38 +4272,48 @@ export default function App() {
         .replace(/[^a-z0-9\u0980-\u09ff]+/g, '-')
         .replace(/^-|-$/g, '')
         .slice(0, 40);
-      const customMedId = `custom_pur_${slug || Date.now()}`;
+      const customMedId = isDue
+        ? `due_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+        : `custom_pur_${slug || Date.now()}`;
 
-      const invMatch = findMatchingInventoryRecord(inventory, {
-        medicineId: customMedId,
-        brandName: cleanBrand,
-        strength: cleanStrength,
-        dosageForm: cleanForm,
-      });
+      const invMatch = isDue
+        ? undefined
+        : findMatchingInventoryRecord(inventory, {
+            medicineId: customMedId,
+            brandName: cleanBrand,
+            strength: cleanStrength,
+            dosageForm: cleanForm,
+          });
       const currentStock = invMatch ? invMatch.stockQty : 0;
 
-      const existing = prev.find(
-        (item) =>
-          item.medicineId === customMedId ||
-          (item.brandName.trim().toLowerCase() === cleanBrand.toLowerCase() &&
-            item.strength.trim().toLowerCase() === cleanStrength.toLowerCase() &&
-            item.dosageForm.trim().toLowerCase() === cleanForm.toLowerCase())
-      );
-      const matchedPurCatalogMed = fullCatalog.find(
-        (m) =>
-          m.brandName.trim().toLowerCase() === cleanBrand.toLowerCase() &&
-          m.strength.trim().toLowerCase() === cleanStrength.toLowerCase() &&
-          m.dosageForm.trim().toLowerCase() === cleanForm.toLowerCase()
-      );
-      const resolvedPurItemCompany = resolveCanonicalMedicineCompany({
-        catalog: fullCatalog,
-        medicineId: matchedPurCatalogMed?.id,
-        brandName: cleanBrand,
-        strength: cleanStrength,
-        dosageForm: cleanForm,
-        candidateCompany: matchedPurCatalogMed?.companyName || cleanCompany,
-        invoiceSupplierCompany: cleanCompany,
-      });
+      const existing = isDue
+        ? undefined
+        : prev.find(
+            (item) =>
+              item.medicineId === customMedId ||
+              (item.brandName.trim().toLowerCase() === cleanBrand.toLowerCase() &&
+                item.strength.trim().toLowerCase() === cleanStrength.toLowerCase() &&
+                item.dosageForm.trim().toLowerCase() === cleanForm.toLowerCase())
+          );
+      const matchedPurCatalogMed = isDue
+        ? undefined
+        : fullCatalog.find(
+            (m) =>
+              m.brandName.trim().toLowerCase() === cleanBrand.toLowerCase() &&
+              m.strength.trim().toLowerCase() === cleanStrength.toLowerCase() &&
+              m.dosageForm.trim().toLowerCase() === cleanForm.toLowerCase()
+          );
+      const resolvedPurItemCompany = isDue
+        ? cleanCompany
+        : resolveCanonicalMedicineCompany({
+            catalog: fullCatalog,
+            medicineId: matchedPurCatalogMed?.id,
+            brandName: cleanBrand,
+            strength: cleanStrength,
+            dosageForm: cleanForm,
+            candidateCompany: matchedPurCatalogMed?.companyName || cleanCompany,
+            invoiceSupplierCompany: cleanCompany,
+          });
 
       let next: PurchaseCartItem[];
       const newItem: PurchaseCartItem = {
@@ -4310,10 +4324,11 @@ export default function App() {
         companyName: resolvedPurItemCompany,
         strength: cleanStrength,
         dosageForm: cleanForm,
-        packSize:
-          params.packSize?.trim() ||
-          params.packDetailFormula ||
-          (params.unitsPerPack && params.unitsPerPack > 1 ? `1 × ${params.unitsPerPack}` : '10 × 10 (100 pcs)'),
+        packSize: isDue
+          ? ''
+          : params.packSize?.trim() ||
+            params.packDetailFormula ||
+            (params.unitsPerPack && params.unitsPerPack > 1 ? `1 × ${params.unitsPerPack}` : '10 × 10 (100 pcs)'),
         purchasePrice,
         unitPrice,
         qty,
@@ -4321,13 +4336,13 @@ export default function App() {
         expiryDate,
         availableStock: currentStock,
         updateStock,
-        packUnit: params.packUnit || 'piece',
-        packCount: params.packCount || 1,
-        unitsPerPack: params.unitsPerPack,
-        packRate: params.packRate,
-        packDetailFormula: params.packDetailFormula,
-        stripsPerBox: params.stripsPerBox,
-        pcsPerStrip: params.pcsPerStrip,
+        packUnit: isDue ? 'piece' : params.packUnit || 'piece',
+        packCount: isDue ? 1 : params.packCount || 1,
+        unitsPerPack: isDue ? 1 : params.unitsPerPack,
+        packRate: isDue ? purchasePrice : params.packRate,
+        packDetailFormula: isDue ? '' : params.packDetailFormula,
+        stripsPerBox: isDue ? undefined : params.stripsPerBox,
+        pcsPerStrip: isDue ? undefined : params.pcsPerStrip,
       };
 
       if (existing) {
@@ -4360,41 +4375,12 @@ export default function App() {
         }
       }
 
-      // Auto ensure next purchase box is open
-      const hasTrailingBlank = next.length > 0 && !next[next.length - 1].brandName.trim();
-      if (!hasTrailingBlank) {
-        const nextBlankRow: PurchaseCartItem = {
-          medicineId: `box_${Date.now() + 1}_${Math.random().toString(36).slice(2, 7)}`,
-          brandName: '',
-          genericName: cleanGeneric,
-          companyName: cleanCompany,
-          strength: '',
-          dosageForm: 'Tablet',
-          packSize: '1*10',
-          purchasePrice: 0,
-          unitPrice: 0,
-          qty: 10,
-          batchNo: `B-${Math.floor(1000 + Math.random() * 9000)}`,
-          expiryDate: '2028-06-30',
-          availableStock: 0,
-          updateStock: true,
-          packUnit: 'strip',
-          packCount: 1,
-          unitsPerPack: 10,
-          packRate: 0,
-          packDetailFormula: '1*10',
-          stripsPerBox: 10,
-          pcsPerStrip: 10,
-        };
-        next = [...next, nextBlankRow];
-      }
-
       saveLocal(STORAGE_KEYS.PURCHASE_CART, next);
       return next;
     });
 
-    // Only save to database catalog if the user actually typed a brand name (prevent saving blank boxes to catalog)
-    if (params.brandName.trim().length > 0) {
+    // Only save to database catalog if allowed (never save blank rows or Due entries to medicine catalog)
+    if (params.brandName.trim().length > 0 && !isDue && params.saveToCatalog !== false) {
       const existingCatalogMed = fullCatalog.find(
         (m) =>
           m.brandName.trim().toLowerCase() === cleanBrand.toLowerCase() &&
@@ -4439,9 +4425,13 @@ export default function App() {
           existingCatalogMed
         );
       }
+    }
 
+    if (params.brandName.trim().length > 0) {
       showToast(
-        `প্রডাক্ট "${cleanBrand}${cleanStrength ? ` ${cleanStrength}` : ''}" (+${qty} পিস · ক্রয় দর ৳${formatCleanMoney(purchasePrice)}) ক্রয় বিলে যুক্ত হয়েছে!`
+        isDue
+          ? `বকেয়া (${cleanBrand} ৳${formatCleanMoney(purchasePrice)}) ক্রয় বিলে যুক্ত হয়েছে!`
+          : `প্রডাক্ট "${cleanBrand}${cleanStrength ? ` ${cleanStrength}` : ''}" (+${qty} পিস · ক্রয় দর ৳${formatCleanMoney(purchasePrice)}) ক্রয় বিলে যুক্ত হয়েছে!`
       );
     }
   };
@@ -5090,6 +5080,12 @@ export default function App() {
       // Single piece price including VAT (Tp + Vat = Product Price)
       const effectiveSinglePiecePurchasePrice = Number(((itemLineCost + totalItemVat) / productUnits).toFixed(4));
 
+      const isDueItem = isDueEntryItem(purItem);
+      if (isDueItem || purItem.updateStock === false) {
+        // Never add Due entries or non-stock items to medicine catalog or inventory
+        if (isDueItem) continue;
+      }
+
       // 1. Always preserve the medicine's real manufacturer companyName (NEVER overwrite with custom invoice supplier name like Belal Pharmacy)
       const baseMed = fullCatalog.find(
         (m) =>
@@ -5109,7 +5105,7 @@ export default function App() {
         invoiceSupplierCompany: params.supplierCompany,
       });
 
-      if (!baseMed && purItem.brandName.trim()) {
+      if (!baseMed && purItem.brandName.trim() && !isDueItem) {
         const fallbackRetail =
           purItem.unitPrice > 0
             ? purItem.unitPrice
@@ -5131,7 +5127,7 @@ export default function App() {
             indication: 'কাস্টম প্রডাক্ট / সাধারণ ব্যবহার্য',
           })
         );
-      } else if (params.syncModifiedPricesToCatalog && baseMed) {
+      } else if (params.syncModifiedPricesToCatalog && baseMed && !isDueItem) {
         const oldPur =
           typeof baseMed.purchasePrice === 'number' && baseMed.purchasePrice > 0
             ? baseMed.purchasePrice
@@ -5161,8 +5157,8 @@ export default function App() {
         }
       }
 
-      // If updateStock is explicitly false (not checked), DO NOT touch stock, DO NOT touch inventory
-      if (purItem.updateStock === false) {
+      // If updateStock is explicitly false (not checked) or Due entry, DO NOT touch stock, DO NOT touch inventory
+      if (purItem.updateStock === false || isDueItem) {
         continue;
       }
 

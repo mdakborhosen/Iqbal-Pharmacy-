@@ -5236,6 +5236,7 @@ export function getCompleteCompanyGenericItems(params: {
 
 export function getInvoiceFormPrefix(form: string): string {
   const short = getShortDosageForm(form).toLowerCase();
+  if (short === 'due') return 'due';
   if (short === 'gel/cream') return 'gel';
   if (short === 'surgical' || short === 'custom' || short === 'other') return 'item';
   return short || 'tab';
@@ -5505,8 +5506,17 @@ export function formatPurchaseItemInvoiceLine(
   },
   index: number
 ): string {
-  const prefix = getInvoiceFormPrefix(item.dosageForm);
+  const isDue =
+    (item.dosageForm || '').trim().toLowerCase() === 'due' ||
+    /^(due|previous\s*due|prev\s*due|বকেয়া|পূর্বের\s*বকেয়া)$/i.test((item.brandName || '').trim());
   const metrics = computePurchaseItemMetrics(item);
+  if (isDue) {
+    const dueTotalStr = formatCleanMoney(metrics.lineTotal);
+    const dueLabel = (item.brandName || 'Due').trim();
+    return `${index + 1}.due.${dueLabel} (৳${dueTotalStr}) × 1=${dueTotalStr} [নন-স্টক/শুধু-বিল]`;
+  }
+
+  const prefix = getInvoiceFormPrefix(item.dosageForm);
   const { qty, tp, productVat, bonusVat, lineTotal } = metrics;
   const pMode =
     item.productVatMode ||
