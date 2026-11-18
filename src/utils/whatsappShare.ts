@@ -117,47 +117,28 @@ export function getWhatsAppShareHref(text: string): string {
 
 /**
  * Builds WhatsApp message for Purchase Cart:
- * Shows ONLY Product Name (e.g. Seclo-20) and Quantity (e.g. 1 Box / 1 Pcs).
+ * Shows ONLY numbered Product Name (e.g. Seclo-20) and Quantity (e.g. 1 Box / 1 Pcs).
  */
 export function buildPurchaseCartWhatsAppText(
   purchaseCart: PurchaseCartItem[],
-  opts?: {
+  _opts?: {
     shopName?: string;
     supplierCompany?: string;
     dateStr?: string;
   }
 ): string {
   const validItems = purchaseCart.filter((i) => i.brandName && i.brandName.trim().length > 0);
-  const lines: string[] = [];
-
-  lines.push('*ক্রয় অর্ডার তালিকা (Purchase List)*');
-  if (opts?.shopName?.trim()) {
-    lines.push(`প্রতিষ্ঠান: ${opts.shopName.trim()}`);
-  }
-  if (
-    opts?.supplierCompany?.trim() &&
-    opts.supplierCompany.trim() !== 'সকল কোম্পানি'
-  ) {
-    lines.push(`কোম্পানি: ${opts.supplierCompany.trim()}`);
-  }
-  if (opts?.dateStr?.trim()) {
-    lines.push(`তারিখ: ${opts.dateStr.trim()}`);
-  }
-
-  lines.push('');
-
   if (validItems.length === 0) {
-    lines.push('(কার্টে কোনো প্রোডাক্ট নেই)');
-    return lines.join('\n');
+    return '(কার্টে কোনো প্রোডাক্ট নেই)';
   }
 
-  validItems.forEach((item, idx) => {
-    const productName = formatCompactProductName(item.brandName, item.strength);
-    const qtyLabel = formatPurchaseQtyLabel(item);
-    lines.push(`${idx + 1}. ${productName} — ${qtyLabel}`);
-  });
-
-  return lines.join('\n');
+  return validItems
+    .map((item, idx) => {
+      const productName = formatCompactProductName(item.brandName, item.strength);
+      const qtyLabel = formatPurchaseQtyLabel(item);
+      return `${idx + 1}. ${productName} — ${qtyLabel}`;
+    })
+    .join('\n');
 }
 
 /**
