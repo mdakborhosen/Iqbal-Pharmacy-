@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import {
   ArrowRightLeft,
   Bell,
@@ -41,6 +41,7 @@ import {
   formatBrandVariantLabel,
   getBrandFormAndStrengthVariants,
   getCompleteCompanyGenericItems,
+  getMedicinesByGenericMap,
   getShortDosageForm,
   getUnitLabelForForm,
   matchesMedicineQuery,
@@ -111,6 +112,7 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
 }) => {
   const [directoryTab, setDirectoryTab] = useState<'medicines' | 'companies' | 'generics'>('medicines');
   const [searchQuery, setSearchQuery] = useState('');
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const [selectedCompany, setSelectedCompany] = useState<string>('ALL');
   const [selectedGeneric, setSelectedGeneric] = useState<string>('ALL');
   const [selectedDosageForm, setSelectedDosageForm] = useState<string>('ALL');
@@ -213,8 +215,9 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
     return Number((med.unitPrice * 0.88).toFixed(2));
   };
 
+  const deferredMedBrand = useDeferredValue(medBrand);
   const modalBrandMatches = useMemo(() => {
-    const q = medBrand.trim();
+    const q = deferredMedBrand.trim();
     const list: MedicineCatalogItem[] = [];
     for (let i = 0; i < catalog.length && list.length < 60; i++) {
       const m = catalog[i];
@@ -223,7 +226,7 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
       }
     }
     return list;
-  }, [catalog, medBrand]);
+  }, [catalog, deferredMedBrand]);
 
   const modalGenericMatches = useMemo(() => {
     const q = medGeneric.trim().toLowerCase();
@@ -285,7 +288,7 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
 
   // Filtered Medicines + Live MedEx Direct Results Merged with Updated Selling Prices
   const filteredMedicines = useMemo(() => {
-    const q = searchQuery.trim();
+    const q = deferredSearchQuery.trim();
     const visibleCatalog = catalog.filter((m) => !m.mergedIntoParentId);
 
     const baseFiltered = getCompleteCompanyGenericItems({
@@ -344,11 +347,11 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
     }
 
     return merged;
-  }, [catalog, searchQuery, selectedCompany, selectedGeneric, selectedDosageForm, selectedLetter, medexLiveResults]);
+  }, [catalog, deferredSearchQuery, selectedCompany, selectedGeneric, selectedDosageForm, selectedLetter, medexLiveResults]);
 
   // Filtered 250+ Companies
   const filteredCompanies = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = deferredSearchQuery.trim().toLowerCase();
     const letter = selectedLetter === 'ALL' ? '' : selectedLetter.toLowerCase();
     return BD_COMPANIES_DIRECTORY.filter((c) => {
       if (letter && !c.companyName.toLowerCase().startsWith(letter)) return false;
@@ -358,11 +361,11 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
         c.topGenerics.some((g) => g.toLowerCase().includes(q))
       );
     });
-  }, [searchQuery, selectedLetter]);
+  }, [deferredSearchQuery, selectedLetter]);
 
   // Filtered 1,800+ Generics
   const filteredGenerics = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = deferredSearchQuery.trim().toLowerCase();
     const letter = selectedLetter === 'ALL' ? '' : selectedLetter.toLowerCase();
     return BD_GENERICS_DIRECTORY.filter((g) => {
       if (letter && !g.genericName.toLowerCase().startsWith(letter)) return false;
@@ -373,7 +376,7 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
         g.indication.toLowerCase().includes(q)
       );
     });
-  }, [searchQuery, selectedLetter]);
+  }, [deferredSearchQuery, selectedLetter]);
 
   // Paginated Slices for 60fps rendering
   const totalMedicinePages = Math.max(1, Math.ceil(filteredMedicines.length / PAGE_SIZE));
@@ -421,31 +424,25 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
     );
   }, [catalog, activeMedicineId, filteredMedicines]);
 
-  // Same Generic Group + Strength Substitutes sorted by Unit Price ascending
+  // Same Generic Group + Strength Substitutes sorted by Unit Price ascending (O(1) generic bucket lookup)
   const genericSubstitutes = useMemo(() => {
     if (!activeMedicine) return [];
-    const targetGen = activeMedicine.genericName.toLowerCase();
+    const targetGen = activeMedicine.genericName.trim().toLowerCase();
     const targetStr = activeMedicine.strength.toLowerCase();
-    return catalog
-      .filter(
-        (m) =>
-          m.genericName.toLowerCase() === targetGen &&
-          m.strength.toLowerCase() === targetStr
-      )
+    const pool = getMedicinesByGenericMap(catalog).get(targetGen) || [];
+    return pool
+      .filter((m) => m.strength.toLowerCase() === targetStr)
       .sort((a, b) => a.unitPrice - b.unitPrice)
       .slice(0, 45);
   }, [catalog, activeMedicine]);
 
   const otherStrengthBrands = useMemo(() => {
     if (!activeMedicine) return [];
-    const targetGen = activeMedicine.genericName.toLowerCase();
+    const targetGen = activeMedicine.genericName.trim().toLowerCase();
     const targetStr = activeMedicine.strength.toLowerCase();
-    return catalog
-      .filter(
-        (m) =>
-          m.genericName.toLowerCase() === targetGen &&
-          m.strength.toLowerCase() !== targetStr
-      )
+    const pool = getMedicinesByGenericMap(catalog).get(targetGen) || [];
+    return pool
+      .filter((m) => m.strength.toLowerCase() !== targetStr)
       .slice(0, 14);
   }, [catalog, activeMedicine]);
 

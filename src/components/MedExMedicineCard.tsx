@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import { MedicineCatalogItem } from '../types';
+import { getMedicinesByGenericMap } from '../data/bdMedicines';
 
 interface MedExMedicineCardProps {
   medicine: MedicineCatalogItem;
@@ -32,7 +33,7 @@ interface MedExMedicineCardProps {
   isCompact?: boolean;
 }
 
-export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
+export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = React.memo(({
   medicine,
   allMedicines,
   onSelectMedicine,
@@ -51,12 +52,18 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
   const [confirmDeleteMed, setConfirmDeleteMed] = useState(false);
   const [confirmDeleteVariantKey, setConfirmDeleteVariantKey] = useState<string | null>(null);
 
-  // Explicit saved variants on this medicine + other catalog brand family variants (deduplicated)
+  // Explicit saved variants on this medicine + other catalog brand family variants (O(1) generic bucket lookup)
   const explicitVariants = React.useMemo(() => {
     return Array.isArray(medicine.variants) ? medicine.variants : [];
   }, [medicine.variants]);
 
+  const sameGenericPool = React.useMemo(() => {
+    const genMap = getMedicinesByGenericMap(allMedicines);
+    return genMap.get((medicine.genericName || '').trim().toLowerCase()) || [];
+  }, [allMedicines, medicine.genericName]);
+
   const brandFamilyVariants = React.useMemo(() => {
+    if (sameGenericPool.length === 0) return [];
     const rootName = medicine.brandName.split(' ')[0].toLowerCase();
     const absorbedSourceIds = new Set(
       explicitVariants.map((v) => v.sourceMedicineId).filter(Boolean) as string[]
@@ -64,30 +71,22 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
     const explicitNames = new Set(
       explicitVariants.map((v) => v.variantName.trim().toLowerCase())
     );
-    return allMedicines.filter((m) => {
-      if (m.id === medicine.id || m.mergedIntoParentId || absorbedSourceIds.has(m.id)) {
+    return sameGenericPool.filter((m) => {
+      if (m.id === medicine.id || absorbedSourceIds.has(m.id)) {
         return false;
       }
       if (explicitNames.has(m.brandName.trim().toLowerCase())) {
         return false;
       }
       const mRoot = m.brandName.split(' ')[0].toLowerCase();
-      return (
-        (m.brandName.toLowerCase().startsWith(rootName) || mRoot === rootName) &&
-        m.genericName.toLowerCase() === medicine.genericName.toLowerCase()
-      );
+      return m.brandName.toLowerCase().startsWith(rootName) || mRoot === rootName;
     });
-  }, [medicine, allMedicines, explicitVariants]);
+  }, [medicine.id, medicine.brandName, sameGenericPool, explicitVariants]);
 
-  // Find alternate brands under the same generic
+  // Find alternate brands under the same generic in O(k) where k is items sharing generic
   const alternateBrands = React.useMemo(() => {
-    return allMedicines.filter(
-      (m) =>
-        m.id !== medicine.id &&
-        !m.mergedIntoParentId &&
-        m.genericName.toLowerCase().trim() === medicine.genericName.toLowerCase().trim()
-    );
-  }, [medicine, allMedicines]);
+    return sameGenericPool.filter((m) => m.id !== medicine.id);
+  }, [medicine.id, sameGenericPool]);
 
   // Pack pricing calculation
   const unitsPerStrip = medicine.unitsPerStrip || 10;
@@ -113,7 +112,7 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
 
   return (
     <>
-      <div className="bg-white border border-slate-200/90 rounded-2xl p-4 sm:p-5 shadow-2xs hover:shadow-sm transition-shadow relative">
+      <div className="perf-auto-item bg-white border border-slate-200/90 rounded-2xl p-4 sm:p-5 shadow-2xs hover:shadow-sm transition-shadow relative">
         {/* Top Row: Pill Icon + Brand Name + Dosage Form + [MedEx লাইভ] + [Pack Image] */}
         <div className="flex flex-wrap items-start justify-between gap-2.5">
           <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -432,7 +431,7 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
       {/* MODAL 1: Pack Image & Verification Modal */}
       {showPackImageModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
+          <div className="bg-white rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl border border-slate-200 animate-modal-enter">
             <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Camera className="w-4 h-4 text-emerald-400" />
@@ -529,7 +528,7 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
       {/* MODAL 2: Alternate Brands Drawer / Modal */}
       {showAlternateBrandsModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[85vh] flex flex-col overflow-hidden shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
+          <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[85vh] flex flex-col overflow-hidden shadow-2xl border border-slate-200 animate-modal-enter">
             <div className="p-4 bg-[#1e6b7b] text-white flex items-center justify-between">
               <div>
                 <h4 className="font-bold text-base">
@@ -625,4 +624,4 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
       )}
     </>
   );
-};
+});

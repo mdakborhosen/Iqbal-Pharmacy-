@@ -828,7 +828,7 @@ export const BoxScannerModal: React.FC<BoxScannerModalProps> = ({
               <h2 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
                 <span>ওষুধের বক্স অটো-স্ক্যানার</span>
                 <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-2 py-0.5 rounded-full font-mono font-medium flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
                   ন্যানো-সেকেন্ড ডিটেকশন
                 </span>
               </h2>
@@ -936,7 +936,7 @@ export const BoxScannerModal: React.FC<BoxScannerModalProps> = ({
                   <div className="flex justify-between items-start">
                     <div className="w-4 h-4 border-t-3 border-l-3 border-emerald-400 rounded-tl"></div>
                     <div className="flex items-center gap-1.5 bg-slate-900/90 text-emerald-300 text-[10px] font-mono px-2 py-0.5 rounded-full shadow border border-emerald-500/30">
-                      <Zap className="w-3 h-3 text-emerald-400 animate-pulse" />
+                      <Zap className="w-3 h-3 text-emerald-400" />
                       <span>তাত্ক্ষণিক ডিটেকশন সক্রিয়</span>
                     </div>
                     <div className="w-4 h-4 border-t-3 border-r-3 border-emerald-400 rounded-tr"></div>

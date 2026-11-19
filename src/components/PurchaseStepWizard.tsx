@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -185,6 +185,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
 }) => {
   // Step 1: Product Search & Pack options state
   const [productSearch, setProductSearch] = useState('');
+  const deferredProductSearch = useDeferredValue(productSearch);
   const [medexLiveResults, setMedexLiveResults] = useState<MedicineCatalogItem[]>([]);
   const [medexSearching, setMedexSearching] = useState(false);
   const [isCustomCompanyMode, setIsCustomCompanyMode] = useState(
@@ -672,7 +673,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
 
   // Search Results for Step 1 (Local + Live MedEx)
   const searchResults = useMemo(() => {
-    const q = productSearch.trim();
+    const q = deferredProductSearch.trim();
     if (!q) return [];
     const filteredCatalog =
       !isCustomCompanyMode && supplierCompany && supplierCompany !== 'সকল কোম্পানি'
@@ -717,7 +718,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
       }
     }
     return merged.slice(0, 26);
-  }, [expandedCatalog, productSearch, supplierCompany, isCustomCompanyMode, medexLiveResults]);
+  }, [expandedCatalog, deferredProductSearch, supplierCompany, isCustomCompanyMode, medexLiveResults]);
 
   // Handle selecting a medicine from search
   const handleSelectMedicine = (med: MedicineCatalogItem) => {
@@ -1690,7 +1691,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                       )}
                       {medexSearching && (
                         <div className="px-3 py-1.5 bg-teal-50 text-[11px] font-medium text-teal-800 flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-full bg-teal-600 animate-ping" />
+                          <span className="w-3 h-3 rounded-full border-2 border-teal-600 border-t-transparent animate-spin shrink-0" />
                           <span>medex.com.bd থেকে সরাসরি অনুসন্ধান ও লাইভ মূল্য যাচাই হচ্ছে...</span>
                         </div>
                       )}

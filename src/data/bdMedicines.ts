@@ -4837,7 +4837,51 @@ export function calculateProportionalMedicinePrice(params: {
  * "entacid+", "lorix+", "ximeclav", "eyedrop", "eardrop", "nasaldrop", "syp", "cap", "tab", "supp", "inhelar", "sacet"
  * seamlessly match "Syrup", "Tablet", "Sachet", "Drops", "Eye Drop", "Ear Drop", "Suppository", "Inhaler", etc.
  */
+interface MedicineSearchIndexEntry {
+  bLow: string;
+  vLow: string;
+  gLow: string;
+  dLow: string;
+  sLow: string;
+  shortForm: string;
+  brandAndStrength: string;
+  compositeText: string;
+  indLow: string;
+  therLow: string;
+  normBrand: string;
+  normForm: string;
+  brandAndFormNorm: string;
+  normBrandAndStrength: string;
+  normComposite: string;
+  normTherapeutic: string;
+}
+
+const medicineSearchIndexCache = new WeakMap<MedicineCatalogItem, MedicineSearchIndexEntry>();
+const catalogByGenericCache = new WeakMap<MedicineCatalogItem[], Map<string, MedicineCatalogItem[]>>();
+
+export function getMedicinesByGenericMap(
+  catalog: MedicineCatalogItem[]
+): Map<string, MedicineCatalogItem[]> {
+  let map = catalogByGenericCache.get(catalog);
+  if (map) return map;
+  map = new Map<string, MedicineCatalogItem[]>();
+  for (let i = 0; i < catalog.length; i++) {
+    const m = catalog[i];
+    if (m.mergedIntoParentId) continue;
+    const key = (m.genericName || '').trim().toLowerCase();
+    let bucket = map.get(key);
+    if (!bucket) {
+      bucket = [];
+      map.set(key, bucket);
+    }
+    bucket.push(m);
+  }
+  catalogByGenericCache.set(catalog, map);
+  return map;
+}
+
 export function normalizePharmaSearchText(input: string): string {
+  if (!input) return '';
   return input
     .toLowerCase()
     .replace(/\+/g, 'plus')
@@ -4879,6 +4923,44 @@ export function normalizePharmaSearchText(input: string): string {
     .replace(/\bsacet\b/g, 'sachet')
     .replace(/\binj\b/g, 'injection')
     .replace(/[^a-z0-9\u0980-\u09ff]/g, '');
+}
+
+function getSearchIndexEntry(m: MedicineCatalogItem): MedicineSearchIndexEntry {
+  let entry = medicineSearchIndexCache.get(m);
+  if (entry) return entry;
+
+  const bLow = (m.brandName || '').toLowerCase();
+  const vLow = (m.variantDisplayName || m.brandName || '').toLowerCase();
+  const gLow = (m.genericName || '').toLowerCase();
+  const dLow = (m.dosageForm || '').toLowerCase();
+  const sLow = (m.strength || '').toLowerCase();
+  const shortForm = getShortDosageForm(m.dosageForm);
+  const brandAndStrength = `${bLow} ${sLow}`;
+  const compositeText = `${bLow} ${sLow} ${dLow} ${shortForm.toLowerCase()} ${gLow} ${(m.companyName || '').toLowerCase()}`;
+  const indLow = (m.indication || '').toLowerCase();
+  const therLow = (m.therapeuticClass || '').toLowerCase();
+
+  entry = {
+    bLow,
+    vLow,
+    gLow,
+    dLow,
+    sLow,
+    shortForm,
+    brandAndStrength,
+    compositeText,
+    indLow,
+    therLow,
+    normBrand: normalizePharmaSearchText(bLow),
+    normForm: normalizePharmaSearchText(dLow),
+    brandAndFormNorm: normalizePharmaSearchText(`${bLow} ${dLow}`),
+    normBrandAndStrength: normalizePharmaSearchText(brandAndStrength),
+    normComposite: normalizePharmaSearchText(compositeText),
+    normTherapeutic: normalizePharmaSearchText(therLow),
+  };
+
+  medicineSearchIndexCache.set(m, entry);
+  return entry;
 }
 
 export function buildDefaultVariantName(med: {
@@ -5005,88 +5087,97 @@ export function searchCatalogVariantsForInvoice(
   return searchAndRankMedicines(expandedCatalog, q, limit);
 }
 
-export function getMedicineSearchMatchScore(m: MedicineCatalogItem, rawQuery: string): number {
+interface ParsedSearchQuery {
+  q: string;
+  normQ: string;
+  tokens: string[];
+  normTokens: string[];
+}
+
+function parseSearchQuery(rawQuery: string): ParsedSearchQuery {
   const q = rawQuery.trim().toLowerCase();
+  if (!q) {
+    return { q: '', normQ: '', tokens: [], normTokens: [] };
+  }
+  const normQ = normalizePharmaSearchText(q);
+  const tokens = q.split(/\s+/).filter(Boolean);
+  const normTokens = tokens.map((tok) => normalizePharmaSearchText(tok));
+  return { q, normQ, tokens, normTokens };
+}
+
+function scoreMedicineWithParsedQuery(m: MedicineCatalogItem, pq: ParsedSearchQuery): number {
+  const { q, normQ, tokens, normTokens } = pq;
   if (!q) return 1;
 
-  const bLow = m.brandName.toLowerCase();
-  const vLow = (m.variantDisplayName || m.brandName).toLowerCase();
+  const idx = getSearchIndexEntry(m);
 
   // FAST PATH 1: Exact brand or variant name match
-  if (bLow === q || vLow === q) {
+  if (idx.bLow === q || idx.vLow === q) {
     return 1000;
   }
 
-  // FAST PATH 2: Brand or variant name starts with query (e.g. "Napa", "Seclo", "Seclo 20", "Seclo MUPS")
-  if (bLow.startsWith(q) || vLow.startsWith(q)) {
+  // FAST PATH 2: Brand or variant name starts with query
+  if (idx.bLow.startsWith(q) || idx.vLow.startsWith(q)) {
     return 800;
   }
 
   // FAST PATH 3: Brand/variant contains query or starts with brand+strength
-  const brandAndStrength = `${bLow} ${m.strength.toLowerCase()}`;
-  if (bLow.includes(q) || vLow.includes(q) || brandAndStrength.startsWith(q)) {
+  if (idx.bLow.includes(q) || idx.vLow.includes(q) || idx.brandAndStrength.startsWith(q)) {
     return 600;
   }
 
   // FAST PATH 4: Generic name starts with or contains query
-  const gLow = m.genericName.toLowerCase();
-  if (gLow.startsWith(q)) return 350;
-  if (gLow.includes(q)) return 250;
+  if (idx.gLow.startsWith(q)) return 350;
+  if (idx.gLow.includes(q)) return 250;
 
   // FAST PATH 5: Dosage form direct check
-  const dLow = m.dosageForm.toLowerCase();
-  if (dLow === q) return 500;
+  if (idx.dLow === q) return 500;
 
   // Normalized phonetic fallback for misspellings / Bengali inputs
-  const normQ = normalizePharmaSearchText(q);
   if (!normQ) return 0;
 
-  const normBrand = normalizePharmaSearchText(m.brandName);
-  const normForm = normalizePharmaSearchText(m.dosageForm);
-  const brandAndFormNorm = normalizePharmaSearchText(`${m.brandName} ${m.dosageForm}`);
-
-  // Tier 0: Exact brand + dosage form match (e.g. "Napa Syrup", "Napa সিরাপ", "Seclo Sachet")
-  if (brandAndFormNorm === normQ) {
+  if (idx.brandAndFormNorm === normQ) {
     return 1200;
   }
 
-  if (normBrand === normQ) {
+  if (idx.normBrand === normQ) {
     return 1000;
   }
 
-  if (normForm === normQ) {
+  if (idx.normForm === normQ) {
     return 900;
   }
 
-  if (normBrand.startsWith(normQ)) {
+  if (idx.normBrand.startsWith(normQ)) {
     return 800;
   }
 
-  if (normalizePharmaSearchText(brandAndStrength).startsWith(normQ)) {
+  if (idx.normBrandAndStrength.startsWith(normQ)) {
     return 600;
   }
 
-  const shortForm = getShortDosageForm(m.dosageForm);
-  const compositeText = `${m.brandName} ${m.strength} ${m.dosageForm} ${shortForm} ${m.genericName} ${m.companyName}`.toLowerCase();
-  const normComposite = normalizePharmaSearchText(compositeText);
-
   // Check multi-token match
-  const tokens = q.split(/\s+/).filter(Boolean);
   if (tokens.length > 1) {
-    const allTokensMatch = tokens.every((tok) => {
-      const normTok = normalizePharmaSearchText(tok);
-      return (
-        compositeText.includes(tok) ||
-        (normTok.length > 0 && normComposite.includes(normTok))
-      );
-    });
+    let allTokensMatch = true;
+    for (let i = 0; i < tokens.length; i++) {
+      const tok = tokens[i];
+      const normTok = normTokens[i];
+      if (!(idx.compositeText.includes(tok) || (normTok.length > 0 && idx.normComposite.includes(normTok)))) {
+        allTokensMatch = false;
+        break;
+      }
+    }
     if (allTokensMatch) {
-      const firstNorm = normalizePharmaSearchText(tokens[0]);
-      const hasFormMatch = tokens.some((tok) => {
-        const nt = normalizePharmaSearchText(tok);
-        return nt.length > 0 && (normForm === nt || normForm.includes(nt));
-      });
-      if (bLow.startsWith(tokens[0]) || (firstNorm.length > 0 && normBrand.startsWith(firstNorm))) {
+      const firstNorm = normTokens[0];
+      let hasFormMatch = false;
+      for (let i = 0; i < normTokens.length; i++) {
+        const nt = normTokens[i];
+        if (nt.length > 0 && (idx.normForm === nt || idx.normForm.includes(nt))) {
+          hasFormMatch = true;
+          break;
+        }
+      }
+      if (idx.bLow.startsWith(tokens[0]) || (firstNorm.length > 0 && idx.normBrand.startsWith(firstNorm))) {
         return hasFormMatch ? 950 : 700;
       }
       return hasFormMatch ? 650 : 450;
@@ -5095,22 +5186,26 @@ export function getMedicineSearchMatchScore(m: MedicineCatalogItem, rawQuery: st
 
   // Tier 5: Company, indication, or therapeutic class match
   if (
-    compositeText.includes(q) ||
-    m.indication.toLowerCase().includes(q) ||
-    m.therapeuticClass.toLowerCase().includes(q)
+    idx.compositeText.includes(q) ||
+    idx.indLow.includes(q) ||
+    idx.therLow.includes(q)
   ) {
     return 100;
   }
 
   if (
     normQ.length > 0 &&
-    (normComposite.includes(normQ) ||
-      normalizePharmaSearchText(m.therapeuticClass).includes(normQ))
+    (idx.normComposite.includes(normQ) || idx.normTherapeutic.includes(normQ))
   ) {
     return 80;
   }
 
   return 0;
+}
+
+export function getMedicineSearchMatchScore(m: MedicineCatalogItem, rawQuery: string): number {
+  const pq = parseSearchQuery(rawQuery);
+  return scoreMedicineWithParsedQuery(m, pq);
 }
 
 export function matchesMedicineQuery(m: MedicineCatalogItem, rawQuery: string): boolean {
@@ -5143,10 +5238,11 @@ export function searchAndRankMedicines(
     return typeof limit === 'number' ? catalog.slice(0, limit) : catalog;
   }
 
+  const pq = parseSearchQuery(q);
   const scored: { item: MedicineCatalogItem; score: number; idx: number }[] = [];
   for (let i = 0; i < catalog.length; i++) {
     const m = catalog[i];
-    const score = getMedicineSearchMatchScore(m, q);
+    const score = scoreMedicineWithParsedQuery(m, pq);
     if (score > 0) {
       scored.push({ item: m, score, idx: i });
     }
@@ -5161,7 +5257,7 @@ export function searchAndRankMedicines(
 
   // If query specifies a dosage form (e.g. "Napa Syrup", "Zox Sachet", "Femicom Syrup", "Monas Inhaler")
   // ensure the top matched brand has that exact dosage form variant at the top of results
-  const normQ = normalizePharmaSearchText(q);
+  const normQ = pq.normQ;
   const matchedFormMeta = FORM_SEARCH_KEYWORDS.find(
     (fk) => normQ.includes(fk.norm) && normQ.length > fk.norm.length
   );
@@ -5169,15 +5265,15 @@ export function searchAndRankMedicines(
     const brandPartNorm = normQ.replace(matchedFormMeta.norm, '').trim();
     if (brandPartNorm.length >= 2) {
       const baseBrandMed =
-        ranked.find((m) => normalizePharmaSearchText(m.brandName).startsWith(brandPartNorm)) ||
-        catalog.find((m) => normalizePharmaSearchText(m.brandName).startsWith(brandPartNorm));
+        ranked.find((m) => getSearchIndexEntry(m).normBrand.startsWith(brandPartNorm)) ||
+        catalog.find((m) => getSearchIndexEntry(m).normBrand.startsWith(brandPartNorm));
       if (baseBrandMed) {
+        const baseNormBrand = getSearchIndexEntry(baseBrandMed).normBrand;
         const hasExactTop = ranked
           .slice(0, 5)
           .some(
             (m) =>
-              normalizePharmaSearchText(m.brandName) ===
-                normalizePharmaSearchText(baseBrandMed.brandName) &&
+              getSearchIndexEntry(m).normBrand === baseNormBrand &&
               getShortDosageForm(m.dosageForm) === matchedFormMeta.short
           );
         if (!hasExactTop) {
@@ -5228,7 +5324,7 @@ export function getCompleteCompanyGenericItems(params: {
   return catalog.filter((m) => {
     if (selectedCompany !== 'ALL' && m.companyName !== selectedCompany) return false;
     if (selectedGeneric !== 'ALL' && m.genericName !== selectedGeneric) return false;
-    if (letter && !m.brandName.toLowerCase().startsWith(letter)) return false;
+    if (letter && !getSearchIndexEntry(m).bLow.startsWith(letter)) return false;
     if (targetShortForm !== 'ALL' && getShortDosageForm(m.dosageForm) !== targetShortForm) return false;
     return true;
   });

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import {
   onAuthStateChanged,
   signInAnonymously,
@@ -1184,16 +1184,19 @@ export default function App() {
   // Active POS / Daily Accounts tab controlled across the application
   const [posActiveTab, setPosActiveTab] = useState<'sale_pos' | 'purchase_entry'>('sale_pos');
   const [posFocusMode, setPosFocusMode] = useState<'pos' | 'ledger'>('pos');
-  const navigateToSection = (
+  const [, startNavTransition] = useTransition();
+  const navigateToSection = useCallback((
     sec: any,
     subTab?: string,
     scrollTargetId?: string
   ) => {
-    setActiveSection(sec);
-    if (subTab === 'sale_pos' || subTab === 'purchase_entry') {
-      setPosActiveTab(subTab);
-    }
-    setPosFocusMode(scrollTargetId === 'daily-accounts-ledger' ? 'ledger' : 'pos');
+    startNavTransition(() => {
+      setActiveSection(sec);
+      if (subTab === 'sale_pos' || subTab === 'purchase_entry') {
+        setPosActiveTab(subTab);
+      }
+      setPosFocusMode(scrollTargetId === 'daily-accounts-ledger' ? 'ledger' : 'pos');
+    });
     if (typeof window !== 'undefined') {
       if (scrollTargetId) {
         window.setTimeout(() => {
@@ -1206,7 +1209,7 @@ export default function App() {
         window.scrollTo({ top: 0, behavior: 'smooth' });
       }
     }
-  };
+  }, []);
   const autoSignInAttemptedRef = useRef(false);
   const shopProfileRef = useRef(shopProfile);
   useEffect(() => {
@@ -1470,21 +1473,71 @@ export default function App() {
   }, []);
 
   // Sync state changes to localStorage, IndexedDB, and Server Persistent Database (/api/pharmacy-state) ONLY when logged in
+  // Debounce heavy array serializations so main-thread clicks/typing stay 60fps, and flush on pagehide/visibilitychange
+  const pendingLocalFlushRef = useRef<Map<string, () => void>>(new Map());
+  const latestSnapshotRef = useRef<PharmacyPersistentState | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const flushPending = () => {
+      pendingLocalFlushRef.current.forEach((fn) => {
+        try {
+          fn();
+        } catch {
+          // ignore
+        }
+      });
+      pendingLocalFlushRef.current.clear();
+      if (latestSnapshotRef.current) {
+        saveIndexedDbSnapshot(latestSnapshotRef.current);
+      }
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') flushPending();
+    };
+    window.addEventListener('pagehide', flushPending);
+    window.addEventListener('beforeunload', flushPending);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('pagehide', flushPending);
+      window.removeEventListener('beforeunload', flushPending);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, []);
+
   useEffect(() => {
     if (!isCloudLoggedIn || effectiveShopId === 'shop_guest') return;
     saveLocal(STORAGE_KEYS.SHOP, shopProfile);
   }, [isCloudLoggedIn, effectiveShopId, shopProfile]);
   useEffect(() => {
     if (!isCloudLoggedIn || effectiveShopId === 'shop_guest') return;
-    saveLocal(STORAGE_KEYS.INVENTORY, inventory);
+    const flush = () => saveLocal(STORAGE_KEYS.INVENTORY, inventory);
+    pendingLocalFlushRef.current.set(STORAGE_KEYS.INVENTORY, flush);
+    const t = setTimeout(() => {
+      flush();
+      pendingLocalFlushRef.current.delete(STORAGE_KEYS.INVENTORY);
+    }, 220);
+    return () => clearTimeout(t);
   }, [isCloudLoggedIn, effectiveShopId, inventory]);
   useEffect(() => {
     if (!isCloudLoggedIn || effectiveShopId === 'shop_guest') return;
-    saveLocal(STORAGE_KEYS.CUSTOMERS, customers);
+    const flush = () => saveLocal(STORAGE_KEYS.CUSTOMERS, customers);
+    pendingLocalFlushRef.current.set(STORAGE_KEYS.CUSTOMERS, flush);
+    const t = setTimeout(() => {
+      flush();
+      pendingLocalFlushRef.current.delete(STORAGE_KEYS.CUSTOMERS);
+    }, 220);
+    return () => clearTimeout(t);
   }, [isCloudLoggedIn, effectiveShopId, customers]);
   useEffect(() => {
     if (!isCloudLoggedIn || effectiveShopId === 'shop_guest') return;
-    saveLocal(STORAGE_KEYS.TRANSACTIONS, transactions);
+    const flush = () => saveLocal(STORAGE_KEYS.TRANSACTIONS, transactions);
+    pendingLocalFlushRef.current.set(STORAGE_KEYS.TRANSACTIONS, flush);
+    const t = setTimeout(() => {
+      flush();
+      pendingLocalFlushRef.current.delete(STORAGE_KEYS.TRANSACTIONS);
+    }, 220);
+    return () => clearTimeout(t);
   }, [isCloudLoggedIn, effectiveShopId, transactions]);
   useEffect(() => {
     if (!isCloudLoggedIn || effectiveShopId === 'shop_guest') return;
@@ -1492,7 +1545,13 @@ export default function App() {
   }, [isCloudLoggedIn, effectiveShopId, staffList]);
   useEffect(() => {
     if (!isCloudLoggedIn || effectiveShopId === 'shop_guest') return;
-    saveLocal(STORAGE_KEYS.CUSTOM_MEDS, customMedicines);
+    const flush = () => saveLocal(STORAGE_KEYS.CUSTOM_MEDS, customMedicines);
+    pendingLocalFlushRef.current.set(STORAGE_KEYS.CUSTOM_MEDS, flush);
+    const t = setTimeout(() => {
+      flush();
+      pendingLocalFlushRef.current.delete(STORAGE_KEYS.CUSTOM_MEDS);
+    }, 220);
+    return () => clearTimeout(t);
   }, [isCloudLoggedIn, effectiveShopId, customMedicines]);
   useEffect(() => {
     if (!isCloudLoggedIn || effectiveShopId === 'shop_guest') return;
@@ -1508,13 +1567,29 @@ export default function App() {
   }, [isCloudLoggedIn, effectiveShopId, deletedIds]);
   useEffect(() => {
     if (!isCloudLoggedIn || effectiveShopId === 'shop_guest') return;
-    saveLocal(STORAGE_KEYS.POS_CART, posCart);
-    saveLocal(getScopedStorageKey(STORAGE_KEYS.POS_CART, effectiveShopId), posCart);
+    const flush = () => {
+      saveLocal(STORAGE_KEYS.POS_CART, posCart);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.POS_CART, effectiveShopId), posCart);
+    };
+    pendingLocalFlushRef.current.set(STORAGE_KEYS.POS_CART, flush);
+    const t = setTimeout(() => {
+      flush();
+      pendingLocalFlushRef.current.delete(STORAGE_KEYS.POS_CART);
+    }, 100);
+    return () => clearTimeout(t);
   }, [isCloudLoggedIn, effectiveShopId, posCart]);
   useEffect(() => {
     if (!isCloudLoggedIn || effectiveShopId === 'shop_guest') return;
-    saveLocal(STORAGE_KEYS.PURCHASE_CART, purchaseCart);
-    saveLocal(getScopedStorageKey(STORAGE_KEYS.PURCHASE_CART, effectiveShopId), purchaseCart);
+    const flush = () => {
+      saveLocal(STORAGE_KEYS.PURCHASE_CART, purchaseCart);
+      saveLocal(getScopedStorageKey(STORAGE_KEYS.PURCHASE_CART, effectiveShopId), purchaseCart);
+    };
+    pendingLocalFlushRef.current.set(STORAGE_KEYS.PURCHASE_CART, flush);
+    const t = setTimeout(() => {
+      flush();
+      pendingLocalFlushRef.current.delete(STORAGE_KEYS.PURCHASE_CART);
+    }, 100);
+    return () => clearTimeout(t);
   }, [isCloudLoggedIn, effectiveShopId, purchaseCart]);
 
   // Continuous automatic backup to Server Disk (/api/pharmacy-state) and IndexedDB (only while authenticated)
@@ -1540,10 +1615,11 @@ export default function App() {
       cloudSession,
       updatedAtMs: Date.now(),
     };
-    saveIndexedDbSnapshot(snapshot);
+    latestSnapshotRef.current = snapshot;
     const timer = setTimeout(() => {
+      saveIndexedDbSnapshot(snapshot);
       pushServerPharmacyState(snapshot, 'overwrite');
-    }, 120);
+    }, 300);
     return () => clearTimeout(timer);
   }, [
     serverHydrated,
@@ -8318,7 +8394,7 @@ export default function App() {
             href="#top"
             onClick={(e) => {
               e.preventDefault();
-              setActiveSection('dashboard');
+              navigateToSection('dashboard');
             }}
             className={`flex items-center gap-2.5 text-base sm:text-lg font-bold tracking-tight whitespace-nowrap shrink-0 ${
               isDarkDashboard ? 'text-white' : 'text-slate-900'
@@ -8350,7 +8426,7 @@ export default function App() {
               <button
                 key={item.id}
                 type="button"
-                onClick={() => setActiveSection(item.id)}
+                onClick={() => navigateToSection(item.id)}
                 className={`py-1 transition-colors whitespace-nowrap shrink-0 cursor-pointer border-b-2 ${
                   isDarkDashboard
                     ? isActive
@@ -8379,25 +8455,32 @@ export default function App() {
           <button
             type="button"
             onClick={() => {
-              setActiveSection('pos_accounts');
-              setPosActiveTab('purchase_entry');
+              navigateToSection('pos_accounts', 'purchase_entry');
               showToast(lang === 'bn' ? 'ক্রয় কার্ট ও ইনভয়েস বিল এন্ট্রি খোলা হয়েছে' : 'Purchase Cart & Billing opened');
             }}
             className={`px-2 sm:px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer shadow-2xs hover:shadow-xs active:scale-95 ${
               activeSection === 'pos_accounts' && posActiveTab === 'purchase_entry'
                 ? 'bg-indigo-600 text-white border-indigo-700 font-bold'
+                : isDarkDashboard
+                ? 'bg-[#102B24] hover:bg-[#16382F] text-emerald-100 border-emerald-800/80'
                 : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border-indigo-200'
             }`}
             title={lang === 'bn' ? 'ক্রয় কার্ট দেখুন' : 'View Purchase Cart'}
             aria-label="Purchase Cart"
           >
             <Package className={`w-3.5 h-3.5 ${
-              activeSection === 'pos_accounts' && posActiveTab === 'purchase_entry' ? 'text-white' : 'text-indigo-700'
+              activeSection === 'pos_accounts' && posActiveTab === 'purchase_entry'
+                ? 'text-white'
+                : isDarkDashboard
+                ? 'text-[#24CFA4]'
+                : 'text-indigo-700'
             }`} />
             <span className="font-bold hidden sm:inline">{lang === 'bn' ? 'ক্রয় কার্ট' : 'Purchase'}</span>
-            <span className={`px-1.5 py-0.2 text-[11px] font-mono font-bold rounded-full min-w-4 text-center leading-tight ${
+            <span className={`px-1.5 py-0.2 text-[11px] font-mono tabular-nums font-bold rounded-full min-w-4 text-center leading-tight ${
               activeSection === 'pos_accounts' && posActiveTab === 'purchase_entry'
                 ? 'bg-white text-indigo-800'
+                : isDarkDashboard
+                ? 'bg-[#24CFA4] text-[#042A21]'
                 : 'bg-indigo-600 text-white'
             }`}>
               {purchaseCart.length}
@@ -8408,25 +8491,32 @@ export default function App() {
           <button
             type="button"
             onClick={() => {
-              setActiveSection('pos_accounts');
-              setPosActiveTab('sale_pos');
+              navigateToSection('pos_accounts', 'sale_pos');
               showToast(lang === 'bn' ? 'বিক্রয় কার্ট ও ক্যাশ মেমো খোলা হয়েছে' : 'Sales Cart & Cash Memo opened');
             }}
             className={`px-2 sm:px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer shadow-2xs hover:shadow-xs active:scale-95 ${
               activeSection === 'pos_accounts' && posActiveTab === 'sale_pos'
                 ? 'bg-emerald-600 text-white border-emerald-700 font-bold'
+                : isDarkDashboard
+                ? 'bg-[#102B24] hover:bg-[#16382F] text-emerald-100 border-emerald-800/80'
                 : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border-emerald-300'
             }`}
             title={lang === 'bn' ? 'বিক্রয় কার্ট দেখুন' : 'View Sales Cart'}
             aria-label="Sales Cart"
           >
             <ShoppingCart className={`w-3.5 h-3.5 ${
-              activeSection === 'pos_accounts' && posActiveTab === 'sale_pos' ? 'text-white' : 'text-emerald-700'
+              activeSection === 'pos_accounts' && posActiveTab === 'sale_pos'
+                ? 'text-white'
+                : isDarkDashboard
+                ? 'text-[#24CFA4]'
+                : 'text-emerald-700'
             }`} />
             <span className="font-bold hidden sm:inline">{lang === 'bn' ? 'বিক্রয় কার্ট' : 'Sales'}</span>
-            <span className={`px-1.5 py-0.2 text-[11px] font-mono font-bold rounded-full min-w-4 text-center leading-tight ${
+            <span className={`px-1.5 py-0.2 text-[11px] font-mono tabular-nums font-bold rounded-full min-w-4 text-center leading-tight ${
               activeSection === 'pos_accounts' && posActiveTab === 'sale_pos'
                 ? 'bg-white text-emerald-800'
+                : isDarkDashboard
+                ? 'bg-[#24CFA4] text-[#042A21]'
                 : 'bg-emerald-600 text-white'
             }`}>
               {posCart.length}
@@ -8437,11 +8527,15 @@ export default function App() {
           <button
             type="button"
             onClick={() => setShowScannerModal(true)}
-            className="px-2 sm:px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-purple-200 bg-purple-50 hover:bg-purple-100 text-purple-900 transition-all flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer shadow-2xs hover:shadow-xs active:scale-95"
+            className={`px-2 sm:px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-all flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer shadow-2xs hover:shadow-xs active:scale-95 ${
+              isDarkDashboard
+                ? 'border-emerald-800/80 bg-[#102B24] hover:bg-[#16382F] text-emerald-100'
+                : 'border-purple-200 bg-purple-50 hover:bg-purple-100 text-purple-900'
+            }`}
             title={lang === 'bn' ? 'ওষুধের বক্স স্ক্যান' : 'Medicine Box Scanner'}
             aria-label="Scanner"
           >
-            <Camera className="w-3.5 h-3.5 text-purple-700" />
+            <Camera className={`w-3.5 h-3.5 ${isDarkDashboard ? 'text-[#24CFA4]' : 'text-purple-700'}`} />
             <span className="font-bold hidden sm:inline">{lang === 'bn' ? 'স্ক্যান' : 'Scan'}</span>
           </button>
 
@@ -8449,11 +8543,17 @@ export default function App() {
           <button
             type="button"
             onClick={toggleLanguage}
-            className="px-2 sm:px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 transition-all flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer shadow-2xs hover:shadow-xs active:scale-95"
+            className={`px-2 sm:px-2.5 py-1.5 text-xs font-bold rounded-lg border transition-all flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer shadow-2xs hover:shadow-xs active:scale-95 ${
+              isDarkDashboard
+                ? 'border-emerald-800/80 bg-[#102B24] hover:bg-[#16382F] text-emerald-100'
+                : 'border-slate-300 bg-white hover:bg-slate-100 text-slate-800'
+            }`}
             title={lang === 'bn' ? 'Switch to English' : 'বাংলা ভাষায় পরিবর্তন করুন'}
             aria-label="Language Toggle"
           >
-            <span className="text-[10px] font-mono font-bold px-1 py-0.5 rounded bg-teal-100 text-teal-800">
+            <span className={`text-[10px] font-mono font-bold px-1 py-0.5 rounded ${
+              isDarkDashboard ? 'bg-[#194237] text-[#24CFA4]' : 'bg-teal-100 text-teal-800'
+            }`}>
               {lang === 'bn' ? 'EN' : 'বাং'}
             </span>
             <span className="hidden sm:inline font-semibold">
@@ -8464,12 +8564,16 @@ export default function App() {
           {/* Settings Button */}
           <button
             type="button"
-            onClick={() => setActiveSection('staff_shop')}
-            className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors flex items-center justify-center cursor-pointer shrink-0"
+            onClick={() => navigateToSection('staff_shop')}
+            className={`p-1.5 rounded-lg transition-colors flex items-center justify-center cursor-pointer shrink-0 ${
+              isDarkDashboard
+                ? 'text-emerald-200 hover:text-white hover:bg-[#14352C]'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
             title={lang === 'bn' ? 'ফার্মেসী সেটিংস ও স্টাফ' : 'Pharmacy Settings & Staff'}
             aria-label="Settings"
           >
-            <Settings className="w-4.5 h-4.5 text-slate-700" />
+            <Settings className="w-4.5 h-4.5" />
           </button>
 
           {/* Quick Purge & Reload Button */}
@@ -8482,11 +8586,15 @@ export default function App() {
                 window.location.reload();
               }
             }}
-            className="p-1.5 text-slate-600 hover:text-teal-700 hover:bg-teal-50 rounded-lg transition-colors flex items-center justify-center cursor-pointer shrink-0"
+            className={`p-1.5 rounded-lg transition-colors flex items-center justify-center cursor-pointer shrink-0 ${
+              isDarkDashboard
+                ? 'text-emerald-200 hover:text-[#24CFA4] hover:bg-[#14352C]'
+                : 'text-slate-600 hover:text-teal-700 hover:bg-teal-50'
+            }`}
             title={lang === 'bn' ? 'নতুন আপডেট লোড ও ক্যাশ রিফ্রেশ করুন' : 'Reload Updates & Purge Cache'}
             aria-label="Refresh"
           >
-            <RefreshCw className="w-4.5 h-4.5 text-slate-600 hover:text-teal-700 hover:rotate-180 transition-transform duration-300" />
+            <RefreshCw className="w-4.5 h-4.5 hover:rotate-180 transition-transform duration-300" />
           </button>
 
           {/* Account Logout / Login Button - Visible on Both Mobile & Desktop */}
@@ -8495,10 +8603,14 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setShowCloudLoginModal(true)}
-                className="hidden xl:flex px-2.5 py-1.5 text-xs font-semibold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-md transition-colors items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                className={`hidden xl:flex px-2.5 py-1.5 text-xs font-semibold border rounded-md transition-colors items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer ${
+                  isDarkDashboard
+                    ? 'text-[#24CFA4] bg-[#102B24] hover:bg-[#16382F] border-emerald-800/80'
+                    : 'text-teal-800 bg-teal-50 hover:bg-teal-100 border-teal-200'
+                }`}
                 title={lang === 'bn' ? 'ফায়ারস্টোর একাউন্ট বিস্তারিত' : 'Firestore Account Details'}
               >
-                <Cloud className="w-3.5 h-3.5 text-teal-700" />
+                <Cloud className="w-3.5 h-3.5" />
                 <span>{lang === 'bn' ? `ফায়ারস্টোর সক্রিয় (${cloudSession?.email?.split('@')[0] || cloudSession?.phone || 'Owner'})` : `Firestore Active (${cloudSession?.email?.split('@')[0] || cloudSession?.phone || 'Owner'})`}</span>
               </button>
               <button
@@ -8609,7 +8721,7 @@ export default function App() {
                 key={item.id}
                 type="button"
                 onClick={() => {
-                  setActiveSection(item.id);
+                  navigateToSection(item.id);
                   setMobileMenuOpen(false);
                 }}
                 className={`w-full flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md text-left cursor-pointer ${
@@ -8686,7 +8798,7 @@ export default function App() {
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => setActiveSection(item.id)}
+                    onClick={() => navigateToSection(item.id)}
                     title={item.label}
                     className={`w-full flex items-center justify-between px-3 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
                       isActive
@@ -8884,7 +8996,7 @@ export default function App() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setActiveSection('staff_shop')}
+                  onClick={() => navigateToSection('staff_shop')}
                   className="px-3 py-1 bg-rose-700 hover:bg-rose-800 text-white font-bold rounded text-xs cursor-pointer"
                 >
                   এপ্রুভ / ক্যানসেল প্যানেলে যান

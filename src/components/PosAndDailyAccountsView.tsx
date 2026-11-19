@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import {
   Activity,
@@ -395,6 +395,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     onTabChange?.(tab);
   };
   const [medSearch, setMedSearch] = useState('');
+  const deferredMedSearch = useDeferredValue(medSearch);
 
   // Custom Product Entry states for Sales Bill (কাস্টম প্রডাক্ট, দাম, পরিমাণ দিয়ে বিক্রয় বিল)
   const [saleCustomName, setSaleCustomName] = useState('');
@@ -429,8 +430,10 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
 
   // Purchase Invoice states (ক্রয় ইনভয়েস — স্টক বাড়বে)
   const [purMedSearch, setPurMedSearch] = useState<string>('');
+  const deferredPurMedSearch = useDeferredValue(purMedSearch);
   const [supplierCompany, setSupplierCompany] = useState<string>(BD_PHARMA_COMPANIES[0]);
   const [purCompanySearch, setPurCompanySearch] = useState<string>('');
+  const deferredPurCompanySearch = useDeferredValue(purCompanySearch);
   const [supplierPhone, setSupplierPhone] = useState<string>('কোম্পানি ডিপো / প্রতিনিধি');
   const [purInvoiceNo, setPurInvoiceNo] = useState(() => makeFreshPurchaseInvoiceNo());
   const [purDateStr, setPurDateStr] = useState<string>(() => getTodayDateStr());
@@ -536,6 +539,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     'ALL' | 'sale' | 'purchase' | 'due_collection' | 'due_payment'
   >('ALL');
   const [staffRoleFilter, setStaffRoleFilter] = useState<'ALL' | 'owner' | 'staff'>('ALL');
+  const [visibleTxCount, setVisibleTxCount] = useState<number>(40);
   const [previewInvoice, setPreviewInvoice] = useState<Transaction | null>(null);
   const [invoicePrintWithPrice, setInvoicePrintWithPrice] = useState<boolean>(true);
 
@@ -644,6 +648,20 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     return editedOldQtyMap.get(nameKey) || 0;
   };
 
+  // Precompute O(1) stock lookup map so quick-search cards never re-scan entire inventory per card
+  const inventoryStockMap = useMemo(() => {
+    const map = new Map<string, number>();
+    for (let i = 0; i < inventory.length; i++) {
+      const inv = inventory[i];
+      if (inv.medicineId) {
+        map.set(`id::${inv.medicineId}`, (map.get(`id::${inv.medicineId}`) || 0) + inv.stockQty);
+      }
+      const bKey = `${(inv.brandName || '').trim().toLowerCase()}__${(inv.strength || '').trim().toLowerCase()}__${getShortDosageForm(inv.dosageForm).toLowerCase()}`;
+      map.set(`bs::${bKey}`, (map.get(`bs::${bKey}`) || 0) + inv.stockQty);
+    }
+    return map;
+  }, [inventory]);
+
   const getStockForMed = (med: {
     id?: string;
     medicineId?: string;
@@ -651,9 +669,17 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     strength: string;
     dosageForm: string;
   }) => {
+    const idVal = med.id || med.medicineId;
+    if (idVal) {
+      const hit = inventoryStockMap.get(`id::${idVal}`);
+      if (hit !== undefined) return hit;
+    }
+    const bKey = `bs::${(med.brandName || '').trim().toLowerCase()}__${(med.strength || '').trim().toLowerCase()}__${getShortDosageForm(med.dosageForm).toLowerCase()}`;
+    const byKey = inventoryStockMap.get(bKey);
+    if (byKey !== undefined) return byKey;
     return getInventoryStockForMedicine(inventory, {
       ...med,
-      id: med.id || med.medicineId || '',
+      id: idVal || '',
     });
   };
 
@@ -694,7 +720,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
   }, [catalog]);
 
   const quickSearchSaleMedicines = useMemo(() => {
-    const q = medSearch.trim();
+    const q = deferredMedSearch.trim();
     if (!q) return expandedInvoiceCatalog.slice(0, 16);
     const localMatches = searchCatalogVariantsForInvoice(expandedInvoiceCatalog, q, 24);
     if (medexLiveSaleResults.length === 0) return localMatches;
@@ -727,7 +753,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
       }
     }
     return merged.slice(0, 28);
-  }, [expandedInvoiceCatalog, medSearch, medexLiveSaleResults]);
+  }, [expandedInvoiceCatalog, deferredMedSearch, medexLiveSaleResults]);
 
   const [medexLivePurchaseResults, setMedexLivePurchaseResults] = useState<MedicineCatalogItem[]>([]);
   useEffect(() => {
@@ -754,7 +780,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
   }, [purMedSearch]);
 
   const quickSearchPurchaseMedicines = useMemo(() => {
-    const q = purMedSearch.trim();
+    const q = deferredPurMedSearch.trim();
     if (!q) return expandedInvoiceCatalog.slice(0, 16);
     const localMatches = searchCatalogVariantsForInvoice(expandedInvoiceCatalog, q, 24);
     if (medexLivePurchaseResults.length === 0) return localMatches;
@@ -787,10 +813,10 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
       }
     }
     return merged.slice(0, 28);
-  }, [expandedInvoiceCatalog, purMedSearch, medexLivePurchaseResults]);
+  }, [expandedInvoiceCatalog, deferredPurMedSearch, medexLivePurchaseResults]);
 
   const filteredPurchaseCompanies = useMemo(() => {
-    const q = purCompanySearch.trim().toLowerCase();
+    const q = deferredPurCompanySearch.trim().toLowerCase();
     const baseList =
       supplierCompany && !BD_PHARMA_COMPANIES.includes(supplierCompany)
         ? [supplierCompany, ...BD_PHARMA_COMPANIES]
@@ -798,7 +824,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     if (!q) return baseList;
     const matches = baseList.filter((c) => c.toLowerCase().includes(q));
     return matches.length > 0 ? matches : baseList;
-  }, [purCompanySearch, supplierCompany]);
+  }, [deferredPurCompanySearch, supplierCompany]);
 
   // Strict company-filtered catalog for purchase entries (falls back to full catalog for custom depots/pharmacies)
   const companyFilteredCatalog = useMemo(() => {
@@ -1185,6 +1211,21 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     }
   };
 
+  useEffect(() => {
+    setVisibleTxCount(40);
+  }, [dateRangePreset, startDateFilter, endDateFilter, txTypeFilter, staffRoleFilter]);
+
+  const dueTxKindMap = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof getDueTransactionKind>>();
+    for (let i = 0; i < transactions.length; i++) {
+      const tx = transactions[i];
+      if (tx.txType !== 'sale' && tx.txType !== 'purchase') {
+        map.set(tx.id, getDueTransactionKind(tx, transactions));
+      }
+    }
+    return map;
+  }, [transactions]);
+
   // Filtered Daily Transactions with Date Range presets & Custom range
   const filteredTransactions = useMemo(() => {
     const todayStr = getTodayDateStr();
@@ -1212,7 +1253,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
 
       if (txTypeFilter !== 'ALL') {
         if (txTypeFilter === 'due_collection' || txTypeFilter === 'due_payment') {
-          if (getDueTransactionKind(tx, transactions) !== txTypeFilter) return false;
+          if (dueTxKindMap.get(tx.id) !== txTypeFilter) return false;
         } else if (tx.txType !== txTypeFilter) {
           return false;
         }
@@ -1220,7 +1261,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
       if (staffRoleFilter !== 'ALL' && tx.staffRole !== staffRoleFilter) return false;
       return true;
     });
-  }, [transactions, dateRangePreset, startDateFilter, endDateFilter, txTypeFilter, staffRoleFilter]);
+  }, [transactions, dueTxKindMap, dateRangePreset, startDateFilter, endDateFilter, txTypeFilter, staffRoleFilter]);
 
   // Daily Accounting Summary Metrics (including Total Profit = Grand Total Sales Revenue - Total Purchase Cost)
   const dailyMetrics = useMemo(() => {
@@ -1971,13 +2012,13 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
             {/* Date Range Presets */}
-            <div className="flex items-center gap-0.5 bg-slate-100 p-1 rounded-md border border-slate-200 text-xs">
+            <div className="flex items-center gap-0.5 bg-slate-100 p-1 rounded-md border border-slate-200 text-xs overflow-x-auto no-scrollbar scroll-smooth-touch max-w-full">
               <button
                 type="button"
                 onClick={() => setDateRangePreset('all')}
-                className={`px-2.5 py-1 rounded font-medium cursor-pointer transition-colors ${
+                className={`px-2.5 py-1 rounded font-medium cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
                   dateRangePreset === 'all' ? 'bg-slate-900 text-white shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
@@ -2075,7 +2116,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
         </div>
 
         {/* 6-Column Daily Financial Summary Strip (including Total Daily Profit) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 bg-slate-50/70 border-b border-slate-200">
+        <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 bg-slate-50/70 border-b border-slate-200">
           <div className="p-4">
             <div className="text-xs text-slate-500">মোট বিক্রয় ইনভয়েস (Sales Bill)</div>
             <div className="text-xl font-bold font-mono tabular-nums text-teal-800 mt-1">
@@ -2149,8 +2190,8 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
         </div>
 
         {/* Transaction Type Filter Bar */}
-        <div className="px-5 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-md">
+        <div className="px-4 sm:px-5 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-md overflow-x-auto no-scrollbar scroll-smooth-touch max-w-full">
             {[
               { id: 'ALL', label: 'সকল ইনভয়েস ও লেনদেন' },
               { id: 'sale', label: 'বিক্রয় ইনভয়েস (স্টক কমেছে)' },
@@ -2201,7 +2242,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                   </td>
                 </tr>
               ) : (
-                filteredTransactions.map((tx) => {
+                filteredTransactions.slice(0, visibleTxCount).map((tx) => {
                   const isCurrentlyEditingThisRow = editingInvoiceTx?.id === tx.id;
                   return (
                     <tr
@@ -2236,7 +2277,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                               স্টক বৃদ্ধি (+{tx.totalCount} পিস)
                             </div>
                           </div>
-                        ) : getDueTransactionKind(tx, transactions) === 'due_payment' ? (
+                        ) : dueTxKindMap.get(tx.id) === 'due_payment' ? (
                           <div>
                             <span className="font-bold text-rose-700">বকেয়া পরিশোধ</span>
                             <div className="text-[11px] text-rose-500">ক্রয় বকেয়া পরিশোধ</div>
@@ -2410,6 +2451,21 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
             </tbody>
           </table>
         </div>
+
+        {filteredTransactions.length > visibleTxCount && (
+          <div className="px-4 sm:px-5 py-3 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs text-slate-600 font-mono tabular-nums">
+              প্রদর্শিত হচ্ছে {Math.min(visibleTxCount, filteredTransactions.length)} / {filteredTransactions.length} টি লেনদেন
+            </span>
+            <button
+              type="button"
+              onClick={() => setVisibleTxCount((prev) => prev + 40)}
+              className="px-4 py-1.5 text-xs font-bold text-teal-800 bg-white hover:bg-teal-50 border border-teal-300 rounded-lg shadow-2xs transition-colors cursor-pointer"
+            >
+              আরো ৪০টি দেখুন ({filteredTransactions.length - visibleTxCount} বাকি)
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Edit Transaction Modal */}

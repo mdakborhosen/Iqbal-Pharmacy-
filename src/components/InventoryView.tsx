@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Building2,
@@ -65,8 +65,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   onSearchMedexLive,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const [filterMode, setFilterMode] = useState<'all' | 'low_stock' | 'expiring'>('all');
   const [dosageFormFilter, setDosageFormFilter] = useState<string>('ALL');
+  const [visibleInvCount, setVisibleInvCount] = useState<number>(60);
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [saving, setSaving] = useState(false);
@@ -75,6 +77,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
   // Modal Search & Dropdown states for Medicine Name, Company Name, Generic Name
   const [modalCatalogSearch, setModalCatalogSearch] = useState('');
+  const deferredModalCatalogSearch = useDeferredValue(modalCatalogSearch);
   const [modalCompanyFilter, setModalCompanyFilter] = useState<string>('ALL');
   const [showBrandListDropdown, setShowBrandListDropdown] = useState(false);
   const [showCompanyListDropdown, setShowCompanyListDropdown] = useState(false);
@@ -232,8 +235,16 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     };
   }, [activeMedexInvQuery]);
 
+  const expandedModalCatalog = useMemo(() => {
+    return expandCatalogWithVariantsForSearch(catalog);
+  }, [catalog]);
+
+  useEffect(() => {
+    setVisibleInvCount(60);
+  }, [deferredSearchQuery, filterMode, dosageFormFilter]);
+
   const filteredItems = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = deferredSearchQuery.trim().toLowerCase();
     const normQ = normalizePharmaSearchText(q);
     const invMatches = inventory.filter((item) => {
       if (filterMode === 'low_stock' && item.stockQty > item.minStockLevel) return false;
@@ -277,8 +288,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       )
     );
 
-    const expandedCatalog = expandCatalogWithVariantsForSearch(catalog);
-    const localCatalogMatches = searchCatalogVariantsForInvoice(expandedCatalog, searchQuery, 45);
+    const expandedCatalog = expandedModalCatalog;
+    const localCatalogMatches = searchCatalogVariantsForInvoice(expandedCatalog, deferredSearchQuery, 45);
     const catalogMatches: MedicineCatalogItem[] = [];
     const seenCatalogKeys = new Set<string>();
     if (!showModal && medexLiveSearchItems.length > 0) {
@@ -351,7 +362,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     }
 
     return [...invMatches, ...virtualCatalogItems];
-  }, [inventory, catalog, searchQuery, filterMode, dosageFormFilter, medexLiveSearchItems, showModal]);
+  }, [inventory, expandedModalCatalog, deferredSearchQuery, filterMode, dosageFormFilter, medexLiveSearchItems, showModal]);
 
   // All catalog variants (Tab, Cap, Syp, Susp, Supp, Inhaler, Sachet, Inj, Drops, Gel & mg/ml strengths) for the currently selected Brand/Generic
   const brandFormAndStrengthVariants = useMemo(() => {
@@ -424,13 +435,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     setPackSize(calc.packSize);
   };
 
-  // Filtered catalog for top quick-pick search/select in modal
-  const expandedModalCatalog = useMemo(() => {
-    return expandCatalogWithVariantsForSearch(catalog);
-  }, [catalog]);
-
   const filteredModalCatalog = useMemo(() => {
-    const q = modalCatalogSearch.trim();
+    const q = deferredModalCatalogSearch.trim();
     const pool =
       modalCompanyFilter === 'ALL'
         ? expandedModalCatalog
@@ -473,13 +479,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       }
     }
     return merged.slice(0, 150);
-  }, [expandedModalCatalog, modalCatalogSearch, modalCompanyFilter, medexLiveSearchItems]);
+  }, [expandedModalCatalog, deferredModalCatalogSearch, modalCompanyFilter, medexLiveSearchItems]);
 
   // Filtered Medicine Brand list when typing or opening Brand Name dropdown
+  const deferredBrandName = useDeferredValue(brandName);
   const matchingBrandSuggestions = useMemo(() => {
-    const q = brandName.trim();
+    const q = deferredBrandName.trim();
     return searchCatalogVariantsForInvoice(expandedModalCatalog, q, 80);
-  }, [expandedModalCatalog, brandName]);
+  }, [expandedModalCatalog, deferredBrandName]);
 
   // Filtered 258+ Company list when typing or opening Company Name dropdown
   const matchingCompanies = useMemo(() => {
@@ -847,13 +854,13 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
           {medexLiveSearching && !showModal && searchQuery.trim().length >= 2 && (
             <div className="text-[11px] font-medium text-teal-800 bg-teal-50 border border-teal-200 rounded px-2.5 py-1 inline-flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-teal-600 animate-ping" />
+              <span className="w-3 h-3 rounded-full border-2 border-teal-600 border-t-transparent animate-spin shrink-0" />
               <span>medex.com.bd থেকে সরাসরি অনুসন্ধান ও লাইভ মূল্য যাচাই হচ্ছে...</span>
             </div>
           )}
 
           {/* Dosage Form Filter Pills */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar scroll-smooth-touch pb-0.5">
             <span className="text-[11px] font-semibold text-slate-500 whitespace-nowrap shrink-0 mr-1">
               ফর্ম অনুযায়ী স্টক ফিল্টার:
             </span>
@@ -916,7 +923,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   </td>
                 </tr>
               ) : (
-                filteredItems.map((item) => {
+                filteredItems.slice(0, visibleInvCount).map((item) => {
                   const isLow = item.stockQty <= item.minStockLevel;
                   const expiring = isExpiringSoon(item.expiryDate);
                   const shortForm = getShortDosageForm(item.dosageForm);
@@ -1090,6 +1097,21 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             </tbody>
           </table>
         </div>
+
+        {filteredItems.length > visibleInvCount && (
+          <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs text-slate-600 font-mono tabular-nums">
+              প্রদর্শিত হচ্ছে {Math.min(visibleInvCount, filteredItems.length)} / {filteredItems.length} টি আইটেম
+            </span>
+            <button
+              type="button"
+              onClick={() => setVisibleInvCount((prev) => prev + 60)}
+              className="px-4 py-1.5 text-xs font-bold text-teal-800 bg-white hover:bg-teal-50 border border-teal-300 rounded-lg shadow-2xs transition-colors cursor-pointer"
+            >
+              আরো ৬০টি দেখুন ({filteredItems.length - visibleInvCount} বাকি)
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Add / Edit Inventory Modal with Searchable & Selectable Medicine Name, Company Name & Generic Name */}

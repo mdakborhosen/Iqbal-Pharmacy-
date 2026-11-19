@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useDeferredValue, useMemo, useRef, useState } from 'react';
 import {
   BookOpen,
   CheckCircle2,
@@ -49,10 +49,12 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
   onDeleteTransaction,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const [dueFilter, setDueFilter] = useState<'ALL' | 'DUE_ONLY'>('ALL');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>(
     customers[0]?.id || ''
   );
+  const detailPanelRef = useRef<HTMLDivElement | null>(null);
 
   // Add / Edit Customer Modal
   const [showCustModal, setShowCustModal] = useState(false);
@@ -73,7 +75,7 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
   const [collectSuccessMsg, setCollectSuccessMsg] = useState(false);
 
   const filteredCustomers = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = deferredSearchQuery.trim().toLowerCase();
     return customers.filter((c) => {
       if (dueFilter === 'DUE_ONLY' && c.totalDue <= 0) return false;
       if (!q) return true;
@@ -83,7 +85,7 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
         c.address.toLowerCase().includes(q)
       );
     });
-  }, [customers, searchQuery, dueFilter]);
+  }, [customers, deferredSearchQuery, dueFilter]);
 
   const activeCustomer = useMemo(() => {
     return (
@@ -192,9 +194,9 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Summary Strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <div className="bg-white border border-slate-200 rounded-lg p-4">
           <div className="text-xs font-medium text-slate-500">নিবন্ধিত লেজার কাস্টমার</div>
           <div className="text-2xl font-bold font-mono tabular-nums text-slate-900 mt-1">
@@ -309,7 +311,14 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
                 return (
                   <div
                     key={c.id}
-                    onClick={() => setSelectedCustomerId(c.id)}
+                    onClick={() => {
+                      setSelectedCustomerId(c.id);
+                      if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                        window.setTimeout(() => {
+                          detailPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }, 60);
+                      }
+                    }}
                     className={`p-4 transition-colors cursor-pointer ${
                       isSelected ? 'bg-teal-50/70' : 'hover:bg-slate-50'
                     }`}
@@ -360,7 +369,7 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
         </div>
 
         {/* Right: Individual Customer Ledger Details & Transaction History */}
-        <div className="lg:col-span-7 bg-white border border-slate-200 rounded-lg overflow-hidden">
+        <div ref={detailPanelRef} className="scroll-mt-20 lg:col-span-7 bg-white border border-slate-200 rounded-lg overflow-hidden">
           {activeCustomer ? (
             <div>
               {/* Customer Header */}

@@ -677,11 +677,11 @@ export const StaffAndShopView: React.FC<StaffAndShopViewProps> = ({
       ) : (
       <>
       {/* Navigation Sub-Tabs Bar */}
-      <div className="flex border-b border-slate-200 bg-white rounded-t-lg overflow-x-auto">
+      <div className="flex border-b border-slate-200 bg-white rounded-t-lg overflow-x-auto no-scrollbar scroll-smooth-touch">
         <button
           type="button"
           onClick={() => setActiveTab('staff')}
-          className={`flex items-center gap-2 px-5 py-3 text-xs font-bold whitespace-nowrap border-b-2 transition-colors cursor-pointer ${
+          className={`min-h-[44px] flex items-center gap-2 px-4 sm:px-5 py-3 text-xs font-bold whitespace-nowrap shrink-0 border-b-2 transition-colors cursor-pointer ${
             activeTab === 'staff'
               ? 'border-teal-700 text-teal-900 bg-teal-50/40'
               : 'border-transparent text-slate-600 hover:text-slate-900'
