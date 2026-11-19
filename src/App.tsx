@@ -8282,16 +8282,34 @@ export default function App() {
     );
   }
 
+  const isDarkDashboard = activeSection === 'dashboard';
+
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+    <div
+      className={`min-h-screen flex flex-col transition-colors duration-200 ${
+        isDarkDashboard
+          ? 'bg-[#081713] text-emerald-50'
+          : 'bg-slate-50 text-slate-900'
+      }`}
+    >
       {/* Top Bar: Clean header with carts, language toggle & account logout */}
-      <header className="sticky top-0 z-30 bg-white border-b border-slate-200 px-3 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between gap-2 sm:gap-6 no-print overflow-x-hidden">
+      <header
+        className={`sticky top-0 z-30 border-b px-3 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between gap-2 sm:gap-6 no-print overflow-x-hidden transition-colors ${
+          isDarkDashboard
+            ? 'bg-[#0B1F1A]/95 backdrop-blur-md border-emerald-900/60 text-emerald-50'
+            : 'bg-white border-slate-200 text-slate-900'
+        }`}
+      >
         {/* Zone 1: Wordmark */}
         <div className="flex items-center gap-3 shrink-0">
           <button
             type="button"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="lg:hidden p-1.5 text-slate-600 hover:text-slate-900 rounded-md cursor-pointer"
+            className={`lg:hidden p-1.5 rounded-md cursor-pointer ${
+              isDarkDashboard
+                ? 'text-emerald-200 hover:text-white hover:bg-emerald-900/60'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
             aria-label={lang === 'bn' ? 'মেনু' : 'Menu'}
           >
             {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
@@ -8302,12 +8320,14 @@ export default function App() {
               e.preventDefault();
               setActiveSection('dashboard');
             }}
-            className="flex items-center gap-2.5 text-base sm:text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0"
+            className={`flex items-center gap-2.5 text-base sm:text-lg font-bold tracking-tight whitespace-nowrap shrink-0 ${
+              isDarkDashboard ? 'text-white' : 'text-slate-900'
+            }`}
           >
-            <div className="w-8 h-8 rounded-lg bg-teal-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+            <div className="w-8 h-8 rounded-lg bg-[#24CFA4] text-[#042A21] flex items-center justify-center shrink-0 shadow-xs">
               <div className="relative flex items-center justify-center">
-                <div className="w-4 h-1.5 bg-white rounded-xs"></div>
-                <div className="w-1.5 h-4 bg-white rounded-xs absolute"></div>
+                <div className="w-4 h-1.5 bg-[#042A21] rounded-xs"></div>
+                <div className="w-1.5 h-4 bg-[#042A21] rounded-xs absolute"></div>
               </div>
             </div>
             <span>
@@ -8323,7 +8343,7 @@ export default function App() {
         </div>
 
         {/* Zone 2: Concise single-line text navigation links */}
-        <nav className="hidden lg:flex items-center gap-5 xl:gap-6 text-sm font-medium text-slate-600">
+        <nav className="hidden lg:flex items-center gap-5 xl:gap-6 text-sm font-medium">
           {navItems.map((item) => {
             const isActive = activeSection === item.id;
             return (
@@ -8332,7 +8352,11 @@ export default function App() {
                 type="button"
                 onClick={() => setActiveSection(item.id)}
                 className={`py-1 transition-colors whitespace-nowrap shrink-0 cursor-pointer border-b-2 ${
-                  isActive
+                  isDarkDashboard
+                    ? isActive
+                      ? 'text-[#24CFA4] border-[#24CFA4] font-semibold'
+                      : 'text-emerald-200/80 border-transparent hover:text-white'
+                    : isActive
                     ? 'text-teal-700 border-teal-700 font-semibold'
                     : 'text-slate-600 border-transparent hover:text-slate-900'
                 }`}
@@ -8511,7 +8535,7 @@ export default function App() {
         >
           <div className="max-w-7xl mx-auto flex items-center gap-2.5">
             <div className="shrink-0 flex items-center gap-1.5 bg-slate-950 text-amber-300 px-2.5 py-0.5 rounded-full text-[11px] font-black shadow-xs tracking-wide">
-              <span className="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
+              <span className="w-2 h-2 rounded-full bg-red-500"></span>
               <Bell className="w-3.5 h-3.5 text-amber-300" />
               <span>জরুরী নোটিশ</span>
             </div>
@@ -8529,7 +8553,7 @@ export default function App() {
 
       {/* Mobile Drawer Navigation */}
       {mobileMenuOpen && (
-        <div className="lg:hidden bg-white border-b border-slate-200 px-4 py-3 space-y-2 no-print shadow-md">
+        <div className="lg:hidden bg-white text-slate-900 border-b border-slate-200 px-4 py-3 space-y-2 no-print shadow-md">
           {/* Mobile drawer quick actions: Language & Logout */}
           <div className="flex flex-col gap-2 pb-2 border-b border-slate-100">
             <div className="flex items-center justify-between">
@@ -8606,7 +8630,7 @@ export default function App() {
       <div className="flex-1 flex">
         {/* Desktop Sidebar */}
         <aside
-          className={`hidden lg:flex flex-col justify-between bg-white border-r border-slate-200 transition-all duration-200 shrink-0 no-print ${
+          className={`hidden lg:flex flex-col justify-between bg-white text-slate-900 border-r border-slate-200 transition-all duration-200 shrink-0 no-print ${
             sidebarCollapsed ? 'w-18 p-3' : 'w-64 xl:w-72 p-4 sm:p-5'
           }`}
         >
@@ -9406,7 +9430,11 @@ export default function App() {
       {/* Mobile Fixed Bottom Navigation Bar (হোম, বিক্রি, ওষুধ, কাস্টমার, হিসাব) */}
       <nav
         aria-label="প্রধান মোবাইল নেভিগেশন"
-        className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 px-2 py-1.5 grid grid-cols-5 items-center shadow-sm no-print select-none"
+        className={`lg:hidden fixed bottom-0 left-0 right-0 z-40 backdrop-blur-md border-t px-2 py-1.5 grid grid-cols-5 items-center shadow-sm no-print select-none transition-colors ${
+          isDarkDashboard
+            ? 'bg-[#091A15]/95 border-emerald-900/70'
+            : 'bg-white/95 border-slate-200'
+        }`}
       >
         {/* 1. হোম */}
         <button
@@ -9414,7 +9442,11 @@ export default function App() {
           onClick={() => navigateToSection('dashboard')}
           className={`min-h-[44px] flex flex-col items-center justify-center py-1 px-1.5 rounded-xl cursor-pointer transition-all active:scale-95 ${
             activeSection === 'dashboard'
-              ? 'bg-emerald-50 text-emerald-800 font-bold'
+              ? isDarkDashboard
+                ? 'bg-[#12352B] text-[#2BE3B3] font-bold'
+                : 'bg-emerald-50 text-emerald-800 font-bold'
+              : isDarkDashboard
+              ? 'text-emerald-200/70 hover:text-emerald-50'
               : 'text-slate-500 hover:text-slate-800'
           }`}
         >
@@ -9428,14 +9460,18 @@ export default function App() {
           onClick={() => navigateToSection('pos_accounts', 'sale_pos')}
           className={`relative min-h-[44px] flex flex-col items-center justify-center py-1 px-1.5 rounded-xl cursor-pointer transition-all active:scale-95 ${
             activeSection === 'pos_accounts' && posFocusMode !== 'ledger'
-              ? 'bg-emerald-50 text-emerald-800 font-bold'
+              ? isDarkDashboard
+                ? 'bg-[#12352B] text-[#2BE3B3] font-bold'
+                : 'bg-emerald-50 text-emerald-800 font-bold'
+              : isDarkDashboard
+              ? 'text-emerald-200/70 hover:text-emerald-50'
               : 'text-slate-500 hover:text-slate-800'
           }`}
         >
           <div className="relative">
             <ShoppingCart className="w-5 h-5 mb-0.5" />
             {posCart.length > 0 && (
-              <span className="absolute -top-1.5 -right-2 px-1 py-0.2 rounded-full text-[9px] font-mono tabular-nums font-bold bg-emerald-600 text-white min-w-3.5 text-center leading-tight">
+              <span className="absolute -top-1.5 -right-2 px-1 py-0.2 rounded-full text-[9px] font-mono tabular-nums font-bold bg-[#24CFA4] text-[#042A21] min-w-3.5 text-center leading-tight">
                 {posCart.length}
               </span>
             )}
@@ -9449,7 +9485,11 @@ export default function App() {
           onClick={() => navigateToSection('compare')}
           className={`min-h-[44px] flex flex-col items-center justify-center py-1 px-1.5 rounded-xl cursor-pointer transition-all active:scale-95 ${
             activeSection === 'compare' || activeSection === 'inventory'
-              ? 'bg-emerald-50 text-emerald-800 font-bold'
+              ? isDarkDashboard
+                ? 'bg-[#12352B] text-[#2BE3B3] font-bold'
+                : 'bg-emerald-50 text-emerald-800 font-bold'
+              : isDarkDashboard
+              ? 'text-emerald-200/70 hover:text-emerald-50'
               : 'text-slate-500 hover:text-slate-800'
           }`}
         >
@@ -9463,7 +9503,11 @@ export default function App() {
           onClick={() => navigateToSection('customer_ledger')}
           className={`min-h-[44px] flex flex-col items-center justify-center py-1 px-1.5 rounded-xl cursor-pointer transition-all active:scale-95 ${
             activeSection === 'customer_ledger'
-              ? 'bg-emerald-50 text-emerald-800 font-bold'
+              ? isDarkDashboard
+                ? 'bg-[#12352B] text-[#2BE3B3] font-bold'
+                : 'bg-emerald-50 text-emerald-800 font-bold'
+              : isDarkDashboard
+              ? 'text-emerald-200/70 hover:text-emerald-50'
               : 'text-slate-500 hover:text-slate-800'
           }`}
         >
@@ -9477,7 +9521,11 @@ export default function App() {
           onClick={() => navigateToSection('pos_accounts', 'sale_pos', 'daily-accounts-ledger')}
           className={`min-h-[44px] flex flex-col items-center justify-center py-1 px-1.5 rounded-xl cursor-pointer transition-all active:scale-95 ${
             activeSection === 'pos_accounts' && posFocusMode === 'ledger'
-              ? 'bg-emerald-50 text-emerald-800 font-bold'
+              ? isDarkDashboard
+                ? 'bg-[#12352B] text-[#2BE3B3] font-bold'
+                : 'bg-emerald-50 text-emerald-800 font-bold'
+              : isDarkDashboard
+              ? 'text-emerald-200/70 hover:text-emerald-50'
               : 'text-slate-500 hover:text-slate-800'
           }`}
         >

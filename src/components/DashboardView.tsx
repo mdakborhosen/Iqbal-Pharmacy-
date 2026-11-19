@@ -673,38 +673,38 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     : expiringSoonItems.slice(0, 5);
 
   return (
-    <div className="space-y-5 max-w-6xl mx-auto pb-4">
+    <div className="space-y-5 max-w-6xl mx-auto pb-4 text-emerald-50">
       {/* Compact Brand Header & Date */}
-      <div className="flex items-center justify-between gap-3 pt-0.5">
+      <div className="flex items-center justify-between gap-2.5 pt-0.5">
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+          <div className="w-10 h-10 rounded-xl bg-[#24CFA4] text-[#042A21] flex items-center justify-center shrink-0 shadow-xs">
             <Plus className="w-5 h-5 stroke-[2.75]" />
           </div>
           <div className="min-w-0">
-            <h1 className="text-lg sm:text-xl font-extrabold tracking-tight text-slate-900 truncate">
+            <h1 className="text-lg sm:text-xl font-extrabold tracking-tight text-white truncate">
               {shopProfile?.shopName || 'ইকবাল ফার্মেসী'}
             </h1>
-            <p className="text-xs text-slate-500 font-medium truncate sm:hidden">
+            <p className="text-xs text-emerald-200/75 font-medium truncate sm:hidden">
               {formattedBanglaToday}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          <span className="hidden sm:inline-block text-xs font-semibold text-slate-600 bg-white border border-slate-200 px-3 py-1.5 rounded-xl whitespace-nowrap">
+          <span className="hidden sm:inline-block text-xs font-semibold text-emerald-100/90 bg-[#102620] border border-emerald-800/60 px-3 py-1.5 rounded-xl whitespace-nowrap">
             {formattedBanglaToday}
           </span>
 
           <button
             type="button"
             onClick={() => setIsLowStockModalOpen(true)}
-            className="relative min-h-[42px] min-w-[42px] px-2.5 rounded-xl border border-slate-200 bg-white hover:bg-amber-50 text-slate-700 hover:text-amber-800 transition-colors cursor-pointer flex items-center justify-center"
+            className="relative min-h-[42px] min-w-[42px] px-2.5 rounded-xl border border-emerald-800/60 bg-[#102620] hover:bg-[#16332B] text-emerald-100 transition-colors cursor-pointer flex items-center justify-center whitespace-nowrap shrink-0"
             title={`${toBengaliDigits(lowStockCount)}টি ওষুধের স্টক কম বা শেষ`}
             aria-label="স্টক সতর্কতা নোটিফিকেশন"
           >
-            <Bell className="w-4.5 h-4.5" />
+            <Bell className="w-4.5 h-4.5 text-[#3BE5B9]" />
             {lowStockCount > 0 && (
-              <span className="ml-1 px-1.5 py-0.5 rounded-full bg-rose-600 text-white text-[10px] font-mono tabular-nums font-bold leading-none">
+              <span className="ml-1 px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-mono tabular-nums font-bold leading-none">
                 {toBengaliDigits(lowStockCount)}
               </span>
             )}
@@ -714,32 +714,32 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <button
               type="button"
               onClick={onOpenScanner}
-              className="min-h-[42px] flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold cursor-pointer transition-all active:scale-95 whitespace-nowrap shrink-0"
+              className="min-h-[42px] flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#102620] hover:bg-[#16332B] border border-emerald-800/60 text-emerald-100 text-xs font-bold cursor-pointer transition-all active:scale-95 whitespace-nowrap shrink-0"
               title="ওষুধের বক্স স্ক্যান করুন"
             >
-              <Camera className="w-4 h-4 text-teal-700" />
+              <Camera className="w-4 h-4 text-[#3BE5B9]" />
               <span className="hidden sm:inline">বক্স স্ক্যান</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* 3-Tile Quick Action Bar (নতুন বিক্রি, ওষুধ খুঁজুন, স্টক যোগ) */}
+      {/* 3-Tile Quick Action Bar (নতুন বিক্রি, ওষুধ খুঁজুন, স্টক যোগ) — Always crisp single row */}
       <section className="grid grid-cols-3 gap-2.5 sm:gap-3.5">
         <button
           type="button"
           onClick={() => onNavigate('pos_accounts', 'sale_pos')}
-          className="min-h-[76px] sm:min-h-[82px] p-3 sm:p-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs flex flex-col items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-[0.98] whitespace-nowrap"
+          className="min-h-[78px] sm:min-h-[86px] p-2.5 sm:p-4 rounded-2xl bg-[#24CFA4] hover:bg-[#1EC097] text-[#042A21] shadow-xs flex flex-col items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-[0.98] whitespace-nowrap"
         >
           <div className="relative">
-            <ShoppingCart className="w-5 h-5 sm:w-6 sm:h-6" />
+            <ShoppingCart className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2.2]" />
             {posCart.length > 0 && (
-              <span className="absolute -top-1.5 -right-2.5 px-1.5 py-0.2 rounded-full bg-white text-emerald-800 text-[10px] font-mono tabular-nums font-extrabold leading-tight">
+              <span className="absolute -top-1.5 -right-2.5 px-1.5 py-0.2 rounded-full bg-[#042A21] text-[#24CFA4] text-[10px] font-mono tabular-nums font-extrabold leading-tight">
                 {toBengaliDigits(posCart.length)}
               </span>
             )}
           </div>
-          <span className="text-xs sm:text-sm font-bold tracking-tight">
+          <span className="text-xs sm:text-sm font-extrabold tracking-tight">
             নতুন বিক্রি
           </span>
         </button>
@@ -747,9 +747,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <button
           type="button"
           onClick={() => onNavigate('compare')}
-          className="min-h-[76px] sm:min-h-[82px] p-3 sm:p-4 rounded-2xl bg-emerald-50/80 hover:bg-emerald-100/80 border border-emerald-200 text-emerald-900 flex flex-col items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-[0.98] whitespace-nowrap"
+          className="min-h-[78px] sm:min-h-[86px] p-2.5 sm:p-4 rounded-2xl bg-[#12332A] hover:bg-[#174035] border border-emerald-700/45 text-emerald-50 flex flex-col items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-[0.98] whitespace-nowrap"
         >
-          <Search className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-700" />
+          <Search className="w-5 h-5 sm:w-6 sm:h-6 text-[#3BE5B9]" />
           <span className="text-xs sm:text-sm font-bold tracking-tight">
             ওষুধ খুঁজুন
           </span>
@@ -758,19 +758,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <button
           type="button"
           onClick={() => onNavigate('inventory')}
-          className="min-h-[76px] sm:min-h-[82px] p-3 sm:p-4 rounded-2xl bg-teal-50/80 hover:bg-teal-100/80 border border-teal-200 text-teal-900 flex flex-col items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-[0.98] whitespace-nowrap"
+          className="min-h-[78px] sm:min-h-[86px] p-2.5 sm:p-4 rounded-2xl bg-[#12332A] hover:bg-[#174035] border border-emerald-700/45 text-emerald-50 flex flex-col items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-[0.98] whitespace-nowrap"
         >
-          <Package className="w-5 h-5 sm:w-6 sm:h-6 text-teal-700" />
+          <Package className="w-5 h-5 sm:w-6 sm:h-6 text-[#3BE5B9]" />
           <span className="text-xs sm:text-sm font-bold tracking-tight">
             স্টক যোগ
           </span>
         </button>
       </section>
 
-      {/* SECTION: আজকের হিসাব (4-Tile KPI Grid) */}
+      {/* SECTION: আজকের হিসাব (Clean 2x2 Grid) */}
       <section className="space-y-2.5">
         <div className="flex items-center justify-between px-0.5">
-          <h2 className="text-base sm:text-lg font-extrabold text-slate-900 tracking-tight">
+          <h2 className="text-base sm:text-lg font-extrabold text-white tracking-tight">
             আজকের হিসাব
           </h2>
           <button
@@ -778,31 +778,31 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             onClick={() =>
               onNavigate('pos_accounts', 'sale_pos', 'daily-accounts-ledger')
             }
-            className="text-xs font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-1 cursor-pointer whitespace-nowrap"
+            className="text-xs font-bold text-[#3BE5B9] hover:text-[#68F0CC] flex items-center gap-1 cursor-pointer whitespace-nowrap"
           >
             <span>বিস্তারিত হিসাব</span>
             <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3.5">
-          {/* 1. আজকের বিক্রি (Primary Highlighted Card) */}
+        <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5">
+          {/* 1. আজকের বিক্রি (Primary Highlighted Mint-Emerald Tile) */}
           <button
             type="button"
             onClick={() =>
               onNavigate('pos_accounts', 'sale_pos', 'daily-accounts-ledger')
             }
-            className="text-left rounded-2xl bg-emerald-700 hover:bg-emerald-800 text-white p-3.5 sm:p-4 border border-emerald-800 shadow-xs flex flex-col justify-between gap-2 transition-all active:scale-[0.99] cursor-pointer"
+            className="text-left rounded-2xl bg-[#24CFA4] hover:bg-[#1EC097] text-[#042A21] p-3.5 sm:p-4 border border-[#3BE5B9]/60 shadow-xs flex flex-col justify-between gap-2.5 transition-all active:scale-[0.99] cursor-pointer min-h-[104px]"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs sm:text-sm font-semibold text-emerald-50">
+              <span className="text-xs sm:text-sm font-bold text-[#05362B]">
                 আজকের বিক্রি
               </span>
-              <span className="text-[11px] font-mono tabular-nums text-emerald-100 bg-emerald-800/70 px-2 py-0.5 rounded-lg">
+              <span className="text-[11px] font-mono tabular-nums font-bold text-[#042A21] bg-[#042A21]/10 px-2 py-0.5 rounded-lg whitespace-nowrap shrink-0">
                 {toBengaliDigits(todayInvoicesCount)} বিল
               </span>
             </div>
-            <div className="text-2xl sm:text-3xl font-extrabold font-mono tabular-nums tracking-tight">
+            <div className="text-2xl sm:text-3xl font-extrabold font-mono tabular-nums tracking-tight text-[#03221A]">
               {formatBengaliCurrency(todaySales)}
             </div>
           </button>
@@ -813,21 +813,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             onClick={() =>
               onNavigate('pos_accounts', 'sale_pos', 'daily-accounts-ledger')
             }
-            className="text-left rounded-2xl bg-white hover:bg-slate-50 p-3.5 sm:p-4 border border-slate-200 flex flex-col justify-between gap-2 transition-all active:scale-[0.99] cursor-pointer"
+            className="text-left rounded-2xl bg-[#112620] hover:bg-[#163029] p-3.5 sm:p-4 border border-emerald-800/50 flex flex-col justify-between gap-2.5 transition-all active:scale-[0.99] cursor-pointer min-h-[104px]"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs sm:text-sm font-semibold text-slate-600">
+              <span className="text-xs sm:text-sm font-semibold text-emerald-200/80">
                 আজকের মুনাফা
               </span>
               <TrendingUp
                 className={`w-4 h-4 shrink-0 ${
-                  todayProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                  todayProfit >= 0 ? 'text-[#3BE5B9]' : 'text-rose-400'
                 }`}
               />
             </div>
             <div
               className={`text-2xl sm:text-3xl font-extrabold font-mono tabular-nums tracking-tight ${
-                todayProfit < 0 ? 'text-rose-600' : 'text-slate-900'
+                todayProfit < 0 ? 'text-rose-400' : 'text-white'
               }`}
             >
               {formatBengaliCurrency(todayProfit)}
@@ -838,19 +838,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <button
             type="button"
             onClick={() => onNavigate('customer_ledger')}
-            className="text-left rounded-2xl bg-white hover:bg-slate-50 p-3.5 sm:p-4 border border-slate-200 flex flex-col justify-between gap-2 transition-all active:scale-[0.99] cursor-pointer"
+            className="text-left rounded-2xl bg-[#112620] hover:bg-[#163029] p-3.5 sm:p-4 border border-emerald-800/50 flex flex-col justify-between gap-2.5 transition-all active:scale-[0.99] cursor-pointer min-h-[104px]"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs sm:text-sm font-semibold text-slate-600">
+              <span className="text-xs sm:text-sm font-semibold text-emerald-200/80">
                 মোট বাকি
               </span>
-              <span className="text-[11px] font-semibold text-teal-700">
+              <span className="text-[11px] font-bold text-[#3BE5B9] whitespace-nowrap shrink-0">
                 খাতা →
               </span>
             </div>
             <div
               className={`text-2xl sm:text-3xl font-extrabold font-mono tabular-nums tracking-tight ${
-                totalCustomerDue > 0 ? 'text-amber-700' : 'text-slate-900'
+                totalCustomerDue > 0 ? 'text-amber-300' : 'text-white'
               }`}
             >
               {formatBengaliCurrency(totalCustomerDue)}
@@ -861,59 +861,55 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <button
             type="button"
             onClick={() => setIsLowStockModalOpen(true)}
-            className={`text-left rounded-2xl p-3.5 sm:p-4 border flex flex-col justify-between gap-2 transition-all active:scale-[0.99] cursor-pointer ${
-              lowStockCount > 0
-                ? 'bg-amber-50/50 hover:bg-amber-50 border-amber-200'
-                : 'bg-white hover:bg-slate-50 border-slate-200'
-            }`}
+            className="text-left rounded-2xl bg-[#112620] hover:bg-[#163029] p-3.5 sm:p-4 border border-emerald-800/50 flex flex-col justify-between gap-2.5 transition-all active:scale-[0.99] cursor-pointer min-h-[104px]"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs sm:text-sm font-semibold text-slate-600">
+              <span className="text-xs sm:text-sm font-semibold text-emerald-200/80">
                 কম বা শেষ স্টক
               </span>
               <AlertTriangle
                 className={`w-4 h-4 shrink-0 ${
-                  lowStockCount > 0 ? 'text-amber-600' : 'text-slate-400'
+                  lowStockCount > 0 ? 'text-amber-400' : 'text-emerald-500/60'
                 }`}
               />
             </div>
-            <div className="text-2xl sm:text-3xl font-extrabold font-mono tabular-nums tracking-tight text-slate-900">
+            <div className="text-2xl sm:text-3xl font-extrabold font-mono tabular-nums tracking-tight text-white">
               {toBengaliDigits(lowStockCount)} টি
             </div>
           </button>
         </div>
       </section>
 
-      {/* Main Operational Workspace: Low Stock + Expiring Soon (Left) | Recent Sales (Right) */}
+      {/* Main Operational Workspace: Low Stock + Expiring Soon | Recent Sales */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
         <div className="lg:col-span-7 space-y-5">
           {/* SECTION: কম স্টক (আগে এগুলো কিনুন) */}
           <section className="space-y-2.5">
             <div className="flex items-center justify-between px-0.5">
-              <h2 className="text-base sm:text-lg font-extrabold text-slate-900 tracking-tight">
+              <h2 className="text-base sm:text-lg font-extrabold text-white tracking-tight">
                 কম স্টক
               </h2>
-              <span className="text-xs font-medium text-slate-500">
+              <span className="text-xs font-medium text-emerald-200/75">
                 আগে এগুলো কিনুন
               </span>
             </div>
 
-            <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+            <div className="bg-[#112620] border border-emerald-800/50 rounded-2xl overflow-hidden">
               {belowMinStockItems.length === 0 ? (
                 <div className="p-6 text-center space-y-1.5">
-                  <div className="w-10 h-10 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
+                  <div className="w-10 h-10 rounded-full bg-emerald-900/60 text-[#3BE5B9] flex items-center justify-center mx-auto">
                     <Check className="w-5 h-5" />
                   </div>
-                  <p className="text-sm font-bold text-slate-800">
+                  <p className="text-sm font-bold text-white">
                     সব ওষুধের স্টক পর্যাপ্ত রয়েছে
                   </p>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-emerald-200/70">
                     কোনো ওষুধ নির্ধারিত ন্যূনতম সীমার নিচে নেই।
                   </p>
                 </div>
               ) : (
                 <>
-                  <div className="divide-y divide-slate-100">
+                  <div className="divide-y divide-emerald-800/45">
                     {displayedLowStock.map((med) => {
                       const curStock = med.stockQty ?? 0;
                       const isZero = curStock <= 0;
@@ -931,26 +927,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       return (
                         <div
                           key={med.id}
-                          className="p-3.5 sm:px-4 sm:py-3.5 transition-colors hover:bg-slate-50/70"
+                          className="p-3.5 sm:px-4 sm:py-3.5 transition-colors hover:bg-[#163029]/80"
                         >
-                          <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center justify-between gap-2.5">
                             <div className="min-w-0 space-y-1">
                               <div className="flex items-baseline gap-1.5 flex-wrap">
-                                <span className="text-sm sm:text-base font-bold text-slate-900 truncate">
+                                <span className="text-sm sm:text-base font-bold text-white truncate">
                                   {med.brandName}
                                 </span>
                                 {med.strength && (
-                                  <span className="text-xs font-medium text-slate-500">
+                                  <span className="text-xs font-medium text-emerald-200/70 font-mono">
                                     {med.strength}
                                   </span>
                                 )}
                               </div>
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span
-                                  className={`inline-flex items-center px-2.5 py-0.5 rounded-lg text-xs font-bold font-mono tabular-nums ${
+                                  className={`inline-flex items-center px-2.5 py-0.5 rounded-lg text-[11px] font-bold font-mono tabular-nums border ${
                                     isZero
-                                      ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                                      : 'bg-amber-50 text-amber-800 border border-amber-200'
+                                      ? 'bg-rose-950/75 text-rose-300 border-rose-800/60'
+                                      : 'bg-amber-950/70 text-amber-300 border-amber-700/50'
                                   }`}
                                 >
                                   {isZero
@@ -958,39 +954,59 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                     : `কম স্টক · ${toBengaliDigits(curStock)}`}
                                 </span>
                                 {med.shelfLocation && (
-                                  <span className="text-[11px] text-slate-400">
+                                  <span className="text-[11px] text-emerald-200/60">
                                     র‍্যাক: {med.shelfLocation}
                                   </span>
                                 )}
                               </div>
                             </div>
 
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setExpandedRestockRowId(
-                                  isExpanded ? null : med.id
-                                )
-                              }
-                              className={`min-h-[40px] px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all active:scale-95 cursor-pointer whitespace-nowrap shrink-0 border ${
-                                isExpanded
-                                  ? 'bg-slate-100 text-slate-700 border-slate-300'
-                                  : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200'
-                              }`}
-                            >
-                              {isExpanded ? 'বন্ধ' : 'স্টক যোগ'}
-                            </button>
+                            {/* One-tap স্টক যোগ action + quick custom quantity editor toggle */}
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                type="button"
+                                disabled={isRestocking}
+                                onClick={() => {
+                                  if (onQuickRestock) {
+                                    handleWidgetQuickRestock(med);
+                                  } else {
+                                    onNavigate('inventory');
+                                  }
+                                }}
+                                className="min-h-[40px] px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all active:scale-95 cursor-pointer whitespace-nowrap shrink-0 border bg-[#153D32] hover:bg-[#1B4E40] text-[#45EBBE] border-emerald-700/50 disabled:opacity-60"
+                                title={`১-ট্যাপে +${toBengaliDigits(defaultRestockAmount)} পিস স্টক যোগ করুন`}
+                              >
+                                {isRestocking ? 'যোগ হচ্ছে...' : 'স্টক যোগ'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setExpandedRestockRowId(
+                                    isExpanded ? null : med.id
+                                  )
+                                }
+                                className={`min-h-[40px] min-w-[34px] px-2 rounded-xl text-xs font-mono font-bold transition-colors cursor-pointer border flex items-center justify-center ${
+                                  isExpanded
+                                    ? 'bg-[#24CFA4] text-[#042A21] border-[#24CFA4]'
+                                    : 'bg-[#0C1D18] text-emerald-200/80 border-emerald-800/60 hover:text-white'
+                                }`}
+                                title="নির্দিষ্ট সংখ্যা লিখে স্টক যোগ করুন"
+                                aria-label="পরিমাণ পরিবর্তন"
+                              >
+                                {isExpanded ? '✕' : '±'}
+                              </button>
+                            </div>
                           </div>
 
                           {isExpanded && (
-                            <div className="mt-3 pt-2.5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
-                              <span className="text-xs text-slate-500 font-mono tabular-nums">
+                            <div className="mt-3 pt-2.5 border-t border-emerald-800/45 flex flex-wrap items-center justify-between gap-2">
+                              <span className="text-xs text-emerald-200/75 font-mono tabular-nums">
                                 ন্যূনতম সীমা:{' '}
                                 {toBengaliDigits(med.minStockLevel ?? 10)} পিস
                               </span>
                               <div className="flex items-center gap-1.5">
-                                <div className="flex items-center rounded-xl border border-emerald-400 bg-white overflow-hidden">
-                                  <span className="pl-2.5 pr-1 text-xs font-bold text-emerald-700 select-none">
+                                <div className="flex items-center rounded-xl border border-emerald-700 bg-[#0B1B16] overflow-hidden">
+                                  <span className="pl-2.5 pr-1 text-xs font-bold text-[#3BE5B9] select-none">
                                     +
                                   </span>
                                   <input
@@ -1014,14 +1030,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                       }
                                     }}
                                     aria-label="স্টক যোগ সংখ্যা"
-                                    className="w-16 py-1.5 pr-1 text-xs font-mono tabular-nums font-bold text-slate-900 bg-transparent focus:outline-none text-center"
+                                    className="w-16 py-1.5 pr-1 text-xs font-mono tabular-nums font-bold text-white bg-transparent focus:outline-none text-center"
                                   />
                                 </div>
                                 <button
                                   type="button"
                                   disabled={isRestocking || !isValidCustomQty}
                                   onClick={() => handleWidgetQuickRestock(med)}
-                                  className="min-h-[36px] px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1 transition-all active:scale-95 cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                                  className="min-h-[36px] px-3 py-1.5 rounded-xl bg-[#24CFA4] hover:bg-[#1EC097] text-[#042A21] text-xs font-bold flex items-center gap-1 transition-all active:scale-95 cursor-pointer disabled:opacity-50 whitespace-nowrap"
                                 >
                                   <PackagePlus className="w-3.5 h-3.5" />
                                   <span>
@@ -1037,11 +1053,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   </div>
 
                   {belowMinStockItems.length > 5 && (
-                    <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+                    <div className="px-4 py-2.5 bg-[#0D1E19] border-t border-emerald-800/45 flex items-center justify-between">
                       <button
                         type="button"
                         onClick={() => setShowAllLowStockWidget((p) => !p)}
-                        className="text-xs font-bold text-emerald-700 hover:text-emerald-900 cursor-pointer"
+                        className="text-xs font-bold text-[#3BE5B9] hover:text-[#68F0CC] cursor-pointer whitespace-nowrap"
                       >
                         {showAllLowStockWidget
                           ? 'সংক্ষেপ করুন ▲'
@@ -1052,7 +1068,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       <button
                         type="button"
                         onClick={() => setIsLowStockModalOpen(true)}
-                        className="text-xs font-semibold text-slate-600 hover:text-slate-900 cursor-pointer"
+                        className="text-xs font-semibold text-emerald-200/80 hover:text-white cursor-pointer whitespace-nowrap"
                       >
                         সম্পূর্ণ তালিকা →
                       </button>
@@ -1063,15 +1079,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           </section>
 
-          {/* SECTION: মেয়াদ কাছাকাছি (NEW FEATURE) */}
+          {/* SECTION: মেয়াদ কাছাকাছি */}
           <section className="space-y-2.5">
             <div className="flex items-center justify-between px-0.5">
               <div className="flex items-center gap-2">
-                <h2 className="text-base sm:text-lg font-extrabold text-slate-900 tracking-tight">
+                <h2 className="text-base sm:text-lg font-extrabold text-white tracking-tight">
                   মেয়াদ কাছাকাছি
                 </h2>
                 {expiringSoonItems.length > 0 && (
-                  <span className="text-xs font-mono tabular-nums font-bold px-2 py-0.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200">
+                  <span className="text-xs font-mono tabular-nums font-bold px-2 py-0.5 rounded-lg bg-amber-950/80 text-amber-300 border border-amber-700/50">
                     {toBengaliDigits(expiringSoonItems.length)} টি
                   </span>
                 )}
@@ -1079,28 +1095,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <button
                 type="button"
                 onClick={() => onNavigate('inventory')}
-                className="text-xs font-bold text-emerald-700 hover:text-emerald-900 cursor-pointer whitespace-nowrap"
+                className="text-xs font-bold text-[#3BE5B9] hover:text-[#68F0CC] cursor-pointer whitespace-nowrap"
               >
                 স্টক দেখুন →
               </button>
             </div>
 
-            <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+            <div className="bg-[#112620] border border-emerald-800/50 rounded-2xl overflow-hidden">
               {expiringSoonItems.length === 0 ? (
                 <div className="p-6 text-center space-y-1.5">
-                  <div className="w-10 h-10 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
+                  <div className="w-10 h-10 rounded-full bg-emerald-900/60 text-[#3BE5B9] flex items-center justify-center mx-auto">
                     <CalendarClock className="w-5 h-5" />
                   </div>
-                  <p className="text-sm font-bold text-slate-800">
+                  <p className="text-sm font-bold text-white">
                     কোনো ওষুধের মেয়াদ কাছাকাছি নেই
                   </p>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-emerald-200/70">
                     আগামী ৯০ দিনের মধ্যে মেয়াদোত্তীর্ণ হওয়ার মতো কোনো স্টক পাওয়া যায়নি।
                   </p>
                 </div>
               ) : (
                 <>
-                  <div className="divide-y divide-slate-100">
+                  <div className="divide-y divide-emerald-800/45">
                     {displayedExpiring.map(({ item: med, daysLeft }) => {
                       const isExpired = daysLeft < 0;
                       const isCritical = daysLeft <= 30;
@@ -1113,49 +1129,56 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         : `মেয়াদ ${toBengaliDigits(daysLeft)} দিন`;
 
                       return (
-                        <button
+                        <div
                           key={med.id}
-                          type="button"
-                          onClick={() => onNavigate('inventory')}
-                          className="w-full text-left p-3.5 sm:px-4 sm:py-3.5 flex items-center justify-between gap-3 hover:bg-slate-50/70 transition-colors cursor-pointer"
+                          className="p-3.5 sm:px-4 sm:py-3.5 flex items-center justify-between gap-2.5 hover:bg-[#163029]/80 transition-colors"
                         >
-                          <div className="min-w-0 space-y-0.5">
+                          <div className="min-w-0 space-y-1">
                             <div className="flex items-baseline gap-1.5 flex-wrap">
-                              <span className="text-sm sm:text-base font-bold text-slate-900 truncate">
+                              <span className="text-sm sm:text-base font-bold text-white truncate">
                                 {med.brandName}
                               </span>
                               {med.strength && (
-                                <span className="text-xs font-medium text-slate-500">
+                                <span className="text-xs font-medium text-emerald-200/70 font-mono">
                                   {med.strength}
                                 </span>
                               )}
                             </div>
-                            <div className="text-[11px] text-slate-500 font-mono tabular-nums truncate">
-                              {med.batchNo ? `ব্যাচ: ${med.batchNo} · ` : ''}
-                              মজুদ: {toBengaliDigits(med.stockQty ?? 0)} পিস
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span
+                                className={`inline-flex items-center px-2.5 py-0.5 rounded-lg text-[11px] font-bold font-mono tabular-nums border ${
+                                  isExpired || isCritical
+                                    ? 'bg-rose-950/75 text-rose-300 border-rose-800/60'
+                                    : 'bg-amber-950/70 text-amber-300 border-amber-700/50'
+                                }`}
+                              >
+                                {badgeText}
+                              </span>
+                              <span className="text-[11px] text-emerald-200/65 font-mono tabular-nums truncate">
+                                {med.batchNo ? `ব্যাচ ${med.batchNo} · ` : ''}
+                                {toBengaliDigits(med.stockQty ?? 0)} পিস
+                              </span>
                             </div>
                           </div>
 
-                          <span
-                            className={`px-3 py-1 rounded-xl text-xs font-bold font-mono tabular-nums whitespace-nowrap shrink-0 border ${
-                              isExpired || isCritical
-                                ? 'bg-rose-50 text-rose-700 border-rose-200'
-                                : 'bg-amber-50 text-amber-800 border-amber-200'
-                            }`}
+                          <button
+                            type="button"
+                            onClick={() => onNavigate('inventory')}
+                            className="min-h-[40px] px-3 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 cursor-pointer whitespace-nowrap shrink-0 border bg-[#153D32] hover:bg-[#1B4E40] text-[#45EBBE] border-emerald-700/50"
                           >
-                            {badgeText}
-                          </span>
-                        </button>
+                            স্টক দেখুন
+                          </button>
+                        </div>
                       );
                     })}
                   </div>
 
                   {expiringSoonItems.length > 5 && (
-                    <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-100">
+                    <div className="px-4 py-2.5 bg-[#0D1E19] border-t border-emerald-800/45">
                       <button
                         type="button"
                         onClick={() => setShowAllExpiringWidget((p) => !p)}
-                        className="text-xs font-bold text-emerald-700 hover:text-emerald-900 cursor-pointer"
+                        className="text-xs font-bold text-[#3BE5B9] hover:text-[#68F0CC] cursor-pointer"
                       >
                         {showAllExpiringWidget
                           ? 'সংক্ষেপ করুন ▲'
@@ -1171,10 +1194,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </section>
         </div>
 
-        {/* Right Column: সাম্প্রতিক বিক্রি (NEW FEATURE) */}
+        {/* Right Column: সাম্প্রতিক বিক্রি */}
         <section className="lg:col-span-5 space-y-2.5">
           <div className="flex items-center justify-between px-0.5">
-            <h2 className="text-base sm:text-lg font-extrabold text-slate-900 tracking-tight">
+            <h2 className="text-base sm:text-lg font-extrabold text-white tracking-tight">
               সাম্প্রতিক বিক্রি
             </h2>
             {recentSales.length > 0 && (
@@ -1183,38 +1206,38 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 onClick={() =>
                   onNavigate('pos_accounts', 'sale_pos', 'daily-accounts-ledger')
                 }
-                className="text-xs font-bold text-emerald-700 hover:text-emerald-900 cursor-pointer whitespace-nowrap"
+                className="text-xs font-bold text-[#3BE5B9] hover:text-[#68F0CC] cursor-pointer whitespace-nowrap"
               >
                 সকল মেমো →
               </button>
             )}
           </div>
 
-          <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+          <div className="bg-[#112620] border border-emerald-800/50 rounded-2xl overflow-hidden">
             {recentSales.length === 0 ? (
               <div className="p-8 sm:p-10 text-center space-y-3">
-                <div className="w-11 h-11 rounded-2xl bg-slate-100 text-slate-500 flex items-center justify-center mx-auto">
+                <div className="w-11 h-11 rounded-2xl bg-[#16342C] text-[#3BE5B9] flex items-center justify-center mx-auto border border-emerald-800/50">
                   <Receipt className="w-5 h-5" />
                 </div>
                 <div className="space-y-1">
-                  <h3 className="text-base font-extrabold text-slate-900">
+                  <h3 className="text-base font-extrabold text-white">
                     এখনো কোনো বিক্রি হয়নি
                   </h3>
-                  <p className="text-xs sm:text-sm text-slate-500">
+                  <p className="text-xs sm:text-sm text-emerald-200/70">
                     নতুন বিক্রি বোতামে চাপ দিয়ে শুরু করুন।
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => onNavigate('pos_accounts', 'sale_pos')}
-                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all active:scale-95 cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#24CFA4] hover:bg-[#1EC097] text-[#042A21] text-xs font-extrabold transition-all active:scale-95 cursor-pointer whitespace-nowrap"
                 >
                   <ShoppingCart className="w-4 h-4" />
                   <span>নতুন বিক্রি শুরু করুন</span>
                 </button>
               </div>
             ) : (
-              <div className="divide-y divide-slate-100">
+              <div className="divide-y divide-emerald-800/45">
                 {recentSales.map((tx) => {
                   const hasDue = (tx.dueAmount || 0) > 0;
                   return (
@@ -1228,17 +1251,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           'daily-accounts-ledger'
                         )
                       }
-                      className="w-full text-left p-3.5 sm:px-4 sm:py-3.5 flex items-center justify-between gap-3 hover:bg-slate-50/80 transition-colors cursor-pointer"
+                      className="w-full text-left p-3.5 sm:px-4 sm:py-3.5 flex items-center justify-between gap-3 hover:bg-[#163029]/80 transition-colors cursor-pointer"
                     >
                       <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200/80 flex items-center justify-center shrink-0">
+                        <div className="w-9 h-9 rounded-xl bg-[#153B30] text-[#3BE5B9] border border-emerald-700/50 flex items-center justify-center shrink-0">
                           <Receipt className="w-4 h-4" />
                         </div>
                         <div className="min-w-0">
-                          <div className="text-sm font-bold text-slate-900 truncate">
+                          <div className="text-sm font-bold text-white truncate">
                             {tx.partyName || 'সাধারণ ক্রেতা'}
                           </div>
-                          <div className="text-[11px] text-slate-500 font-mono tabular-nums truncate flex items-center gap-1.5">
+                          <div className="text-[11px] text-emerald-200/65 font-mono tabular-nums truncate flex items-center gap-1.5">
                             <span>{tx.invoiceNo}</span>
                             <span>·</span>
                             <span>{tx.dateStr}</span>
@@ -1247,12 +1270,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       </div>
 
                       <div className="text-right shrink-0">
-                        <div className="text-sm font-extrabold text-slate-900 font-mono tabular-nums">
+                        <div className="text-sm font-extrabold text-white font-mono tabular-nums">
                           {formatBengaliCurrency(tx.grandTotal || 0)}
                         </div>
                         <div
                           className={`text-[11px] font-bold font-mono tabular-nums ${
-                            hasDue ? 'text-amber-700' : 'text-emerald-700'
+                            hasDue ? 'text-amber-300' : 'text-[#3BE5B9]'
                           }`}
                         >
                           {hasDue
@@ -1271,24 +1294,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* SECTION: বিক্রয় গতিধারা (Live Data Chart) + আজকের কাজ (To-Do) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        <section className="lg:col-span-2 bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 space-y-3">
+        <section className="lg:col-span-2 bg-[#112620] p-4 sm:p-5 rounded-2xl border border-emerald-800/50 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
-              <h2 className="text-sm sm:text-base font-extrabold text-slate-900">
+              <h2 className="text-sm sm:text-base font-extrabold text-white">
                 বিক্রয় গতিধারা ও পারফরম্যান্স
               </h2>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-emerald-200/70">
                 প্রকৃত বিক্রয় চালানের ভিত্তিতে দৈনিক আয়ের হিসাব
               </p>
             </div>
-            <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200 select-none self-start sm:self-auto">
+            <div className="inline-flex p-1 bg-[#0B1B16] rounded-xl border border-emerald-800/60 select-none self-start sm:self-auto">
               <button
                 type="button"
                 onClick={() => setTimeFilter('7d')}
-                className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap ${
                   timeFilter === '7d'
-                    ? 'bg-white text-emerald-700 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                    ? 'bg-[#24CFA4] text-[#042A21]'
+                    : 'text-emerald-200/75 hover:text-white'
                 }`}
               >
                 ৭ দিন
@@ -1296,10 +1319,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <button
                 type="button"
                 onClick={() => setTimeFilter('30d')}
-                className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap ${
                   timeFilter === '30d'
-                    ? 'bg-white text-emerald-700 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                    ? 'bg-[#24CFA4] text-[#042A21]'
+                    : 'text-emerald-200/75 hover:text-white'
                 }`}
               >
                 ৩০ দিন
@@ -1307,10 +1330,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <button
                 type="button"
                 onClick={() => setTimeFilter('month')}
-                className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap ${
                   timeFilter === 'month'
-                    ? 'bg-white text-emerald-700 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                    ? 'bg-[#24CFA4] text-[#042A21]'
+                    : 'text-emerald-200/75 hover:text-white'
                 }`}
               >
                 এই মাস
@@ -1325,8 +1348,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             >
               <defs>
                 <linearGradient id="salesGradEmerald" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#059669" stopOpacity="0.24" />
-                  <stop offset="100%" stopColor="#059669" stopOpacity="0.0" />
+                  <stop offset="0%" stopColor="#24CFA4" stopOpacity="0.32" />
+                  <stop offset="100%" stopColor="#24CFA4" stopOpacity="0.0" />
                 </linearGradient>
               </defs>
 
@@ -1342,14 +1365,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       y1={y}
                       x2={chartWidth - paddingRight}
                       y2={y}
-                      stroke="#f1f5f9"
+                      stroke="#1B3C33"
                       strokeWidth="1"
                     />
                     <text
                       x={paddingLeft - 6}
                       y={y + 3}
                       textAnchor="end"
-                      fill="#94a3b8"
+                      fill="#7EB8A6"
                       fontSize="9"
                       fontFamily="monospace"
                     >
@@ -1367,7 +1390,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <path
                   d={pathD}
                   fill="none"
-                  stroke="#059669"
+                  stroke="#24CFA4"
                   strokeWidth="2.5"
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -1380,8 +1403,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     cx={pt.x}
                     cy={pt.y}
                     r="3.5"
-                    fill="#059669"
-                    stroke="#ffffff"
+                    fill="#24CFA4"
+                    stroke="#0B1F1A"
                     strokeWidth="2"
                   />
                   <title>{`${pt.label}: ৳${pt.val.toLocaleString('en-IN')}`}</title>
@@ -1389,7 +1412,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     x={pt.x}
                     y={chartHeight - 6}
                     textAnchor="middle"
-                    fill="#64748b"
+                    fill="#9CD0BF"
                     fontSize="9.5"
                     fontWeight="500"
                   >
@@ -1402,15 +1425,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </section>
 
         {/* SECTION: আজকের কাজ (To-Do) */}
-        <section className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 flex flex-col justify-between">
+        <section className="bg-[#112620] p-4 sm:p-5 rounded-2xl border border-emerald-800/50 flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2.5">
+            <div className="flex items-center justify-between mb-3 border-b border-emerald-800/45 pb-2.5">
               <div className="flex items-center gap-2">
-                <ClipboardList className="w-4 h-4 text-emerald-700" />
-                <h2 className="text-sm font-extrabold text-slate-900">
+                <ClipboardList className="w-4 h-4 text-[#3BE5B9]" />
+                <h2 className="text-sm font-extrabold text-white">
                   আজকের কাজ
                 </h2>
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-mono tabular-nums font-semibold">
+                <span className="text-[11px] px-2 py-0.5 rounded-full bg-[#0C1D18] text-emerald-200 border border-emerald-800/50 font-mono tabular-nums font-semibold">
                   {toBengaliDigits(tasks.filter((t) => t.completed).length)}/
                   {toBengaliDigits(tasks.length)}
                 </span>
@@ -1418,7 +1441,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <button
                 type="button"
                 onClick={() => setShowTasks(!showTasks)}
-                className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 cursor-pointer"
+                className="text-xs font-semibold text-[#3BE5B9] hover:text-[#68F0CC] cursor-pointer whitespace-nowrap"
               >
                 {showTasks ? 'সংক্ষেপ ▲' : 'তালিকা খুলুন ▼'}
               </button>
@@ -1431,8 +1454,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     key={task.id}
                     className={`flex items-center justify-between p-2 rounded-xl transition-colors ${
                       task.completed
-                        ? 'bg-slate-50'
-                        : 'hover:bg-slate-50 border border-slate-100'
+                        ? 'bg-[#0C1D18]/70'
+                        : 'bg-[#15322A]/60 border border-emerald-800/45'
                     }`}
                   >
                     <label className="flex items-center gap-2 cursor-pointer flex-1 min-w-0">
@@ -1440,13 +1463,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         type="checkbox"
                         checked={task.completed}
                         onChange={() => toggleTask(task.id)}
-                        className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                        className="w-4 h-4 rounded border-emerald-700 bg-[#0B1B16] text-[#24CFA4] focus:ring-[#24CFA4] cursor-pointer"
                       />
                       <span
                         className={`text-xs truncate ${
                           task.completed
-                            ? 'line-through text-slate-400'
-                            : 'text-slate-800 font-medium'
+                            ? 'line-through text-emerald-300/45'
+                            : 'text-emerald-50 font-medium'
                         }`}
                       >
                         {task.text}
@@ -1455,7 +1478,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <button
                       type="button"
                       onClick={() => deleteTask(task.id)}
-                      className="text-slate-300 hover:text-rose-500 p-1 rounded cursor-pointer"
+                      className="text-emerald-300/40 hover:text-rose-400 p-1 rounded cursor-pointer"
                       title="ডিলিট করুন"
                     >
                       <X className="w-3.5 h-3.5" />
@@ -1464,9 +1487,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 ))}
               </div>
             ) : (
-              <div className="py-2 text-xs text-slate-500 space-y-1.5">
+              <div className="py-2 text-xs text-emerald-200/80 space-y-1.5">
                 <div className="flex items-center gap-2">
-                  <Clock className="w-3.5 h-3.5 text-emerald-600" />
+                  <Clock className="w-3.5 h-3.5 text-[#3BE5B9]" />
                   <span>
                     {toBengaliDigits(
                       tasks.filter((t) => !t.completed).length
@@ -1474,7 +1497,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     টি কাজ বাকি রয়েছে
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
+                <p className="text-[11px] text-emerald-200/60 leading-relaxed">
                   প্রয়োজন অনুযায়ী &apos;তালিকা খুলুন&apos; বোতামে চেপে দৈনন্দিন কাজের তালিকা দেখুন।
                 </p>
               </div>
@@ -1491,18 +1514,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   value={newTaskInput}
                   onChange={(e) => setNewTaskInput(e.target.value)}
                   placeholder="নতুন কাজ লিখুন..."
-                  className="flex-1 px-2.5 py-1.5 text-xs border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                  className="flex-1 px-2.5 py-1.5 text-xs border border-emerald-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#24CFA4] bg-[#0B1B16] text-white placeholder:text-emerald-200/40"
                 />
                 <button
                   type="submit"
-                  className="px-3 py-1.5 text-xs font-semibold bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 cursor-pointer"
+                  className="px-3 py-1.5 text-xs font-bold bg-[#24CFA4] text-[#042A21] rounded-xl hover:bg-[#1EC097] cursor-pointer whitespace-nowrap"
                 >
                   যোগ
                 </button>
                 <button
                   type="button"
                   onClick={() => setIsAddingTask(false)}
-                  className="p-1.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                  className="p-1.5 text-emerald-200/60 hover:text-white cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -1511,14 +1534,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           {!isAddingTask && (
-            <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+            <div className="pt-2 border-t border-emerald-800/45 flex items-center justify-between">
               <button
                 type="button"
                 onClick={() => {
                   setShowTasks(true);
                   setIsAddingTask(true);
                 }}
-                className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 hover:text-emerald-900 cursor-pointer"
+                className="inline-flex items-center gap-1.5 text-xs font-bold text-[#3BE5B9] hover:text-[#68F0CC] cursor-pointer whitespace-nowrap"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>নতুন কাজ যোগ করুন</span>
@@ -1529,29 +1552,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* SECTION: লাইভ স্ক্রলিং নোটিশ বোর্ড (Compact Accordion - Collapsed by Default) */}
-      <section className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5">
+      <section className="bg-[#112620] border border-emerald-800/50 rounded-2xl p-4 sm:p-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0">
-              <Megaphone className="w-4.5 h-4.5 text-white" />
+            <div className="w-9 h-9 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center shrink-0">
+              <Megaphone className="w-4.5 h-4.5 text-slate-950" />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-sm sm:text-base font-extrabold text-slate-900 tracking-tight">
+                <h2 className="text-sm sm:text-base font-extrabold text-white tracking-tight">
                   লাইভ স্ক্রলিং নোটিশ বোর্ড
                 </h2>
                 {noticeActive && noticeText.trim() ? (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-950/90 text-[#3BE5B9] border border-emerald-700/60">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#24CFA4]" />
                     সচল
                   </span>
                 ) : (
-                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#0B1B16] text-emerald-200/70 border border-emerald-800/50">
                     বন্ধ
                   </span>
                 )}
               </div>
-              <p className="text-xs text-slate-500 truncate mt-0.5">
+              <p className="text-xs text-emerald-200/70 truncate mt-0.5">
                 {noticeActive && noticeText.trim()
                   ? noticeText
                   : 'ওয়েবসাইটের হেডিংয়ে জরুরি চেম্বার নোটিশ পরিচালনা করুন'}
@@ -1562,15 +1585,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <button
             type="button"
             onClick={() => setShowNoticeManager(!showNoticeManager)}
-            className="px-3 py-1.5 text-xs font-bold text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded-xl cursor-pointer border border-slate-200 transition-colors whitespace-nowrap shrink-0 self-start sm:self-center"
+            className="px-3 py-1.5 text-xs font-bold text-emerald-100 hover:text-white bg-[#15342C] hover:bg-[#1B4238] rounded-xl cursor-pointer border border-emerald-700/50 transition-colors whitespace-nowrap shrink-0 self-start sm:self-center"
           >
             {showNoticeManager ? 'বন্ধ করুন ▲' : 'নোটিশ পরিচালনা ▼'}
           </button>
         </div>
 
         {noticeFeedback && (
-          <div className="mt-3 p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold rounded-xl flex items-center gap-2">
-            <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+          <div className="mt-3 p-2.5 bg-emerald-950/80 border border-emerald-700/60 text-[#45EBBE] text-xs font-semibold rounded-xl flex items-center gap-2">
+            <Check className="w-4 h-4 text-[#24CFA4] shrink-0" />
             <span>{noticeFeedback}</span>
           </div>
         )}
@@ -1578,7 +1601,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         {showNoticeManager && (
           <form
             onSubmit={handleSaveNotice}
-            className="mt-4 pt-4 border-t border-slate-100 space-y-3.5"
+            className="mt-4 pt-4 border-t border-emerald-800/50 space-y-3.5 bg-white text-slate-900 rounded-xl p-4"
           >
             <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3 space-y-1.5">
               <div className="flex items-center justify-between">
@@ -1784,7 +1807,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Low Stock Notifications Center Modal */}
       {isLowStockModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto text-slate-900">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-view-enter">
             <div className="p-4 sm:p-5 border-b border-slate-200 bg-amber-50/70 flex items-center justify-between gap-3 shrink-0">
               <div className="flex items-center gap-3">

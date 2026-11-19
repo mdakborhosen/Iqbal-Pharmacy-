@@ -720,12 +720,12 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
   };
 
   return (
-    <div className="space-y-5">
-      {/* Search & Filter Controls */}
-      <div className="bg-white border border-slate-200 rounded-lg p-4 space-y-3.5">
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-          <div className="md:col-span-4 relative">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+    <div className="space-y-4">
+      {/* Compact Search & Filter Controls */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-3 sm:p-4 space-y-2.5 shadow-2xs">
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
+          <div className="md:col-span-5 relative">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="text"
               value={searchQuery}
@@ -733,8 +733,8 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                 setSearchQuery(e.target.value);
                 setCurrentPage(1);
               }}
-              placeholder="ঔষধের নাম, জেনেরিক বা কোম্পানি লিখে সার্চ করুন..."
-              className="w-full pl-10 pr-9 py-2 text-sm bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:border-teal-600 focus:outline-none"
+              placeholder="ওষুধের নাম, জেনেরিক বা কোম্পানি খুঁজুন..."
+              className="w-full pl-9 pr-8 py-2 text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-teal-600 focus:outline-none"
             />
             {searchQuery && (
               <button
@@ -743,7 +743,7 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                   setSearchQuery('');
                   setCurrentPage(1);
                 }}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-full cursor-pointer transition-colors"
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-full cursor-pointer transition-colors"
                 title="সার্চ মুছে ফেলুন"
                 aria-label="সার্চ মুছে ফেলুন"
               >
@@ -752,47 +752,49 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
             )}
           </div>
 
-          <div className="md:col-span-3">
-            <select
-              value={selectedGeneric}
-              onChange={(e) => {
-                setSelectedGeneric(e.target.value);
-                setDirectoryTab('medicines');
-                setCurrentPage(1);
-              }}
-              aria-label="জেনেরিক গ্রুপ ফিল্টার"
-              className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:border-teal-600 focus:outline-none"
-            >
-              <option value="ALL">সকল জেনেরিক গ্রুপ</option>
-              {BD_GENERICS_DIRECTORY.slice(0, 350).map((g) => (
-                <option key={g.id} value={g.genericName}>
-                  {g.genericName}
-                </option>
-              ))}
-            </select>
+          <div className="grid grid-cols-2 md:contents gap-2">
+            <div className="md:col-span-3">
+              <select
+                value={selectedGeneric}
+                onChange={(e) => {
+                  setSelectedGeneric(e.target.value);
+                  setDirectoryTab('medicines');
+                  setCurrentPage(1);
+                }}
+                aria-label="জেনেরিক গ্রুপ ফিল্টার"
+                className="w-full px-2.5 py-2 text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-teal-600 focus:outline-none truncate"
+              >
+                <option value="ALL">সকল জেনেরিক</option>
+                {BD_GENERICS_DIRECTORY.slice(0, 350).map((g) => (
+                  <option key={g.id} value={g.genericName}>
+                    {g.genericName}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="md:col-span-2">
+              <select
+                value={selectedCompany}
+                onChange={(e) => {
+                  setSelectedCompany(e.target.value);
+                  setDirectoryTab('medicines');
+                  setCurrentPage(1);
+                }}
+                aria-label="কোম্পানি ফিল্টার"
+                className="w-full px-2.5 py-2 text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-teal-600 focus:outline-none truncate"
+              >
+                <option value="ALL">সকল কোম্পানি</option>
+                {BD_PHARMA_COMPANIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
-          <div className="md:col-span-3">
-            <select
-              value={selectedCompany}
-              onChange={(e) => {
-                setSelectedCompany(e.target.value);
-                setDirectoryTab('medicines');
-                setCurrentPage(1);
-              }}
-              aria-label="কোম্পানি ফিল্টার"
-              className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:border-teal-600 focus:outline-none"
-            >
-              <option value="ALL">সকল প্রস্তুতকারক কোম্পানি</option>
-              {BD_PHARMA_COMPANIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="md:col-span-2 flex items-center gap-2">
+          <div className="md:col-span-2 flex items-center gap-1.5">
             <button
               type="button"
               onClick={() => {
@@ -803,46 +805,46 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                 setSelectedLetter('ALL');
                 setCurrentPage(1);
               }}
-              className="px-3 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              className="px-3 py-2 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
               রিসেট
             </button>
             <button
               type="button"
               onClick={openAddMedicineModal}
-              className="flex-1 px-3 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-md transition-colors flex items-center justify-center gap-1 whitespace-nowrap shrink-0 cursor-pointer"
+              className="flex-1 px-3 py-2 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-xl transition-colors flex items-center justify-center gap-1 whitespace-nowrap shrink-0 cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
-              নতুন ঔষধ
+              <span>নতুন ওষুধ</span>
             </button>
           </div>
         </div>
 
-        {/* Live medex.com.bd Search Status & Price Sync Bar */}
+        {/* Compact MedEx Live Search & Sync Strip */}
         {(searchQuery.trim().length >= 2 || onSyncSavedMedexPrices) && (
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3 py-2 rounded-md bg-teal-50/80 border border-teal-200/80 text-xs">
-            <div className="flex items-center gap-2 text-teal-900">
+          <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-teal-50/80 border border-teal-200/80 text-xs">
+            <div className="flex items-center gap-1.5 text-teal-900 min-w-0">
               {medexSearching ? (
                 <Loader2 className="w-3.5 h-3.5 text-teal-700 animate-spin shrink-0" />
               ) : (
                 <Globe className="w-3.5 h-3.5 text-teal-700 shrink-0" />
               )}
-              <span className="font-medium">
+              <span className="font-medium truncate">
                 {searchQuery.trim().length >= 2
-                  ? medexStatusMsg || 'medex.com.bd থেকে সরাসরি অনুসন্ধান সক্রিয় (অটো-সেভ ও মূল্য আপডেট)'
-                  : 'সরাসরি medex.com.bd সার্চ ও স্বয়ংক্রিয় মূল্য সংশোধন সক্রিয় — যেকোনো ঔষধ সার্চ করুন'}
+                  ? medexStatusMsg || 'medex.com.bd লাইভ সার্চ ও অটো-আপডেট'
+                  : 'MedEx লাইভ সার্চ ও দাম সিঙ্ক সক্রিয়'}
               </span>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-1.5 shrink-0">
               {searchQuery.trim().length >= 2 && onSearchMedexLive && (
                 <button
                   type="button"
                   disabled={medexSearching}
                   onClick={() => setMedexRefreshTick((t) => t + 1)}
-                  className="px-2.5 py-1 bg-white hover:bg-teal-100 text-teal-800 border border-teal-300 rounded font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-60"
+                  className="px-2 py-1 bg-white hover:bg-teal-100 text-teal-800 border border-teal-300 rounded-lg font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-60 whitespace-nowrap shrink-0"
                 >
                   <RefreshCw className={`w-3 h-3 ${medexSearching ? 'animate-spin' : ''}`} />
-                  <span>লাইভ রিফ্রেশ</span>
+                  <span>রিফ্রেশ</span>
                 </button>
               )}
               {onSyncSavedMedexPrices && (
@@ -857,21 +859,21 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                       setMedexSyncingAll(false);
                     }
                   }}
-                  className="px-2.5 py-1 bg-teal-700 hover:bg-teal-800 text-white rounded font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-60"
+                  className="px-2.5 py-1 bg-teal-700 hover:bg-teal-800 text-white rounded-lg font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-60 whitespace-nowrap shrink-0"
                   title="ডাটাবেসে সংরক্ষিত MedEx ঔষধগুলোর মূল্য পরিবর্তন হয়েছে কিনা যাচাই ও সংশোধন করুন"
                 >
                   <RefreshCw className={`w-3 h-3 ${medexSyncingAll ? 'animate-spin' : ''}`} />
-                  <span>{medexSyncingAll ? 'যাচাই হচ্ছে...' : 'MedEx দাম সিঙ্ক'}</span>
+                  <span>{medexSyncingAll ? 'সিঙ্ক হচ্ছে...' : 'MedEx দাম সিঙ্ক'}</span>
                 </button>
               )}
             </div>
           </div>
         )}
 
-        {/* A–Z Alphabetical Index Filter Bar (MedEx Style) */}
-        <div className="flex items-center gap-1 overflow-x-auto pt-1 pb-1 border-t border-slate-100">
-          <span className="text-xs font-semibold text-slate-500 mr-1.5 whitespace-nowrap shrink-0">
-            A–Z ইনডেক্স:
+        {/* Compact Single-Row A–Z Index + Quick Picks Scroller */}
+        <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pt-0.5">
+          <span className="text-[11px] font-bold text-slate-500 mr-1 whitespace-nowrap shrink-0">
+            A–Z:
           </span>
           {ALPHABET.map((letter) => {
             const active = selectedLetter === letter;
@@ -883,106 +885,64 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                   setSelectedLetter(letter);
                   setCurrentPage(1);
                 }}
-                className={`px-2 py-1 text-xs font-mono font-semibold rounded transition-colors shrink-0 cursor-pointer ${
+                className={`px-2 py-1 text-[11px] font-mono tabular-nums font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   active
                     ? 'bg-teal-700 text-white'
                     : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                 }`}
               >
-                {letter === 'ALL' ? 'সবগুলো' : letter}
+                {letter === 'ALL' ? 'সব' : letter}
               </button>
             );
           })}
         </div>
 
-        {/* Popular Generic Quick-Pick Bar */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pt-1">
-          <span className="text-xs font-medium text-slate-500 mr-1 whitespace-nowrap shrink-0">
-            জনপ্রিয় জেনেরিক গ্রুপ:
+        {/* Single-Line Combined Quick-Pick Generics & Popular Medicines */}
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+          <span className="text-[11px] font-semibold text-teal-800 mr-0.5 whitespace-nowrap shrink-0">
+            জনপ্রিয়:
           </span>
           {[
-            'ALL',
-            'Cefuroxime Axetil + Clavulanic Acid',
-            'Moxifloxacin Ophthalmic Solution',
-            'Xylometazoline Hydrochloride Nasal Drops',
-            'Ciprofloxacin Ophthalmic & Otic Solution',
-            'Probiotic Combination (4 Billion CFU)',
-            'Omeprazole',
-            'Esomeprazole',
-            'Paracetamol',
-            'Cefixime Trihydrate',
-            'Azithromycin',
-            'Montelukast Sodium',
-            'Calcium Carbonate + Vitamin D3',
-          ].map((grp) => {
-            const active = selectedGeneric === grp && directoryTab === 'medicines';
-            return (
-              <button
-                key={grp}
-                type="button"
-                onClick={() => {
-                  setSelectedGeneric(grp);
-                  setDirectoryTab('medicines');
-                  setCurrentPage(1);
-                }}
-                className={`px-2.5 py-1 text-xs font-medium rounded transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  active
-                    ? 'bg-slate-900 text-white'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
-              >
-                {grp === 'ALL' ? 'সবগুলো (২১,০০০+)' : grp}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Quick Brand & Drop Search Bar */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pt-1">
-          <span className="text-xs font-semibold text-teal-800 mr-1 whitespace-nowrap shrink-0">
-            জনপ্রিয় ওষুধ ও ড্রপস কুইক সার্চ:
-          </span>
-          {[
-            { label: 'Noret-28', query: 'Noret', form: 'ALL' },
-            { label: 'Femicon / Femicom', query: 'Femicon', form: 'ALL' },
-            { label: 'Microlon / Minicon', query: 'Microlon', form: 'ALL' },
-            { label: 'Marvelon', query: 'Marvelon', form: 'ALL' },
-            { label: 'Ovastat / Ovostat', query: 'Ovastat', form: 'ALL' },
-            { label: 'Zox (Square)', query: 'Zox', form: 'ALL' },
-            { label: 'Aristomom', query: 'Aristomom', form: 'ALL' },
-            { label: 'Normens (Renata)', query: 'Normens', form: 'ALL' },
-            { label: 'Ximeclav', query: 'Ximeclav', form: 'ALL' },
-            { label: 'Cefotil Plus', query: 'Cefotil Plus', form: 'ALL' },
-            { label: 'Eye Drop (চোখের ড্রপ)', query: '', form: 'Eye Drop' },
-            { label: 'Ear Drop (কানের ড্রপ)', query: '', form: 'Ear Drop' },
-            { label: 'Nasal Drop (নাকের ড্রপ)', query: '', form: 'Nasal Drop' },
-            { label: 'Probio Sachet', query: 'Probio', form: 'ALL' },
-            { label: 'Entacyd Plus', query: 'Entacyd Plus', form: 'ALL' },
-            { label: 'Lorix Plus', query: 'Lorix Plus', form: 'ALL' },
-          ].map((item) => {
+            { label: 'Paracetamol', type: 'generic', value: 'Paracetamol' },
+            { label: 'Omeprazole', type: 'generic', value: 'Omeprazole' },
+            { label: 'Esomeprazole', type: 'generic', value: 'Esomeprazole' },
+            { label: 'Cefixime', type: 'generic', value: 'Cefixime Trihydrate' },
+            { label: 'Azithromycin', type: 'generic', value: 'Azithromycin' },
+            { label: 'Montelukast', type: 'generic', value: 'Montelukast Sodium' },
+            { label: 'Noret-28', type: 'query', value: 'Noret' },
+            { label: 'Femicon', type: 'query', value: 'Femicon' },
+            { label: 'Ximeclav', type: 'query', value: 'Ximeclav' },
+            { label: 'Cefotil Plus', type: 'query', value: 'Cefotil Plus' },
+            { label: 'Entacyd Plus', type: 'query', value: 'Entacyd Plus' },
+            { label: 'Probio', type: 'query', value: 'Probio' },
+          ].map((chip) => {
             const isActive =
-              (item.query && searchQuery.toLowerCase() === item.query.toLowerCase()) ||
-              (!item.query && selectedDosageForm === item.form);
+              (chip.type === 'generic' && selectedGeneric === chip.value && directoryTab === 'medicines') ||
+              (chip.type === 'query' && searchQuery.toLowerCase() === chip.value.toLowerCase());
             return (
               <button
-                key={item.label}
+                key={chip.label}
                 type="button"
                 onClick={() => {
                   setDirectoryTab('medicines');
-                  setSelectedGeneric('ALL');
                   setSelectedCompany('ALL');
                   setSelectedLetter('ALL');
-                  setSearchQuery(item.query);
-                  setSelectedDosageForm(item.form);
+                  if (chip.type === 'generic') {
+                    setSelectedGeneric(isActive ? 'ALL' : chip.value);
+                    setSearchQuery('');
+                  } else {
+                    setSelectedGeneric('ALL');
+                    setSearchQuery(isActive ? '' : chip.value);
+                  }
                   setCurrentPage(1);
                 }}
-                className={`px-2.5 py-1 text-xs font-semibold rounded border transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   isActive
                     ? 'bg-teal-700 text-white border-teal-700'
                     : 'bg-teal-50/70 text-teal-900 border-teal-200 hover:bg-teal-100'
                 }`}
               >
-                {item.label}
+                {chip.label}
               </button>
             );
           })}
@@ -1327,58 +1287,62 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
           {/* Left 7 Cols: Searchable & Paginated 21,000+ Medicine Directory */}
           <div className="xl:col-span-7 bg-white border border-slate-200 rounded-lg overflow-hidden">
-            <div className="px-5 py-3.5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2">
+            <div className="px-3.5 sm:px-5 py-3 border-b border-slate-200 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
                   <h2 className="text-sm font-bold text-slate-900">
-                    ঔষধের বিস্তারিত তালিকা (ব্র্যান্ড, জেনেরিক, ডোজ ও মূল্য)
+                    ওষুধ তালিকা ও দাম
                   </h2>
-                  <div className="flex items-center bg-slate-100 p-0.5 rounded-md border border-slate-200">
-                    <button
-                      type="button"
-                      onClick={() => setMedViewMode('cards')}
-                      className={`px-2 py-0.5 text-xs font-semibold rounded flex items-center gap-1 transition-colors cursor-pointer ${
-                        medViewMode === 'cards'
-                          ? 'bg-teal-700 text-white shadow-xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      <LayoutGrid className="w-3 h-3" />
-                      <span>MedEx কার্ড</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setMedViewMode('table')}
-                      className={`px-2 py-0.5 text-xs font-semibold rounded flex items-center gap-1 transition-colors cursor-pointer ${
-                        medViewMode === 'table'
-                          ? 'bg-teal-700 text-white shadow-xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      <List className="w-3 h-3" />
-                      <span>টেবিল</span>
-                    </button>
-                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5 tabular-nums">
+                    মোট <strong className="text-slate-800 font-mono tabular-nums">{filteredMedicines.length.toLocaleString()}</strong>টি · পৃষ্ঠা{' '}
+                    <span className="font-mono tabular-nums">{safeMedPage}/{totalMedicinePages}</span>
+                  </p>
                 </div>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  মোট <strong className="text-slate-800 font-mono">{filteredMedicines.length.toLocaleString()}</strong>টি ঔষধ পাওয়া গেছে (পৃষ্ঠা {safeMedPage} / {totalMedicinePages}) · কার্ডের [Pack Image] ও [Alternate Brands] ক্লিক করে বিস্তারিত দেখুন
-                </p>
+
+                <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setMedViewMode('cards')}
+                    className={`px-2.5 py-1 text-xs font-semibold rounded-lg flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap ${
+                      medViewMode === 'cards'
+                        ? 'bg-teal-700 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <LayoutGrid className="w-3 h-3" />
+                    <span>কার্ড</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMedViewMode('table')}
+                    className={`px-2.5 py-1 text-xs font-semibold rounded-lg flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap ${
+                      medViewMode === 'table'
+                        ? 'bg-teal-700 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <List className="w-3 h-3" />
+                    <span>টেবিল</span>
+                  </button>
+                </div>
               </div>
-              <div className="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-md">
+
+              {/* Single-Line Horizontal Scrolling Dosage Form Pills */}
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar whitespace-nowrap bg-slate-100 p-1 rounded-xl border border-slate-200/70">
                 {[
                   { value: 'ALL', label: 'সকল ফর্ম' },
-                  { value: 'Tablet', label: 'Tab (ট্যাবলেট)' },
-                  { value: 'Capsule', label: 'Cap (ক্যাপসুল)' },
-                  { value: 'Syrup', label: 'Syp (সিরাপ)' },
-                  { value: 'Suspension', label: 'Susp (সাসপেনশন)' },
-                  { value: 'Sachet', label: 'Sachet (স্যাচেট)' },
-                  { value: 'Drops', label: 'Drops (ড্রপ)' },
-                  { value: 'Eye Drop', label: 'Eye Drop (আই ড্রপ)' },
-                  { value: 'Ear Drop', label: 'Ear Drop (ইয়ার ড্রপ)' },
+                  { value: 'Tablet', label: 'Tab' },
+                  { value: 'Capsule', label: 'Cap' },
+                  { value: 'Syrup', label: 'Syp' },
+                  { value: 'Suspension', label: 'Susp' },
+                  { value: 'Sachet', label: 'Sachet' },
+                  { value: 'Drops', label: 'Drops' },
+                  { value: 'Eye Drop', label: 'Eye Drop' },
+                  { value: 'Ear Drop', label: 'Ear Drop' },
                   { value: 'Nasal Drop', label: 'Nasal Drop' },
-                  { value: 'Suppository', label: 'Supp (সাপোজিটর)' },
-                  { value: 'Inhaler', label: 'Inhaler (ইনহেলার)' },
-                  { value: 'Injection', label: 'Inj (ইনজেকশন)' },
+                  { value: 'Suppository', label: 'Supp' },
+                  { value: 'Inhaler', label: 'Inhaler' },
+                  { value: 'Injection', label: 'Inj' },
                   { value: 'Gel', label: 'Gel/Cream' },
                 ].map((f) => (
                   <button
@@ -1388,9 +1352,9 @@ export const MedicineCompareView: React.FC<MedicineCompareViewProps> = ({
                       setSelectedDosageForm(f.value);
                       setCurrentPage(1);
                     }}
-                    className={`px-2 py-1 text-xs font-medium rounded transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                       selectedDosageForm === f.value
-                        ? 'bg-white text-slate-900 shadow-xs font-semibold'
+                        ? 'bg-white text-teal-800 shadow-xs'
                         : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >

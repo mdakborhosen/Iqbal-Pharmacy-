@@ -113,43 +113,42 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
 
   return (
     <>
-      <div className="bg-white border border-slate-200/90 rounded-xl p-5 shadow-xs hover:shadow-md transition-shadow relative">
-        {/* Top Row: Pill Icon + Brand Name + Dosage Form + [ Pack Image ] */}
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-2.5 flex-wrap">
-            {/* MedEx Pill Icon */}
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-4 sm:p-5 shadow-2xs hover:shadow-sm transition-shadow relative">
+        {/* Top Row: Pill Icon + Brand Name + Dosage Form + [MedEx লাইভ] + [Pack Image] */}
+        <div className="flex flex-wrap items-start justify-between gap-2.5">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
             <div className="w-8 h-8 rounded-lg bg-teal-50 border border-teal-200/60 flex items-center justify-center shrink-0 text-slate-700">
-              <Pill className="w-5 h-5 -rotate-45 text-teal-800" />
+              <Pill className="w-4.5 h-4.5 -rotate-45 text-teal-800" />
             </div>
 
-            <h3 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
-              {medicine.brandName}
-            </h3>
-
-            <span className="text-sm font-medium text-slate-500 pt-0.5">
-              {medicine.dosageForm}
-            </span>
+            <div className="min-w-0 flex items-baseline gap-1.5 flex-wrap">
+              <h3 className="text-lg sm:text-xl font-bold tracking-tight text-slate-900 truncate">
+                {medicine.brandName}
+              </h3>
+              <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md whitespace-nowrap">
+                {medicine.dosageForm}
+              </span>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0">
             {medicine.medexUrl && (
               <a
                 href={medicine.medexUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 text-[11px] font-bold rounded-md transition-colors"
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 text-[11px] font-bold rounded-lg transition-colors whitespace-nowrap shrink-0"
                 title="medex.com.bd থেকে সরাসরি প্রাপ্ত ও ডাটাবেসে সংরক্ষিত বিক্রয়মূল্য"
               >
                 <ExternalLink className="w-3 h-3" />
                 <span>MedEx লাইভ</span>
               </a>
             )}
-            {/* Green [ 📷 Pack Image ] Button (Exact match from screenshot) */}
             <button
               type="button"
               onClick={() => setShowPackImageModal(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#258750] hover:bg-[#1e6f42] text-white text-xs font-semibold rounded-md shadow-2xs transition-colors shrink-0 cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-[#258750] hover:bg-[#1e6f42] text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
               <Camera className="w-3.5 h-3.5" />
               <span>Pack Image</span>
@@ -157,214 +156,213 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
           </div>
         </div>
 
-        {/* Generic Name (Teal color) */}
-        <div className="mt-2 text-base font-semibold text-[#1e6b7b] leading-tight hover:underline cursor-pointer">
-          {medicine.genericName}
-        </div>
+        {/* Generic, Strength, Company & Unit Price in tidy summary rows */}
+        <div className="mt-2.5 flex flex-col sm:flex-row sm:items-end justify-between gap-2">
+          <div className="min-w-0 space-y-0.5">
+            <div className="text-sm sm:text-base font-semibold text-[#1e6b7b] leading-snug truncate">
+              {medicine.genericName}
+            </div>
+            <div className="flex items-center gap-2 flex-wrap text-xs sm:text-sm text-slate-600">
+              {medicine.strength && (
+                <span className="font-mono font-medium text-slate-700">{medicine.strength}</span>
+              )}
+              {medicine.strength && <span className="text-slate-300">·</span>}
+              <span className="font-medium text-slate-500 truncate">{medicine.companyName}</span>
+            </div>
+          </div>
 
-        {/* Strength */}
-        <div className="text-sm font-normal text-slate-600 mt-1">
-          {medicine.strength}
-        </div>
-
-        {/* Company Name */}
-        <div className="text-sm font-medium text-slate-500 mt-0.5">
-          {medicine.companyName}
-        </div>
-
-        {/* Pricing Rows (Exact MedEx format) */}
-        <div className="mt-3.5 space-y-1 text-sm sm:text-[15px] text-slate-700 font-mono">
-          {medicine.brandName.toLowerCase().includes('a-cal d') && !medicine.brandName.toLowerCase().includes('dx') ? (
-            <>
-              <div>
-                <span className="font-semibold text-slate-800">Unit Price: ৳ {medicine.unitPrice.toFixed(2)}</span>{' '}
-                <span className="text-slate-500 font-sans text-xs">(1 x 15: ৳ {packPrice15.toFixed(2)})</span>
-              </div>
-              <div>
-                <span className="font-semibold text-slate-800">Unit Price: ৳ {medicine.unitPrice.toFixed(2)}</span>{' '}
-                <span className="text-slate-500 font-sans text-xs">(1 x 30: ৳ {packPrice30.toFixed(2)})</span>
-              </div>
-            </>
-          ) : (
+          <div className="text-xs sm:text-sm text-slate-700 font-mono tabular-nums bg-slate-50 border border-slate-200/80 rounded-xl px-3 py-1.5 shrink-0 self-start sm:self-end">
             <div>
-              <span className="font-semibold text-slate-800">Unit Price: ৳ {medicine.unitPrice.toFixed(2)}</span>{' '}
-              <span className="text-slate-500 font-sans text-xs">
-                (1 x 30: ৳ {packPrice30.toFixed(2)})
+              <span className="font-bold text-slate-900">
+                Unit Price: ৳{medicine.unitPrice.toFixed(2)}
+              </span>{' '}
+              <span className="text-slate-500 font-sans text-[11px]">
+                (1 × 30: ৳{packPrice30.toFixed(2)})
               </span>
             </div>
-          )}
+            {medicine.brandName.toLowerCase().includes('a-cal d') &&
+              !medicine.brandName.toLowerCase().includes('dx') && (
+                <div className="text-[11px] text-slate-500">
+                  1 × 15: ৳{packPrice15.toFixed(2)}
+                </div>
+              )}
+          </div>
         </div>
 
-        {/* Also available as: [ Variant Pills with Prices & Add Variant Button ] */}
-        <div className="mt-3.5 flex items-center gap-2 flex-wrap text-xs text-slate-600">
-          <span className="font-semibold text-slate-700">ভ্যারিয়েন্টসমূহ:</span>
-          {explicitVariants.map((v) => {
-            const expandedMed: MedicineCatalogItem = {
-              ...medicine,
-              id: `${medicine.id}__var__${v.id}`,
-              brandName: v.variantName,
-              variantDisplayName: v.variantName,
-              dosageForm: (v.dosageForm as MedicineCatalogItem['dosageForm']) || medicine.dosageForm,
-              strength: v.strength || medicine.strength,
-              packSize: v.packSize || medicine.packSize,
-              purchasePrice: v.purchasePrice,
-              unitPrice: v.unitPrice,
-              stripPrice: v.stripPrice,
-              parentMedicineId: medicine.id,
-              variantId: v.id,
-            };
-            const varKey = `exp::${v.id}`;
-            const isConfirming = confirmDeleteVariantKey === varKey;
-            return (
-              <div
-                key={v.id}
-                onClick={(e) => e.stopPropagation()}
-                className="inline-flex items-center text-xs font-semibold text-teal-900 bg-teal-50/80 border border-teal-500 rounded-md overflow-hidden shadow-2xs"
-              >
-                <button
-                  type="button"
-                  onClick={() => onSelectMedicine && onSelectMedicine(expandedMed)}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 hover:bg-teal-100 transition-colors cursor-pointer"
-                  title={`${v.variantName} (${v.dosageForm} · ${v.strength}) - বিক্রয়মূল্য: ৳${v.unitPrice.toFixed(2)}`}
+        {/* Variants Row */}
+        {(explicitVariants.length > 0 || brandFamilyVariants.length > 0 || onAddVariant) && (
+          <div className="mt-3 flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5 text-xs text-slate-600">
+            <span className="font-semibold text-slate-700 whitespace-nowrap shrink-0">
+              ভ্যারিয়েন্ট:
+            </span>
+            {explicitVariants.map((v) => {
+              const expandedMed: MedicineCatalogItem = {
+                ...medicine,
+                id: `${medicine.id}__var__${v.id}`,
+                brandName: v.variantName,
+                variantDisplayName: v.variantName,
+                dosageForm: (v.dosageForm as MedicineCatalogItem['dosageForm']) || medicine.dosageForm,
+                strength: v.strength || medicine.strength,
+                packSize: v.packSize || medicine.packSize,
+                purchasePrice: v.purchasePrice,
+                unitPrice: v.unitPrice,
+                stripPrice: v.stripPrice,
+                parentMedicineId: medicine.id,
+                variantId: v.id,
+              };
+              const varKey = `exp::${v.id}`;
+              const isConfirming = confirmDeleteVariantKey === varKey;
+              return (
+                <div
+                  key={v.id}
+                  onClick={(e) => e.stopPropagation()}
+                  className="inline-flex items-center text-xs font-semibold text-teal-900 bg-teal-50/80 border border-teal-500 rounded-lg overflow-hidden shadow-2xs shrink-0 whitespace-nowrap"
                 >
-                  <span>{v.variantName}</span>
-                  <span className="text-[10px] font-normal text-slate-600">{v.dosageForm}</span>
-                  <span className="font-mono text-emerald-700 font-bold">৳{v.unitPrice.toFixed(2)}</span>
-                </button>
-                {onDeleteVariant && (
-                  isConfirming ? (
-                    <span className="inline-flex items-center gap-0.5 px-1.5 py-1 bg-red-50 border-l border-red-200 text-[10px]">
+                  <button
+                    type="button"
+                    onClick={() => onSelectMedicine && onSelectMedicine(expandedMed)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 hover:bg-teal-100 transition-colors cursor-pointer whitespace-nowrap"
+                    title={`${v.variantName} (${v.dosageForm} · ${v.strength}) - বিক্রয়মূল্য: ৳${v.unitPrice.toFixed(2)}`}
+                  >
+                    <span>{v.variantName}</span>
+                    <span className="text-[10px] font-normal text-slate-600">{v.dosageForm}</span>
+                    <span className="font-mono tabular-nums text-emerald-700 font-bold">৳{v.unitPrice.toFixed(2)}</span>
+                  </button>
+                  {onDeleteVariant && (
+                    isConfirming ? (
+                      <span className="inline-flex items-center gap-0.5 px-1.5 py-1 bg-red-50 border-l border-red-200 text-[10px]">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onDeleteVariant(medicine, v.id, 'explicit', v.sourceMedicineId);
+                            setConfirmDeleteVariantKey(null);
+                          }}
+                          className="px-1 py-0.5 bg-red-600 text-white rounded font-bold cursor-pointer"
+                          title="ডিলিট নিশ্চিত করুন"
+                        >
+                          ডিলিট
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteVariantKey(null)}
+                          className="px-1 py-0.5 text-slate-600 hover:text-slate-900 cursor-pointer"
+                          title="বাতিল"
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    ) : (
                       <button
                         type="button"
-                        onClick={() => {
-                          onDeleteVariant(medicine, v.id, 'explicit', v.sourceMedicineId);
-                          setConfirmDeleteVariantKey(null);
-                        }}
-                        className="px-1 py-0.5 bg-red-600 text-white rounded font-bold cursor-pointer"
-                        title="ডিলিট নিশ্চিত করুন"
+                        onClick={() => setConfirmDeleteVariantKey(varKey)}
+                        className="px-1.5 py-1 text-red-400 hover:text-red-700 hover:bg-red-50 border-l border-teal-300/60 transition-colors cursor-pointer"
+                        title={`${v.variantName} ভ্যারিয়েন্ট ডিলিট করুন`}
                       >
-                        ডিলিট
+                        <X className="w-3 h-3" />
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDeleteVariantKey(null)}
-                        className="px-1 py-0.5 text-slate-600 hover:text-slate-900 cursor-pointer"
-                        title="বাতিল"
-                      >
-                        ✕
-                      </button>
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDeleteVariantKey(varKey)}
-                      className="px-1.5 py-1 text-red-400 hover:text-red-700 hover:bg-red-50 border-l border-teal-300/60 transition-colors cursor-pointer"
-                      title={`${v.variantName} ভ্যারিয়েন্ট ডিলিট করুন`}
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  )
-                )}
-              </div>
-            );
-          })}
+                    )
+                  )}
+                </div>
+              );
+            })}
 
-          {brandFamilyVariants.map((v) => {
-            const varKey = `fam::${v.id}`;
-            const isConfirming = confirmDeleteVariantKey === varKey;
-            return (
-              <div
-                key={v.id}
-                onClick={(e) => e.stopPropagation()}
-                className="inline-flex items-center text-xs font-semibold text-[#1e6b7b] bg-white border border-[#1e6b7b] rounded-md overflow-hidden shadow-2xs"
-              >
-                <button
-                  type="button"
-                  onClick={() => onSelectMedicine && onSelectMedicine(v)}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 hover:bg-teal-50 transition-colors cursor-pointer"
-                  title={`${v.brandName} ${v.dosageForm} (${v.strength}) - বিক্রয়মূল্য: ৳${v.unitPrice.toFixed(2)}`}
+            {brandFamilyVariants.map((v) => {
+              const varKey = `fam::${v.id}`;
+              const isConfirming = confirmDeleteVariantKey === varKey;
+              return (
+                <div
+                  key={v.id}
+                  onClick={(e) => e.stopPropagation()}
+                  className="inline-flex items-center text-xs font-semibold text-[#1e6b7b] bg-white border border-[#1e6b7b] rounded-lg overflow-hidden shadow-2xs shrink-0 whitespace-nowrap"
                 >
-                  <span>{v.dosageForm !== medicine.dosageForm ? `${v.dosageForm} ` : ''}{v.strength}</span>
-                  <span className="font-mono text-emerald-700 font-bold">৳{v.unitPrice.toFixed(2)}</span>
-                </button>
-                {onDeleteVariant && (
-                  isConfirming ? (
-                    <span className="inline-flex items-center gap-0.5 px-1.5 py-1 bg-red-50 border-l border-red-200 text-[10px]">
+                  <button
+                    type="button"
+                    onClick={() => onSelectMedicine && onSelectMedicine(v)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 hover:bg-teal-50 transition-colors cursor-pointer whitespace-nowrap"
+                    title={`${v.brandName} ${v.dosageForm} (${v.strength}) - বিক্রয়মূল্য: ৳${v.unitPrice.toFixed(2)}`}
+                  >
+                    <span>{v.dosageForm !== medicine.dosageForm ? `${v.dosageForm} ` : ''}{v.strength}</span>
+                    <span className="font-mono tabular-nums text-emerald-700 font-bold">৳{v.unitPrice.toFixed(2)}</span>
+                  </button>
+                  {onDeleteVariant && (
+                    isConfirming ? (
+                      <span className="inline-flex items-center gap-0.5 px-1.5 py-1 bg-red-50 border-l border-red-200 text-[10px]">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onDeleteVariant(medicine, v.id, 'family');
+                            setConfirmDeleteVariantKey(null);
+                          }}
+                          className="px-1 py-0.5 bg-red-600 text-white rounded font-bold cursor-pointer"
+                          title="ডিলিট নিশ্চিত করুন"
+                        >
+                          ডিলিট
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteVariantKey(null)}
+                          className="px-1 py-0.5 text-slate-600 hover:text-slate-900 cursor-pointer"
+                          title="বাতিল"
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    ) : (
                       <button
                         type="button"
-                        onClick={() => {
-                          onDeleteVariant(medicine, v.id, 'family');
-                          setConfirmDeleteVariantKey(null);
-                        }}
-                        className="px-1 py-0.5 bg-red-600 text-white rounded font-bold cursor-pointer"
-                        title="ডিলিট নিশ্চিত করুন"
+                        onClick={() => setConfirmDeleteVariantKey(varKey)}
+                        className="px-1.5 py-1 text-red-400 hover:text-red-700 hover:bg-red-50 border-l border-teal-600/20 transition-colors cursor-pointer"
+                        title={`${v.brandName} ${v.strength} ডিলিট করুন`}
                       >
-                        ডিলিট
+                        <X className="w-3 h-3" />
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDeleteVariantKey(null)}
-                        className="px-1 py-0.5 text-slate-600 hover:text-slate-900 cursor-pointer"
-                        title="বাতিল"
-                      >
-                        ✕
-                      </button>
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDeleteVariantKey(varKey)}
-                      className="px-1.5 py-1 text-red-400 hover:text-red-700 hover:bg-red-50 border-l border-teal-600/20 transition-colors cursor-pointer"
-                      title={`${v.brandName} ${v.strength} ডিলিট করুন`}
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  )
-                )}
-              </div>
-            );
-          })}
+                    )
+                  )}
+                </div>
+              );
+            })}
 
-          {onAddVariant && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onAddVariant(medicine);
-              }}
-              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-md transition-colors cursor-pointer shadow-2xs"
-              title="এই ঔষধের নতুন মাত্রা বা ধরণ (যেমন: Seclo 40, Seclo MUPS 20) বা ডাটাবেস থেকে অন্য ঔষধ ভ্যারিয়েন্ট হিসেবে যুক্ত করুন"
-            >
-              <Layers className="w-3.5 h-3.5 text-emerald-600" />
-              <span>+ নতুন ভ্যারিয়েন্ট/ধরণ</span>
-            </button>
-          )}
-        </div>
+            {onAddVariant && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAddVariant(medicine);
+                }}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-lg transition-colors cursor-pointer shadow-2xs whitespace-nowrap shrink-0"
+                title="এই ঔষধের নতুন মাত্রা বা ধরণ (যেমন: Seclo 40, Seclo MUPS 20) বা ডাটাবেস থেকে অন্য ঔষধ ভ্যারিয়েন্ট হিসেবে যুক্ত করুন"
+              >
+                <Layers className="w-3.5 h-3.5 text-emerald-600" />
+                <span>+ ভ্যারিয়েন্ট</span>
+              </button>
+            )}
+          </div>
+        )}
 
-        {/* Bottom Actions Row: [ Alternate Brands ] button + Cart options */}
+        {/* Bottom Actions Row: Clean two-tier responsive alignment without broken wrapping */}
         <div
-          className="mt-4 pt-3.5 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap"
+          className="mt-3.5 pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
           onClick={(e) => e.stopPropagation()}
         >
-          <button
-            type="button"
-            onClick={() => setShowAlternateBrandsModal(true)}
-            className="px-3.5 py-1.5 text-xs font-semibold text-[#1e6b7b] bg-white border border-[#1e6b7b] hover:bg-teal-50 rounded-md transition-colors cursor-pointer flex items-center gap-1.5"
-          >
-            <span>Alternate Brands</span>
-            {alternateBrands.length > 0 && (
-              <span className="text-[11px] px-1.5 py-0.2 bg-teal-100/70 text-teal-900 rounded-full font-bold">
-                {alternateBrands.length}
-              </span>
-            )}
-          </button>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setShowAlternateBrandsModal(true)}
+              className="px-3 py-1.5 text-xs font-semibold text-[#1e6b7b] bg-white border border-[#1e6b7b] hover:bg-teal-50 rounded-lg transition-colors cursor-pointer inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+            >
+              <span>Alternate Brands</span>
+              {alternateBrands.length > 0 && (
+                <span className="text-[11px] font-mono tabular-nums px-1.5 py-0.2 bg-teal-100/80 text-teal-900 rounded-full font-bold">
+                  {alternateBrands.length}
+                </span>
+              )}
+            </button>
 
-          <div className="flex items-center gap-2 flex-wrap">
             {onOpenEditPrice && (
               <button
                 type="button"
                 onClick={() => onOpenEditPrice(medicine)}
-                className="px-2.5 py-1.5 text-xs text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-md cursor-pointer"
+                className="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg cursor-pointer whitespace-nowrap shrink-0"
               >
                 মূল্য পরিবর্তন
               </button>
@@ -372,21 +370,21 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
 
             {onDeleteMedicine && (
               confirmDeleteMed ? (
-                <div className="inline-flex items-center gap-1 px-2 py-1 bg-red-50 border border-red-200 rounded-md text-[11px]">
+                <div className="inline-flex items-center gap-1 px-2 py-1 bg-red-50 border border-red-200 rounded-lg text-[11px] shrink-0">
                   <button
                     type="button"
                     onClick={() => {
                       onDeleteMedicine(medicine);
                       setConfirmDeleteMed(false);
                     }}
-                    className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded cursor-pointer"
+                    className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded cursor-pointer whitespace-nowrap"
                   >
                     নিশ্চিত ডিলিট
                   </button>
                   <button
                     type="button"
                     onClick={() => setConfirmDeleteMed(false)}
-                    className="px-1.5 py-0.5 text-slate-600 hover:text-slate-900 cursor-pointer"
+                    className="px-1.5 py-0.5 text-slate-600 hover:text-slate-900 cursor-pointer whitespace-nowrap"
                   >
                     বাতিল
                   </button>
@@ -395,7 +393,7 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
                 <button
                   type="button"
                   onClick={() => setConfirmDeleteMed(true)}
-                  className="px-2.5 py-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-md flex items-center gap-1 cursor-pointer"
+                  className="px-2.5 py-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0"
                   title="এই ঔষধটি তালিকা থেকে ডিলিট করুন"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -403,15 +401,17 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
                 </button>
               )
             )}
+          </div>
 
+          <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
             {onAddToPosCart && (
               <button
                 type="button"
                 onClick={handleAddPos}
-                className="px-3 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-md flex items-center gap-1 cursor-pointer shadow-2xs"
+                className="px-3.5 py-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg flex items-center gap-1.5 cursor-pointer shadow-2xs whitespace-nowrap shrink-0"
               >
                 <ShoppingCart className="w-3.5 h-3.5" />
-                <span>{posSuccess ? 'যুক্ত ✓' : '+বিক্রয়'}</span>
+                <span>{posSuccess ? 'যুক্ত ✓' : '+ বিক্রয়'}</span>
               </button>
             )}
 
@@ -419,10 +419,10 @@ export const MedExMedicineCard: React.FC<MedExMedicineCardProps> = ({
               <button
                 type="button"
                 onClick={handleAddPurchase}
-                className="px-3 py-1.5 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-md flex items-center gap-1 cursor-pointer shadow-2xs"
+                className="px-3.5 py-1.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg flex items-center gap-1.5 cursor-pointer shadow-2xs whitespace-nowrap shrink-0"
               >
                 <Package className="w-3.5 h-3.5" />
-                <span>{purchaseSuccess ? 'যুক্ত ✓' : '+ক্রয়'}</span>
+                <span>{purchaseSuccess ? 'যুক্ত ✓' : '+ ক্রয়'}</span>
               </button>
             )}
           </div>

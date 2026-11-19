@@ -1666,27 +1666,29 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
   return (
     <div className="space-y-6">
       {/* Active Owner / Staff Entry Identity Bar */}
-      <div className="bg-white border border-slate-200 rounded-lg p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 no-print">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-700 shrink-0">
-            <UserCheck className="w-5 h-5" />
+      <div className="bg-white border border-slate-200 rounded-xl p-3 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 no-print shadow-2xs">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-9 h-9 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-700 shrink-0">
+            <UserCheck className="w-4 h-4" />
           </div>
-          <div>
-            <div className="text-xs font-medium text-slate-500">
-              বর্তমান ক্রয় ও বিক্রয় ইনভয়েস অপারেটর (মালিকের নাম &ldquo;Owner&rdquo; এবং স্টাফদের নির্দিষ্ট নাম প্রদর্শিত)
+          <div className="min-w-0">
+            <div className="text-[11px] font-medium text-slate-500">
+              বর্তমান অপারেটর ও কাউন্টার
             </div>
-            <div className="text-sm font-bold text-slate-900">
-              অপারেটর নাম:{' '}
-              <span className="text-teal-700 font-bold">
+            <div className="text-xs sm:text-sm font-bold text-slate-900 truncate">
+              <span className="text-teal-700">
                 {formatOperatorDisplay(activeStaff)}
               </span>{' '}
-              · {activeStaff.counterName}
+              <span className="text-slate-400">·</span>{' '}
+              <span className="text-slate-600 font-semibold">{activeStaff.counterName}</span>
             </div>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-slate-500 mr-1">অপারেটর পরিবর্তন:</span>
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+          <span className="text-[11px] font-medium text-slate-500 whitespace-nowrap shrink-0 mr-1">
+            অপারেটর:
+          </span>
           {staffList.map((st) => {
             const isSelected = st.id === activeStaff.id;
             const label = st.roleTitle === 'owner' ? 'Owner' : st.name;
@@ -1695,9 +1697,9 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                 key={st.id}
                 type="button"
                 onClick={() => onSelectActiveStaff(st)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   isSelected
-                    ? 'bg-slate-900 text-white'
+                    ? 'bg-slate-900 text-white shadow-2xs'
                     : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                 }`}
               >
@@ -1711,29 +1713,29 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
       {/* Two Distinct Invoice Modes: 1. Sales Invoice (Decreases Stock) | 2. Purchase Invoice (Increases Stock) */}
       <div
         ref={invoiceBuilderRef}
-        className={`bg-white border rounded-lg overflow-hidden transition-colors no-print ${
+        className={`bg-white border rounded-xl overflow-hidden transition-colors no-print ${
           editingInvoiceTx
             ? 'border-amber-500 ring-2 ring-amber-200/80'
             : 'border-slate-200'
         }`}
       >
-        {/* Active Invoice Edit Mode Banner (Uses the exact same New-Invoice Creation Process) */}
+        {/* Active Invoice Edit Mode Banner */}
         {editingInvoiceTx && (
-          <div className="px-5 py-3 bg-amber-50 border-b border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="space-y-0.5">
-              <div className="flex flex-wrap items-center gap-2 text-xs font-extrabold text-amber-950">
+          <div className="px-4 py-3 bg-amber-50 border-b border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div className="space-y-0.5 min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5 text-xs font-extrabold text-amber-950">
                 <Edit3 className="w-4 h-4 text-amber-700 shrink-0" />
                 <span>
-                  ইনভয়েস এডিট মোড সক্রিয় (নতুন ইনভয়েস তৈরির প্রক্রিয়ায় এডিট হচ্ছে):{' '}
-                  <span className="font-mono underline">{editingInvoiceTx.invoiceNo}</span>
+                  এডিট মোড:{' '}
+                  <span className="font-mono tabular-nums underline">{editingInvoiceTx.invoiceNo}</span>
                 </span>
                 <span className="text-amber-800 font-semibold">
                   · {editingInvoiceTx.txType === 'sale' ? 'বিক্রয় ইনভয়েস' : 'ক্রয় ইনভয়েস'} ·{' '}
                   {editingInvoiceTx.partyName}
                 </span>
               </div>
-              <p className="text-xs text-amber-900">
-                নতুন ইনভয়েস তৈরির মতোই বাম পাশ থেকে যেকোনো নতুন ওষুধ যোগ করুন, ডান পাশে পরিমাণ (+ / -), ক্রয় মূল্য ও বিক্রয় মূল্য পরিবর্তন বা ওষুধ ডিলিট করুন এবং নিচে ইনভয়েস সম্পন্ন করুন।
+              <p className="text-[11px] text-amber-900">
+                আইটেম, পরিমাণ বা মূল্য পরিবর্তন করে নিচে সংরক্ষণ করলে স্টক স্বয়ংক্রিয়ভাবে সমন্বয় হবে।
               </p>
             </div>
             <button
@@ -1743,39 +1745,39 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                 resetSaleFormToFresh();
                 resetPurchaseFormToFresh();
               }}
-              className="px-3.5 py-1.5 text-xs font-semibold text-amber-950 bg-white hover:bg-amber-100 border border-amber-300 rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              className="px-3 py-1.5 text-xs font-semibold text-amber-950 bg-white hover:bg-amber-100 border border-amber-300 rounded-lg transition-colors whitespace-nowrap shrink-0 self-start sm:self-auto cursor-pointer"
             >
-              এডিট বাতিল করে নতুন মেমো শুরু করুন ✕
+              এডিট বাতিল ✕
             </button>
           </div>
         )}
 
-        <div className="px-5 py-3.5 border-b border-slate-200 flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-slate-50/70">
-          <div className="flex flex-wrap items-center gap-2 bg-slate-200/80 p-1 rounded-md">
+        <div className="px-3 sm:px-5 py-3 border-b border-slate-200 flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 bg-slate-50/70">
+          <div className="grid grid-cols-2 lg:inline-flex items-center gap-1.5 bg-slate-200/80 p-1 rounded-lg w-full lg:w-auto">
             <button
               type="button"
               onClick={() => setEntryTab('sale_pos')}
-              className={`px-4 py-2 text-xs font-bold rounded transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
+              className={`min-w-0 px-2.5 sm:px-4 py-2 text-xs font-bold rounded-md transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
                 entryTab === 'sale_pos'
                   ? 'bg-teal-700 text-white shadow-xs'
                   : 'text-slate-700 hover:text-slate-900'
               }`}
             >
-              <ShoppingCart className="w-4 h-4" />
-              <span>
+              <ShoppingCart className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">
                 {isEditingSale
-                  ? `১. বিক্রয় ইনভয়েস এডিট হচ্ছে (${editingInvoiceTx?.invoiceNo})`
-                  : '১. প্রডাক্ট বিক্রয় ইনভয়েস — স্টক কমবে (Sales Invoice)'}
+                  ? `বিক্রয় এডিট (${editingInvoiceTx?.invoiceNo})`
+                  : 'বিক্রয় ইনভয়েস (-স্টক)'}
               </span>
               {posCart.length > 0 && (
                 <span
-                  className={`px-1.5 py-0.5 text-[11px] font-mono rounded ${
+                  className={`px-1.5 py-0.5 text-[10px] font-mono tabular-nums rounded whitespace-nowrap shrink-0 ${
                     entryTab === 'sale_pos'
                       ? 'bg-teal-900 text-white'
                       : 'bg-teal-100 text-teal-800'
                   }`}
                 >
-                  {posCart.length} আইটেম (-{totalSaleUnits})
+                  {posCart.length}টি (-{totalSaleUnits})
                 </span>
               )}
             </button>
@@ -1783,49 +1785,47 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
             <button
               type="button"
               onClick={() => setEntryTab('purchase_entry')}
-              className={`px-4 py-2 text-xs font-bold rounded transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
+              className={`min-w-0 px-2.5 sm:px-4 py-2 text-xs font-bold rounded-md transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
                 entryTab === 'purchase_entry'
                   ? 'bg-indigo-700 text-white shadow-xs'
                   : 'text-slate-700 hover:text-slate-900'
               }`}
             >
-              <Truck className="w-4 h-4" />
-              <span>
+              <Truck className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">
                 {isEditingPurchase
-                  ? `২. ক্রয় ইনভয়েস এডিট হচ্ছে (${editingInvoiceTx?.invoiceNo})`
-                  : '২. প্রডাক্ট ক্রয় ইনভয়েস — স্টক বাড়বে (Purchase Invoice)'}
+                  ? `ক্রয় এডিট (${editingInvoiceTx?.invoiceNo})`
+                  : 'ক্রয় ইনভয়েস (+স্টক)'}
               </span>
               {purchaseCart.length > 0 && (
                 <span
-                  className={`px-1.5 py-0.5 text-[11px] font-mono rounded ${
+                  className={`px-1.5 py-0.5 text-[10px] font-mono tabular-nums rounded whitespace-nowrap shrink-0 ${
                     entryTab === 'purchase_entry'
                       ? 'bg-indigo-900 text-white'
                       : 'bg-indigo-100 text-indigo-800'
                   }`}
                 >
-                  {purchaseCart.length} আইটেম (+{totalPurchaseUnits})
+                  {purchaseCart.length}টি (+{totalPurchaseUnits})
                 </span>
               )}
             </button>
           </div>
 
-          <div className="flex items-center gap-3 text-xs">
-            {entryTab === 'sale_pos' ? (
-              <span className="inline-flex items-center gap-1.5 font-semibold text-teal-800 bg-teal-50 border border-teal-200 px-3 py-1 rounded-md">
-                <PackageMinus className="w-3.5 h-3.5 text-teal-700" />
-                {isEditingSale
-                  ? 'বিক্রয় ইনভয়েস এডিট: সংরক্ষণ করলে পূর্বের স্টক সমন্বয় হয়ে নতুন স্টক কমবে'
-                  : 'বিক্রয় মোড: ইনভয়েস সম্পন্ন করলে স্টক স্বয়ংক্রিয়ভাবে কমবে'}
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 font-semibold text-indigo-800 bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-md">
-                <PackageCheck className="w-3.5 h-3.5 text-indigo-700" />
-                {isEditingPurchase
-                  ? 'ক্রয় ইনভয়েস এডিট: সংরক্ষণ করলে পূর্বের স্টক সমন্বয় হয়ে নতুন স্টক বাড়বে'
-                  : 'ক্রয় মোড: ইনভয়েস সম্পন্ন করলে স্টক স্বয়ংক্রিয়ভাবে বাড়বে'}
-              </span>
-            )}
-          </div>
+          {(isEditingSale || isEditingPurchase) && (
+            <div className="flex items-center gap-2 text-xs">
+              {entryTab === 'sale_pos' ? (
+                <span className="inline-flex items-center gap-1.5 font-semibold text-teal-800 bg-teal-50 border border-teal-200 px-3 py-1 rounded-md">
+                  <PackageMinus className="w-3.5 h-3.5 text-teal-700 shrink-0" />
+                  <span>সংরক্ষণ করলে পূর্বের স্টক সমন্বয় হয়ে নতুন স্টক কমবে</span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 font-semibold text-indigo-800 bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-md">
+                  <PackageCheck className="w-3.5 h-3.5 text-indigo-700 shrink-0" />
+                  <span>সংরক্ষণ করলে পূর্বের স্টক সমন্বয় হয়ে নতুন স্টক বাড়বে</span>
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {entryTab === 'sale_pos' ? (
