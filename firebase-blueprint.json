@@ -306,6 +306,30 @@
           "minLength": 1,
           "maxLength": 60
         },
+        "reconciledDueAmount": {
+          "type": "number",
+          "description": "Previous due amount reconciled/consolidated into this invoice or settled into a new invoice"
+        },
+        "reconciledFromInvoices": {
+          "type": "array",
+          "description": "List of prior unpaid invoices consolidated into this invoice",
+          "items": {
+            "type": "object",
+            "properties": {
+              "txId": { "type": "string" },
+              "invoiceNo": { "type": "string" },
+              "amount": { "type": "number" }
+            }
+          }
+        },
+        "reconciledIntoInvoiceNo": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "reconciledIntoTxId": {
+          "type": "string",
+          "maxLength": 128
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"

@@ -18,6 +18,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { formatCleanMoney } from '../data/bdMedicines';
+import { orderCartItemsWithDueLast } from '../utils/whatsappShare';
 import {
   CartItem,
   Customer,
@@ -1196,7 +1197,7 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {posCart.map((item, idx) => (
+                    {orderCartItemsWithDueLast(posCart).map((item, idx) => (
                       <div
                         key={item.medicineId}
                         className="p-3 bg-rose-50/50 border border-rose-200 rounded-lg space-y-2"
@@ -1398,7 +1399,7 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 text-sm">
-                      {posCart.map((item, idx) => {
+                      {orderCartItemsWithDueLast(posCart).map((item, idx) => {
                         const priceChanged =
                           item.originalUnitPrice !== undefined &&
                           Math.abs(item.unitPrice - item.originalUnitPrice) > 0.001;
@@ -2018,7 +2019,7 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 text-sm">
-                      {posCart.map((item, idx) => {
+                      {orderCartItemsWithDueLast(posCart).map((item, idx) => {
                         const purPriceVal =
                           typeof item.purchasePrice === 'number' && item.purchasePrice > 0
                             ? item.purchasePrice

@@ -6141,6 +6141,7 @@ export function formatTransactionItemsText(
 
 export function dosageFormFromInvoicePrefix(prefix: string): string {
   const p = prefix.trim().toLowerCase();
+  if (p === 'due') return 'Due';
   if (p === 'cap') return 'Capsule';
   if (p === 'syp') return 'Syrup';
   if (p === 'susp') return 'Suspension';
@@ -6179,8 +6180,32 @@ export function buildSaleCartFromTransaction(
   const parsed = parseTransactionItemsDetailed(tx.itemsSummary, catalog);
 
   return parsed.map((pItem, idx) => {
-    const med = pItem.matchedMedicine;
     const rawClean = (pItem.cleanName || pItem.brandAndStrength.replace(/\[.*?\]/g, '')).trim();
+    const isDue =
+      pItem.formPrefix === 'due' ||
+      /^(due|previous\s*due|prev\s*due|বকেয়া|পূর্বের\s*বকেয়া)$/i.test(rawClean);
+    if (isDue) {
+      const dueVal = pItem.lineTotal > 0 ? pItem.lineTotal : (pItem.unitPrice || 0);
+      return {
+        medicineId: `due_sale_edit_${idx}_${tx.id}`,
+        brandName: 'Due',
+        genericName: '',
+        companyName: tx.partyName || 'Walk-in',
+        strength: '',
+        dosageForm: 'Due',
+        unitPrice: dueVal,
+        originalUnitPrice: dueVal,
+        purchasePrice: 0,
+        originalPurchasePrice: 0,
+        qty: 1,
+        availableStock: 0,
+        updateStock: false,
+        reconcilePreviousInvoices: true,
+        reconcileInvoiceIds: tx.reconciledFromInvoices?.map((r) => r.txId),
+      };
+    }
+
+    const med = pItem.matchedMedicine;
     const split = splitBrandAndStrengthText(rawClean);
     const brandName = rawClean.length > 0 ? (split.brandName || rawClean) : (med ? med.brandName : 'Medicine');
     const strength = split.strength || (med ? med.strength : '');
@@ -6241,8 +6266,40 @@ export function buildPurchaseCartFromTransaction(
   const parsed = parseTransactionItemsDetailed(tx.itemsSummary, catalog);
 
   const items: PurchaseCartItem[] = parsed.map((pItem, idx) => {
-    const med = pItem.matchedMedicine;
     const rawClean = (pItem.cleanName || pItem.brandAndStrength.replace(/\[.*?\]/g, '')).trim();
+    const isDue =
+      pItem.formPrefix === 'due' ||
+      /^(due|previous\s*due|prev\s*due|বকেয়া|পূর্বের\s*বকেয়া)$/i.test(rawClean);
+    if (isDue) {
+      const dueVal = pItem.lineTotal > 0 ? pItem.lineTotal : (pItem.unitPrice || 0);
+      return {
+        medicineId: `due_pur_edit_${idx}_${tx.id}`,
+        brandName: 'Due',
+        genericName: '',
+        companyName:
+          tx.partyName.replace(/\s*\(ডিপো চালান\)\s*$/, '').trim() || 'Custom / General',
+        strength: '',
+        dosageForm: 'Due',
+        packSize: '',
+        purchasePrice: dueVal,
+        unitPrice: dueVal,
+        qty: 1,
+        batchNo: '',
+        expiryDate: '',
+        availableStock: 0,
+        updateStock: false,
+        packUnit: 'piece',
+        packCount: 1,
+        unitsPerPack: 1,
+        packRate: dueVal,
+        packDetailFormula: '',
+        customLineTotal: dueVal,
+        reconcilePreviousInvoices: true,
+        reconcileInvoiceIds: tx.reconciledFromInvoices?.map((r) => r.txId),
+      };
+    }
+
+    const med = pItem.matchedMedicine;
     const split = splitBrandAndStrengthText(rawClean);
     const brandName = rawClean.length > 0 ? (split.brandName || rawClean) : (med ? med.brandName : 'Custom Product');
     const strength = split.strength || (med ? med.strength : '');

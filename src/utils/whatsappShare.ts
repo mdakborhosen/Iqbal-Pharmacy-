@@ -46,6 +46,80 @@ export function isDueEntryItem(item: {
 }
 
 /**
+ * Returns strict display/print sort priority for cart & invoice items:
+ * 1: Syrup / Suspension / Oral Liquid / Solution / Elixir
+ * 2: Drops (Eye / Ear / Nasal / Pediatric / Oral Drops)
+ * 3: Tablet / Capsule
+ * 4: All other dosage forms (Injection, Suppository, Gel, Cream, Inhaler, Sachet, etc.)
+ * 5: Due (বকেয়া) — always strictly the very last item
+ */
+export function getDosageFormSortRank(item: {
+  brandName?: string;
+  dosageForm?: string;
+  medicineId?: string;
+  formPrefix?: string;
+}): number {
+  if (isDueEntryItem(item)) return 5;
+
+  const fp = (item.formPrefix || '').trim().toLowerCase();
+  const df = (item.dosageForm || '').trim().toLowerCase();
+  const combined = `${fp} ${df}`.trim();
+  const normalizedPrefix = df ? getInvoiceFormPrefix(df) : fp;
+
+  // 1. সিরাপ (Syrup / Suspension / Oral Solution / Elixir)
+  if (
+    normalizedPrefix === 'syp' ||
+    normalizedPrefix === 'susp' ||
+    /\b(syp|susp|syrup|suspension|elixir|solution|linctus|emulsion|oral\s*liquid)\b/i.test(combined)
+  ) {
+    return 1;
+  }
+
+  // 2. ড্রপ (Drops)
+  if (
+    normalizedPrefix === 'drops' ||
+    normalizedPrefix === 'eye drop' ||
+    normalizedPrefix === 'ear drop' ||
+    normalizedPrefix === 'nasal drop' ||
+    /\b(drops?|eye\s*drop|ear\s*drop|nasal\s*drop|oral\s*drop|pediatric\s*drop|paediatric\s*drop)\b/i.test(
+      combined
+    )
+  ) {
+    return 2;
+  }
+
+  // 3. ট্যাবলেট / ক্যাপসুল (Tablet / Capsule)
+  if (
+    normalizedPrefix === 'tab' ||
+    normalizedPrefix === 'cap' ||
+    /\b(tab|tablet|cap|capsule|softgel|bolus)\b/i.test(combined)
+  ) {
+    return 3;
+  }
+
+  // 4. অন্যান্য সব প্রোডাক্ট (Injection, Suppository, Gel, Inhaler, Sachet, etc.)
+  return 4;
+}
+
+/**
+ * Stably sorts cart/invoice items strictly in the order:
+ * সিরাপ -> ড্রপ -> ট্যাবলেট/ক্যাপসুল -> অন্যান্য -> Due (বকেয়া একদম নিচে)
+ */
+export function orderCartItemsWithDueLast<
+  T extends {
+    brandName?: string;
+    dosageForm?: string;
+    medicineId?: string;
+    formPrefix?: string;
+  }
+>(items: T[]): T[] {
+  return items
+    .map((item, idx) => ({ item, idx, rank: getDosageFormSortRank(item) }))
+    .sort((a, b) => a.rank - b.rank || a.idx - b.idx)
+    .map((entry) => entry.item);
+}
+
+/**
  * Converts dosageForm or invoice prefix into a clean label prefix like "Tab.", "Cap.", "Supp.", "Syp."
  */
 export function formatDosagePrefixLabel(formOrPrefix?: string): string {
@@ -256,8 +330,8 @@ export function buildPurchaseCartWhatsAppText(
     dateStr?: string;
   }
 ): string {
-  const validItems = purchaseCart.filter(
-    (i) => i.brandName && i.brandName.trim().length > 0 && !isDueEntryItem(i)
+  const validItems = orderCartItemsWithDueLast(
+    purchaseCart.filter((i) => i.brandName && i.brandName.trim().length > 0 && !isDueEntryItem(i))
   );
   if (validItems.length === 0) {
     return '';
@@ -294,7 +368,9 @@ export function buildPurchaseInvoiceWhatsAppTextFromCart(
     paidAmountStr?: string;
   }
 ): string {
-  const validItems = purchaseCart.filter((i) => i.brandName && i.brandName.trim().length > 0);
+  const validItems = orderCartItemsWithDueLast(
+    purchaseCart.filter((i) => i.brandName && i.brandName.trim().length > 0)
+  );
   const totals = computePurchaseCartTotals(validItems, {
     discount: opts.discount || 0,
     vatOverrideStr: opts.vatOverrideStr,
@@ -368,8 +444,18 @@ export function buildTransactionInvoiceWhatsAppText(
   const parsedItems = parseTransactionItemsDetailed(tx.itemsSummary || '', catalog);
   const lines: string[] = [];
 
-  const medicineItems = parsedItems.filter(
-    (p) => !isDueEntryItem({ brandName: p.cleanName || p.brandAndStrength, formPrefix: p.formPrefix })
+  const medicineItems = orderCartItemsWithDueLast(
+    parsedItems
+      .filter(
+        (p) => !isDueEntryItem({ brandName: p.cleanName || p.brandAndStrength, formPrefix: p.formPrefix })
+      )
+      .map((p) => ({
+        ...p,
+        brandName: p.cleanName || p.brandAndStrength,
+        dosageForm: p.formPrefix
+          ? dosageFormFromInvoicePrefix(p.formPrefix)
+          : p.matchedMedicine?.dosageForm,
+      }))
   );
   const dueItems = parsedItems.filter((p) =>
     isDueEntryItem({ brandName: p.cleanName || p.brandAndStrength, formPrefix: p.formPrefix })

@@ -25,7 +25,13 @@ import {
   buildPurchaseInvoiceWhatsAppTextFromCart,
   getWhatsAppShareHref,
   isDueEntryItem,
+  orderCartItemsWithDueLast,
 } from '../utils/whatsappShare';
+import {
+  getAllSupplierDueSummaries,
+  getUnpaidPurchaseInvoicesForSupplier,
+  SupplierDueSummary,
+} from '../utils/dueReconciliation';
 import {
   BD_PHARMA_COMPANIES,
   computePurchaseCartTotals,
@@ -111,6 +117,8 @@ export interface PurchaseStepWizardProps {
     packRate?: number;
     packDetailFormula?: string;
     packSize?: string;
+    reconcilePreviousInvoices?: boolean;
+    reconcileInvoiceIds?: string[];
   }) => Promise<void>;
   onUpdatePurchaseCartQty: (medId: string, newQty: number) => void;
   onUpdatePurchaseCartCost: (medId: string, newCost: number) => void;
@@ -131,6 +139,8 @@ export interface PurchaseStepWizardProps {
     query: string,
     opts?: { limit?: number; refresh?: boolean; signal?: AbortSignal; silent?: boolean }
   ) => Promise<MedicineCatalogItem[]>;
+  transactions?: Transaction[];
+  editingTxId?: string;
 }
 
 export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
@@ -170,6 +180,8 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
   isEditingPurchase = false,
   onPreviewCurrentPurchaseInvoice,
   onSearchMedexLive,
+  transactions = [],
+  editingTxId,
 }) => {
   // Step 1: Product Search & Pack options state
   const [productSearch, setProductSearch] = useState('');
@@ -205,19 +217,126 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
   const [customBatch, setCustomBatch] = useState('B-2601');
   const [customExpiry, setCustomExpiry] = useState('2028-12-31');
 
+  useEffect(() => {
+    if (
+      supplierCompany &&
+      supplierCompany !== 'সকল কোম্পানি' &&
+      !BD_PHARMA_COMPANIES.includes(supplierCompany)
+    ) {
+      setIsCustomCompanyMode(true);
+    }
+  }, [supplierCompany]);
+
   // Due (বকেয়া) Amount Popup Modal State (amount starts strictly empty)
   const [showDueModal, setShowDueModal] = useState(false);
   const [dueAmountInput, setDueAmountInput] = useState('');
   const [editingDueMedId, setEditingDueMedId] = useState<string | null>(null);
+  const [dueReconcileEnabled, setDueReconcileEnabled] = useState(true);
+  const [dueSelectedInvoiceIds, setDueSelectedInvoiceIds] = useState<string[]>([]);
+
+  // Unpaid previous purchase invoices across all suppliers & for the currently selected supplier
+  const allSupplierDueSummaries = useMemo(
+    () => getAllSupplierDueSummaries(transactions, editingTxId),
+    [transactions, editingTxId]
+  );
+
+  const activeSupplierDueInvoices = useMemo(
+    () => getUnpaidPurchaseInvoicesForSupplier(transactions, supplierCompany, editingTxId),
+    [transactions, supplierCompany, editingTxId]
+  );
+
+  const activeSupplierTotalDue = useMemo(
+    () =>
+      Number(
+        activeSupplierDueInvoices.reduce((sum, tx) => sum + (tx.dueAmount || 0), 0).toFixed(2)
+      ),
+    [activeSupplierDueInvoices]
+  );
+
+  const dueAlreadyInCart = useMemo(
+    () =>
+      purchaseCart
+        .filter((i) => isDueEntryItem(i))
+        .reduce((sum, i) => sum + computePurchaseItemMetrics(i).lineTotal, 0),
+    [purchaseCart]
+  );
+
+  const remainingSuggestedDue = useMemo(
+    () => Math.max(0, Number((activeSupplierTotalDue - dueAlreadyInCart).toFixed(2))),
+    [activeSupplierTotalDue, dueAlreadyInCart]
+  );
+
+  const selectSupplierFromDueSummary = (summary: SupplierDueSummary) => {
+    setSupplierCompany(summary.displayName);
+    setIsCustomCompanyMode(
+      !BD_PHARMA_COMPANIES.includes(summary.displayName) && summary.displayName !== 'সকল কোম্পানি'
+    );
+    if (summary.phone) {
+      setSupplierPhone(summary.phone);
+    }
+  };
+
+  const handleQuickAddPreviousDue = async (
+    summary?: SupplierDueSummary,
+    specificInvoice?: Transaction
+  ) => {
+    const targetCompany = summary?.displayName || supplierCompany;
+    if (summary) {
+      selectSupplierFromDueSummary(summary);
+    }
+    const targetInvoices = specificInvoice
+      ? [specificInvoice]
+      : summary
+      ? summary.invoices
+      : activeSupplierDueInvoices;
+    if (targetInvoices.length === 0) return;
+
+    const rawTotal = Number(
+      targetInvoices.reduce((sum, tx) => sum + (tx.dueAmount || 0), 0).toFixed(2)
+    );
+    const amountToAdd =
+      !summary && !specificInvoice && remainingSuggestedDue > 0 ? remainingSuggestedDue : rawTotal;
+    if (amountToAdd <= 0) return;
+
+    await onAddCustomToPurchaseCart({
+      brandName: 'Due',
+      genericName: '',
+      companyName:
+        targetCompany && targetCompany !== 'সকল কোম্পানি' ? targetCompany : 'Custom / General',
+      strength: '',
+      dosageForm: 'Due',
+      purchasePrice: amountToAdd,
+      unitPrice: amountToAdd,
+      qty: 1,
+      batchNo: '',
+      expiryDate: '',
+      updateStock: false,
+      saveToCatalog: false,
+      packUnit: 'piece',
+      packCount: 1,
+      unitsPerPack: 1,
+      packRate: amountToAdd,
+      packDetailFormula: '',
+      packSize: '',
+      reconcilePreviousInvoices: true,
+      reconcileInvoiceIds: targetInvoices.map((inv) => inv.id),
+    });
+  };
 
   const openDueModal = (existingDueItem?: PurchaseCartItem) => {
     if (existingDueItem) {
       const m = computePurchaseItemMetrics(existingDueItem);
       setEditingDueMedId(existingDueItem.medicineId);
       setDueAmountInput(m.lineTotal > 0 ? String(m.lineTotal) : '');
+      setDueReconcileEnabled(existingDueItem.reconcilePreviousInvoices !== false);
+      setDueSelectedInvoiceIds(
+        existingDueItem.reconcileInvoiceIds || activeSupplierDueInvoices.map((t) => t.id)
+      );
     } else {
       setEditingDueMedId(null);
       setDueAmountInput('');
+      setDueReconcileEnabled(true);
+      setDueSelectedInvoiceIds([]);
     }
     setShowDueModal(true);
   };
@@ -226,6 +345,11 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
     e.preventDefault();
     const parsedAmount = parseFloat(dueAmountInput);
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) return;
+
+    const effectiveInvoiceIds =
+      dueSelectedInvoiceIds.length > 0
+        ? dueSelectedInvoiceIds
+        : activeSupplierDueInvoices.map((t) => t.id);
 
     if (editingDueMedId) {
       onUpdatePurchaseCartItemDetails(editingDueMedId, {
@@ -244,6 +368,8 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
         customLineTotal: parsedAmount,
         packDetailFormula: '',
         updateStock: false,
+        reconcilePreviousInvoices: dueReconcileEnabled,
+        reconcileInvoiceIds: effectiveInvoiceIds,
       });
     } else {
       await onAddCustomToPurchaseCart({
@@ -268,11 +394,14 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
         packRate: parsedAmount,
         packDetailFormula: '',
         packSize: '',
+        reconcilePreviousInvoices: dueReconcileEnabled,
+        reconcileInvoiceIds: effectiveInvoiceIds,
       });
     }
 
     setDueAmountInput('');
     setEditingDueMedId(null);
+    setDueSelectedInvoiceIds([]);
     setShowDueModal(false);
     setProductSearch('');
     setSelectedMed(null);
@@ -1011,11 +1140,19 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                     <input
                       type="text"
                       required
+                      list="purchase-supplier-due-history-list"
                       value={supplierCompany}
                       onChange={(e) => setSupplierCompany(e.target.value)}
-                      placeholder="যেমন: Belal Pharmacy / লোকাল ডিপো"
+                      placeholder="যেমন: Belal Pharmacy Odar Hat / লোকাল ডিপো"
                       className="w-full px-3 py-2 text-xs border border-indigo-300 rounded-md bg-white font-semibold text-indigo-950 focus:border-indigo-600 focus:outline-none"
                     />
+                    <datalist id="purchase-supplier-due-history-list">
+                      {allSupplierDueSummaries.map((s) => (
+                        <option key={s.normalizedKey} value={s.displayName}>
+                          বকেয়া: ৳{formatCleanMoney(s.totalDue)} ({s.invoiceCount}টি ইনভয়েস)
+                        </option>
+                      ))}
+                    </datalist>
                     <p className="text-[10.5px] text-indigo-700 font-medium">
                       কাস্টম নাম শুধুমাত্র এই ইনভয়েসের সরবরাহকারী হিসেবে থাকবে; ঔষধের মূল প্রস্তুতকারক কোম্পানি পরিবর্তন হবে না।
                     </p>
@@ -1064,6 +1201,69 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                 />
               </div>
             </div>
+
+            {/* Auto-Suggestion Banner for Supplier Previous Due & Reconciliation */}
+            {activeSupplierTotalDue > 0 && (
+              <div className="p-3 bg-rose-50/90 border border-rose-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
+                <div className="space-y-1">
+                  <div className="font-bold text-rose-950 flex flex-wrap items-center gap-1.5">
+                    <span>
+                      ⚠️ &ldquo;{supplierCompany}&rdquo;-এর পূর্বের {activeSupplierDueInvoices.length}টি ইনভয়েসে মোট বকেয়া রয়েছে:{' '}
+                      <span className="font-mono text-rose-700">৳{formatCleanMoney(activeSupplierTotalDue)}</span>
+                    </span>
+                    {dueAlreadyInCart > 0 && (
+                      <span className="px-1.5 py-0.5 text-[10.5px] bg-emerald-100 text-emerald-900 rounded font-mono">
+                        কার্টে যুক্ত: ৳{formatCleanMoney(dueAlreadyInCart)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-rose-800">
+                    {activeSupplierDueInvoices.map((inv) => (
+                      <button
+                        key={inv.id}
+                        type="button"
+                        onClick={() => handleQuickAddPreviousDue(undefined, inv)}
+                        className="px-2 py-0.5 bg-white hover:bg-rose-100 border border-rose-300 rounded font-mono text-[10.5px] text-rose-900 cursor-pointer"
+                        title="এই একটি ইনভয়েসের বকেয়া যোগ ও সমন্বয় করুন"
+                      >
+                        {inv.invoiceNo} ({inv.dateStr}) · ৳{formatCleanMoney(inv.dueAmount)} +
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {remainingSuggestedDue > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => handleQuickAddPreviousDue()}
+                    className="px-3.5 py-2 text-xs font-bold text-white bg-rose-700 hover:bg-rose-800 rounded-lg shadow-2xs cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    + পূর্বের Due (৳{formatCleanMoney(remainingSuggestedDue)}) যোগ ও সমন্বয় করুন
+                  </button>
+                )}
+              </div>
+            )}
+
+            {activeSupplierTotalDue === 0 && allSupplierDueSummaries.length > 0 && (
+              <div className="p-2.5 bg-amber-50/70 border border-amber-200 rounded-lg flex flex-wrap items-center gap-2 text-xs">
+                <span className="font-bold text-amber-950 text-[11px]">
+                  পূর্বের বকেয়া থাকা সরবরাহকারী (ক্লিক করে নির্বাচন করুন):
+                </span>
+                {allSupplierDueSummaries.slice(0, 6).map((s) => (
+                  <button
+                    key={s.normalizedKey}
+                    type="button"
+                    onClick={() => selectSupplierFromDueSummary(s)}
+                    className="px-2.5 py-1 bg-white hover:bg-amber-100 border border-amber-300 rounded-md text-[11px] font-semibold text-amber-950 cursor-pointer flex items-center gap-1.5"
+                  >
+                    <span>{s.displayName}</span>
+                    <span className="font-mono font-bold text-rose-700">
+                      — ৳{formatCleanMoney(s.totalDue)} Due
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Product Selection, Pack Size & Quantity Box */}
@@ -1734,9 +1934,9 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-sans">
-                    {purchaseCart
-                      .filter((i) => i.brandName && i.brandName.trim().length > 0)
-                      .map((item, idx) => {
+                    {orderCartItemsWithDueLast(
+                      purchaseCart.filter((i) => i.brandName && i.brandName.trim().length > 0)
+                    ).map((item, idx) => {
                       const metrics = computePurchaseItemMetrics(item);
                       const isDue = isDueEntryItem(item);
                       const isEdPack = editingCell?.medId === item.medicineId && editingCell.field === 'step1_pack';
@@ -1759,7 +1959,19 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                                 </>
                               ) : null}
                             </div>
-                            <div className="text-[10.5px] text-teal-800">{item.companyName}</div>
+                            <div className="text-[10.5px] text-teal-800">
+                              {item.companyName}
+                              {isDue && item.reconcilePreviousInvoices !== false && activeSupplierDueInvoices.length > 0 && (
+                                <span className="ml-1.5 inline-block px-1.5 py-0.2 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded font-semibold">
+                                  সমন্বয় হবে: {(item.reconcileInvoiceIds?.length
+                                    ? activeSupplierDueInvoices.filter((t) => item.reconcileInvoiceIds!.includes(t.id))
+                                    : activeSupplierDueInvoices
+                                  )
+                                    .map((t) => t.invoiceNo)
+                                    .join(', ')}
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="py-2 px-2 text-center text-slate-600 font-mono">
                             {isDue ? null : isEdPack ? (
@@ -2026,9 +2238,9 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 text-xs font-sans">
-                {purchaseCart
-                  .filter((i) => i.brandName && i.brandName.trim().length > 0)
-                  .map((item, idx) => {
+                {orderCartItemsWithDueLast(
+                  purchaseCart.filter((i) => i.brandName && i.brandName.trim().length > 0)
+                ).map((item, idx) => {
                   const m = computePurchaseItemMetrics(item);
                   const { qty, tp, lineTp, vatRate, singleVat, lineVat, lineTotal: lineNetTotal } = m;
                   const isDue = isDueEntryItem(item);
@@ -2597,9 +2809,9 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-sans">
-                  {purchaseCart
-                    .filter((i) => i.brandName && i.brandName.trim().length > 0)
-                    .map((item, idx) => {
+                  {orderCartItemsWithDueLast(
+                    purchaseCart.filter((i) => i.brandName && i.brandName.trim().length > 0)
+                  ).map((item, idx) => {
                     const m = computePurchaseItemMetrics(item);
                     const { qty, tp, lineTp, bonus, singleVat, lineVat, lineTotal } = m;
                     const isDue = isDueEntryItem(item);
@@ -2627,7 +2839,19 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                               </>
                             ) : null}
                           </div>
-                          <div className="text-[10.5px] text-teal-800">{item.companyName}</div>
+                          <div className="text-[10.5px] text-teal-800">
+                            {item.companyName}
+                            {isDue && item.reconcilePreviousInvoices !== false && activeSupplierDueInvoices.length > 0 && (
+                              <span className="ml-1.5 inline-block px-1.5 py-0.2 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded font-semibold">
+                                সমন্বয় হবে: {(item.reconcileInvoiceIds?.length
+                                  ? activeSupplierDueInvoices.filter((t) => item.reconcileInvoiceIds!.includes(t.id))
+                                  : activeSupplierDueInvoices
+                                )
+                                  .map((t) => t.invoiceNo)
+                                  .join(', ')}
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="py-2 px-2 text-center font-mono font-bold text-slate-900">
                           {isDue ? null : isEdQty ? (
@@ -2840,6 +3064,19 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
               </table>
             </div>
           </div>
+
+          {/* Reconciled Previous Invoices Note in Step 3 */}
+          {dueAlreadyInCart > 0 && activeSupplierDueInvoices.length > 0 && (
+            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-950 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <strong>✓ পূর্বের ইনভয়েস সমন্বয় সক্রিয়:</strong> এই চালান সম্পন্ন হলে{' '}
+                <span className="font-mono font-bold">
+                  {activeSupplierDueInvoices.map((t) => `${t.invoiceNo} (৳${formatCleanMoney(t.dueAmount)})`).join(', ')}
+                </span>{' '}
+                থেকে ক্রমানুসারে ৳{formatCleanMoney(Math.min(dueAlreadyInCart, activeSupplierTotalDue))} বকেয়া সমন্বয় হবে।
+              </div>
+            </div>
+          )}
 
           {/* Final Financial Settlement & Checkout Form */}
           <form
@@ -3102,7 +3339,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
       {/* Due (বকেয়া) Amount Entry Popup Modal */}
       {showDueModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full p-5 space-y-4 border border-rose-200">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-5 space-y-4 border border-rose-200 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
               <h3 className="text-sm font-bold text-rose-950">
                 {editingDueMedId ? 'বকেয়া (Due) টাকা সংশোধন করুন' : 'বকেয়া (Due) টাকা যোগ করুন'}
@@ -3113,6 +3350,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                   setShowDueModal(false);
                   setDueAmountInput('');
                   setEditingDueMedId(null);
+                  setDueSelectedInvoiceIds([]);
                 }}
                 className="text-slate-400 hover:text-slate-700 p-1 rounded cursor-pointer"
               >
@@ -3126,6 +3364,68 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                   সরবরাহকারী: <strong className="text-slate-900">{supplierCompany}</strong>
                 </div>
               )}
+
+              {activeSupplierDueInvoices.length > 0 ? (
+                <div className="p-2.5 bg-rose-50/80 border border-rose-200 rounded-lg space-y-2">
+                  <div className="text-[11px] font-bold text-rose-950">
+                    পূর্বের বকেয়া সাজেস্ট (ক্লিক করলে টাকার অংকে বসবে):
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDueAmountInput(String(activeSupplierTotalDue));
+                      setDueSelectedInvoiceIds(activeSupplierDueInvoices.map((t) => t.id));
+                    }}
+                    className="w-full text-left px-2.5 py-1.5 bg-white hover:bg-rose-100 border border-rose-300 rounded font-bold text-rose-900 cursor-pointer flex items-center justify-between"
+                  >
+                    <span>মোট বকেয়া ({activeSupplierDueInvoices.length}টি ইনভয়েস)</span>
+                    <span className="font-mono">৳{formatCleanMoney(activeSupplierTotalDue)}</span>
+                  </button>
+                  <div className="flex flex-wrap gap-1.5">
+                    {activeSupplierDueInvoices.map((inv) => (
+                      <button
+                        key={inv.id}
+                        type="button"
+                        onClick={() => {
+                          setDueAmountInput(String(inv.dueAmount));
+                          setDueSelectedInvoiceIds([inv.id]);
+                        }}
+                        className="px-2 py-1 bg-white hover:bg-rose-100 border border-rose-200 rounded font-mono text-[10.5px] text-slate-800 cursor-pointer"
+                      >
+                        {inv.invoiceNo} ({inv.dateStr}) · ৳{formatCleanMoney(inv.dueAmount)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                allSupplierDueSummaries.length > 0 && (
+                  <div className="p-2.5 bg-amber-50/80 border border-amber-200 rounded-lg space-y-1.5">
+                    <div className="text-[11px] font-bold text-amber-950">
+                      পূর্বের বকেয়া থাকা সরবরাহকারী (ক্লিক করলে সরবরাহকারী ও টাকা সেট হবে):
+                    </div>
+                    <div className="flex flex-col gap-1.5 max-h-36 overflow-y-auto">
+                      {allSupplierDueSummaries.map((s) => (
+                        <button
+                          key={s.normalizedKey}
+                          type="button"
+                          onClick={() => {
+                            selectSupplierFromDueSummary(s);
+                            setDueAmountInput(String(s.totalDue));
+                            setDueSelectedInvoiceIds(s.invoices.map((i) => i.id));
+                          }}
+                          className="w-full text-left px-2.5 py-1.5 bg-white hover:bg-amber-100 border border-amber-300 rounded text-[11px] font-semibold text-slate-900 cursor-pointer flex items-center justify-between gap-2"
+                        >
+                          <span className="truncate">{s.displayName}</span>
+                          <span className="font-mono font-bold text-rose-700 shrink-0">
+                            ৳{formatCleanMoney(s.totalDue)} ({s.invoiceCount}টি)
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )
+              )}
+
               <div>
                 <label className="block font-bold text-slate-800 mb-1">
                   টাকার পরিমাণ (৳) *
@@ -3142,6 +3442,28 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                   className="w-full px-3 py-2 border border-rose-300 rounded-lg bg-white font-mono font-bold text-base text-slate-900 focus:outline-none focus:border-rose-600"
                 />
               </div>
+
+              {activeSupplierDueInvoices.length > 0 && (
+                <label className="flex items-start gap-2 p-2 bg-emerald-50/70 border border-emerald-200 rounded-lg cursor-pointer select-none text-[11px] text-emerald-950">
+                  <input
+                    type="checkbox"
+                    checked={dueReconcileEnabled}
+                    onChange={(e) => setDueReconcileEnabled(e.target.checked)}
+                    className="mt-0.5 rounded text-emerald-700 focus:ring-emerald-600"
+                  />
+                  <span>
+                    <strong>পূর্বের ইনভয়েস সহ সমন্বয় করুন</strong> (
+                    {(dueSelectedInvoiceIds.length > 0
+                      ? activeSupplierDueInvoices.filter((t) => dueSelectedInvoiceIds.includes(t.id))
+                      : activeSupplierDueInvoices
+                    )
+                      .map((t) => t.invoiceNo)
+                      .join(', ')}
+                    ) — ইনভয়েস সম্পন্ন হলে পূর্বের বকেয়া স্বয়ংক্রিয়ভাবে সমন্বিত হবে।
+                  </span>
+                </label>
+              )}
+
               <div className="flex items-center justify-end gap-2 pt-2">
                 <button
                   type="button"
@@ -3149,6 +3471,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                     setShowDueModal(false);
                     setDueAmountInput('');
                     setEditingDueMedId(null);
+                    setDueSelectedInvoiceIds([]);
                   }}
                   className="px-3.5 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
                 >

@@ -33,6 +33,7 @@ import {
   buildTransactionInvoiceWhatsAppText,
   getWhatsAppShareHref,
   isDueEntryItem,
+  orderCartItemsWithDueLast,
 } from '../utils/whatsappShare';
 import {
   BD_PHARMA_COMPANIES,
@@ -96,6 +97,8 @@ interface PosAndDailyAccountsViewProps {
     purchasePrice?: number;
     qty: number;
     saveToCatalog?: boolean;
+    reconcilePreviousInvoices?: boolean;
+    reconcileInvoiceIds?: string[];
   }) => Promise<void>;
   onUpdateCartQty: (medId: string, newQty: number) => void;
   onUpdateCartUnitPrice: (medId: string, newUnitPrice: number) => void;
@@ -155,6 +158,8 @@ interface PosAndDailyAccountsViewProps {
     packDetailFormula?: string;
     stripsPerBox?: number;
     pcsPerStrip?: number;
+    reconcilePreviousInvoices?: boolean;
+    reconcileInvoiceIds?: string[];
   }) => Promise<void>;
   onUpdatePurchaseCartQty: (medId: string, newQty: number) => void;
   onUpdatePurchaseCartCost: (medId: string, newCost: number) => void;
@@ -911,7 +916,9 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
         ? walkInName.trim() || 'সাধারণ ক্রেতা (Walk-in)'
         : cust?.name || 'কাস্টমার';
     const partyPhone = selectedCustomerId === 'walk-in' ? walkInPhone : cust?.phone || '';
-    const itemsSummary = posCart.map((i, idx) => formatCartItemInvoiceLine(i, idx)).join('\n');
+    const itemsSummary = orderCartItemsWithDueLast(posCart)
+      .map((i, idx) => formatCartItemInvoiceLine(i, idx))
+      .join('\n');
     const mockTx: Transaction = {
       id: 'preview-' + Date.now(),
       ownerId: activeStaff.ownerId || '',
@@ -946,7 +953,9 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
 
   const handlePreviewCurrentPurchaseInvoice = () => {
     if (purchaseCart.length === 0) return;
-    const itemsSummary = purchaseCart
+    const itemsSummary = orderCartItemsWithDueLast(
+      purchaseCart.filter((i) => i.brandName && i.brandName.trim().length > 0)
+    )
       .map((item, idx) => formatPurchaseItemInvoiceLine(item, idx))
       .join('\n');
     const mockTx: Transaction = {
@@ -1231,10 +1240,19 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
       }
       const parsed = parseTransactionItemsDetailed(tx.itemsSummary || '', catalog);
       if (parsed.length === 0) {
-        return Number(((tx.grandTotal || 0) * 0.88).toFixed(2));
+        return Number((Math.max(0, (tx.grandTotal || 0) - (tx.reconciledDueAmount || 0)) * 0.88).toFixed(2));
       }
       let costSum = 0;
       for (const line of parsed) {
+        if (
+          line.formPrefix === 'due' ||
+          isDueEntryItem({
+            brandName: line.cleanName || line.brandAndStrength,
+            formPrefix: line.formPrefix,
+          })
+        ) {
+          continue;
+        }
         const matched = line.matchedMedicine;
         const cleanLower = (matched?.brandName || line.cleanName || '').trim().toLowerCase();
         const strLower = (matched?.strength || '').trim().toLowerCase();
@@ -1255,6 +1273,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     };
 
     let totalSalesBill = 0;
+    let totalSalesReconciledDue = 0;
     let totalSalesPurchaseCost = 0;
     let salesCashCollected = 0;
     let salesDueGiven = 0;
@@ -1269,6 +1288,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
       const dueKind = getDueTransactionKind(tx, transactions);
       if (tx.txType === 'sale') {
         totalSalesBill += tx.grandTotal || 0;
+        totalSalesReconciledDue += tx.reconciledDueAmount || 0;
         totalSalesPurchaseCost += computeSalePurchaseCost(tx);
         salesCashCollected += tx.paidAmount || 0;
         salesDueGiven += tx.dueAmount || 0;
@@ -1285,16 +1305,22 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     }
 
     let todaySalesRevenue = 0;
+    let todaySalesReconciledDue = 0;
     let todaySalesPurchaseCost = 0;
     for (const tx of transactions) {
       if (tx.txType === 'sale' && tx.dateStr === todayStr) {
         todaySalesRevenue += tx.grandTotal || 0;
+        todaySalesReconciledDue += tx.reconciledDueAmount || 0;
         todaySalesPurchaseCost += computeSalePurchaseCost(tx);
       }
     }
 
-    const totalSalesProfit = Number((totalSalesBill - totalSalesPurchaseCost).toFixed(2));
-    const todayProfit = Number((todaySalesRevenue - todaySalesPurchaseCost).toFixed(2));
+    const totalSalesProfit = Number(
+      (totalSalesBill - totalSalesReconciledDue - totalSalesPurchaseCost).toFixed(2)
+    );
+    const todayProfit = Number(
+      (todaySalesRevenue - todaySalesReconciledDue - todaySalesPurchaseCost).toFixed(2)
+    );
     const totalCashIn = salesCashCollected + dueCollectedLater;
     const totalCashOutPurchase = purchaseCashPaid + purchaseDuePaidLater;
     const netCashDrawer = totalCashIn - totalCashOutPurchase;
@@ -1322,7 +1348,13 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
 
   const parsedPreviewItems = useMemo(() => {
     if (!previewInvoice) return [];
-    return parseTransactionItemsDetailed(previewInvoice.itemsSummary);
+    const parsed = parseTransactionItemsDetailed(previewInvoice.itemsSummary);
+    return orderCartItemsWithDueLast(
+      parsed.map((p) => ({
+        ...p,
+        brandName: p.cleanName || p.brandAndStrength,
+      }))
+    );
   }, [previewInvoice]);
 
   const [copiedPreviewInvoiceWhatsApp, setCopiedPreviewInvoiceWhatsApp] = useState(false);
@@ -1879,6 +1911,8 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
             submitSaleWithMode={submitSaleWithMode}
             onPreviewCurrentSaleInvoice={handlePreviewCurrentSaleInvoice}
             activeStaff={activeStaff}
+            transactions={transactions}
+            editingTxId={editingInvoiceTx?.id}
           />
         ) : (
           <PurchaseStepWizard
@@ -1918,6 +1952,8 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
             isEditingPurchase={isEditingPurchase}
             onPreviewCurrentPurchaseInvoice={handlePreviewCurrentPurchaseInvoice}
             onSearchMedexLive={onSearchMedexLive}
+            transactions={transactions}
+            editingTxId={editingInvoiceTx?.id}
           />
         )}
       </div>
@@ -2265,8 +2301,22 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                               <span>{tx.txType === 'purchase' ? 'বকেয়া পরিশোধ' : 'বকেয়া আদায়'}</span>
                             </button>
                           </div>
+                        ) : tx.reconciledIntoInvoiceNo ? (
+                          <div className="flex flex-col items-end gap-0.5">
+                            <span className="text-slate-400">৳0.00</span>
+                            <span className="px-1.5 py-0.5 text-[9.5px] font-sans font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 rounded whitespace-nowrap">
+                              সমন্বিত ➜ {tx.reconciledIntoInvoiceNo}
+                            </span>
+                          </div>
                         ) : (
                           <span className="text-slate-400">৳0.00</span>
+                        )}
+                        {tx.reconciledFromInvoices && tx.reconciledFromInvoices.length > 0 && (
+                          <div className="mt-1 flex justify-end">
+                            <span className="px-1.5 py-0.5 text-[9.5px] font-sans font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded whitespace-nowrap">
+                              সমন্বয়: {tx.reconciledFromInvoices.map((r) => r.invoiceNo).join(', ')} (৳{formatCleanMoney(tx.reconciledDueAmount || 0)})
+                            </span>
+                          </div>
                         )}
                       </td>
                       <td className="py-2.5 px-4 text-right">
@@ -3291,6 +3341,24 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                                   : 'বকেয়া বিল (Customer Due):'}
                               </span>
                               <span className="text-sm">৳{previewInvoice.dueAmount.toFixed(2)}</span>
+                            </div>
+                          )}
+
+                          {previewInvoice.reconciledIntoInvoiceNo && (
+                            <div className="pt-1 border-t border-slate-200 text-[10.5px] font-sans font-bold text-indigo-800">
+                              ✓ পূর্বের বকেয়া সমন্বিত হয়েছে ➜{' '}
+                              <span className="font-mono">{previewInvoice.reconciledIntoInvoiceNo}</span>
+                            </div>
+                          )}
+
+                          {previewInvoice.reconciledFromInvoices && previewInvoice.reconciledFromInvoices.length > 0 && (
+                            <div className="pt-1 border-t border-slate-200 text-[10.5px] font-sans font-bold text-emerald-800">
+                              ✓ পূর্বের ইনভয়েস সমন্বয়:{' '}
+                              <span className="font-mono">
+                                {previewInvoice.reconciledFromInvoices
+                                  .map((r) => `${r.invoiceNo} (৳${formatCleanMoney(r.amount)})`)
+                                  .join(', ')}
+                              </span>
                             </div>
                           )}
 

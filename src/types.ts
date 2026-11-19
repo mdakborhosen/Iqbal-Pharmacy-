@@ -195,6 +195,12 @@ export interface DentalClinicalDetails {
   inv?: string;
   }
 
+export interface ReconciledInvoiceRef {
+  txId: string;
+  invoiceNo: string;
+  amount: number;
+}
+
 export interface Transaction {
   id: string;
   shopId?: string;
@@ -227,6 +233,10 @@ export interface Transaction {
   staffName: string; // Shows "Owner" for shop owner, or specific staff name for staff
   staffRole: 'owner' | 'staff';
   counterName: string;
+  reconciledDueAmount?: number; // পূর্বের বাকি থেকে সমন্বিত মোট টাকা
+  reconciledFromInvoices?: ReconciledInvoiceRef[]; // নতুন বিলে কোন কোন পূর্বের ইনভয়েস সমন্বয় হয়েছে
+  reconciledIntoInvoiceNo?: string; // যে নতুন ইনভয়েসে এই বকেয়া যুক্ত করে সমন্বয় করা হয়েছে
+  reconciledIntoTxId?: string;
   createdAt?: unknown;
   updatedAt?: unknown;
   updatedAtMs?: number;
@@ -457,6 +467,8 @@ export interface CartItem {
   updateStock?: boolean; // When true (default), decreases inventory stock; when false, only appears in invoice without touching stock
   dosageSchedule?: string; // e.g. "1+0+1" or "1+1+1"
   dosageDuration?: string; // e.g. "10 Day", "7 Day", "খাওয়ার পর"
+  reconcilePreviousInvoices?: boolean;
+  reconcileInvoiceIds?: string[];
 }
 
 export type PurchasePackUnit = 'piece' | 'strip' | 'box' | 'cartoon';
@@ -493,5 +505,7 @@ export interface PurchaseCartItem {
   vatPercent?: number; // ভ্যাট হার % (VAT %)
   vatAmount?: number; // ভ্যাট টাকা ৳ (VAT Amount - মোট পণ্য ভ্যাট)
   customLineTotal?: number; // কাস্টম লাইন মোট মূল্য ৳ (Custom Price / Line Total)
+  reconcilePreviousInvoices?: boolean; // যোগকৃত Due পূর্বের ইনভয়েসের সাথে সমন্বয় হবে কিনা
+  reconcileInvoiceIds?: string[]; // কোন কোন পূর্বের ইনভয়েস সমন্বয় হবে
 }
 

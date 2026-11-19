@@ -70,7 +70,13 @@ import { PosAndDailyAccountsView } from './components/PosAndDailyAccountsView';
 import { StaffAndShopView } from './components/StaffAndShopView';
 import { PublicHealthcarePortal } from './components/PublicHealthcarePortal';
 import { searchMedexLiveFromApi, syncMedexPricesFromApi } from './utils/medexLiveClient';
-import { isDueEntryItem } from './utils/whatsappShare';
+import { isDueEntryItem, orderCartItemsWithDueLast } from './utils/whatsappShare';
+import {
+  matchesSaleInvoiceParty,
+  normalizeSupplierPartyName,
+  reconcilePreviousInvoicesForOrder,
+  restoreReconciledInvoicesOnDelete,
+} from './utils/dueReconciliation';
 import {
   BD_COMPANIES_DIRECTORY,
   BD_GENERICS_DIRECTORY,
@@ -582,8 +588,33 @@ function buildTransactionCloudPayload(tx: Transaction, ownerId = SHARED_PHARMACY
     updatedAt: serverTimestamp(),
   };
 
+  if (typeof tx.vat === 'number' && !Number.isNaN(tx.vat)) {
+    payload.vat = sanitizeNumber(tx.vat, 0);
+  }
+  if (typeof tx.vatPercent === 'number' && !Number.isNaN(tx.vatPercent)) {
+    payload.vatPercent = sanitizeNumber(tx.vatPercent, 0);
+  }
   if (typeof tx.totalPurchaseCost === 'number' && !Number.isNaN(tx.totalPurchaseCost)) {
     payload.totalPurchaseCost = sanitizeNumber(tx.totalPurchaseCost);
+  }
+  if (typeof tx.reconciledDueAmount === 'number' && !Number.isNaN(tx.reconciledDueAmount) && tx.reconciledDueAmount > 0) {
+    payload.reconciledDueAmount = sanitizeNumber(tx.reconciledDueAmount, 0);
+  }
+  if (Array.isArray(tx.reconciledFromInvoices) && tx.reconciledFromInvoices.length > 0) {
+    payload.reconciledFromInvoices = tx.reconciledFromInvoices.slice(0, 100).map((r) => ({
+      txId: sanitizeString(r.txId, 128),
+      invoiceNo: sanitizeString(r.invoiceNo, 60),
+      amount: sanitizeNumber(r.amount, 0),
+    }));
+  }
+  if (tx.reconciledIntoInvoiceNo) {
+    payload.reconciledIntoInvoiceNo = sanitizeString(tx.reconciledIntoInvoiceNo, 60);
+  }
+  if (tx.reconciledIntoTxId) {
+    payload.reconciledIntoTxId = sanitizeString(tx.reconciledIntoTxId, 128);
+  }
+  if (typeof tx.updatedAtMs === 'number' && !Number.isNaN(tx.updatedAtMs)) {
+    payload.updatedAtMs = tx.updatedAtMs;
   }
   if (tx.category) payload.category = sanitizeString(tx.category, 60);
   if (tx.patientAge) payload.patientAge = sanitizeString(tx.patientAge, 30);
@@ -3900,31 +3931,33 @@ export default function App() {
 
     setPosCart((prev) => {
       const existing = prev.find((item) => item.medicineId === med.id);
-      const next = existing
-        ? prev.map((item) =>
-            item.medicineId === med.id
-              ? { ...item, qty: item.qty + qty, availableStock: currentStock || item.availableStock }
-              : item
-          )
-        : [
-            ...prev,
-            {
-              medicineId: med.id,
-              inventoryId: invMatch?.id,
-              brandName: med.brandName,
-              genericName: med.genericName,
-              companyName: med.companyName,
-              strength: med.strength,
-              dosageForm: med.dosageForm,
-              unitPrice: basePrice,
-              originalUnitPrice: basePrice,
-              purchasePrice: basePurPrice,
-              originalPurchasePrice: basePurPrice,
-              qty,
-              availableStock: currentStock > 0 ? currentStock : 100,
-              updateStock: true,
-            },
-          ];
+      const next = orderCartItemsWithDueLast(
+        existing
+          ? prev.map((item) =>
+              item.medicineId === med.id
+                ? { ...item, qty: item.qty + qty, availableStock: currentStock || item.availableStock }
+                : item
+            )
+          : [
+              ...prev,
+              {
+                medicineId: med.id,
+                inventoryId: invMatch?.id,
+                brandName: med.brandName,
+                genericName: med.genericName,
+                companyName: med.companyName,
+                strength: med.strength,
+                dosageForm: med.dosageForm,
+                unitPrice: basePrice,
+                originalUnitPrice: basePrice,
+                purchasePrice: basePurPrice,
+                originalPurchasePrice: basePurPrice,
+                qty,
+                availableStock: currentStock > 0 ? currentStock : 100,
+                updateStock: true,
+              },
+            ]
+      );
       saveLocal(STORAGE_KEYS.POS_CART, next);
       return next;
     });
@@ -3988,59 +4021,74 @@ export default function App() {
     qty: number;
     saveToCatalog?: boolean;
     updateStock?: boolean;
+    reconcilePreviousInvoices?: boolean;
+    reconcileInvoiceIds?: string[];
   }) => {
-    const cleanBrand = params.brandName.trim() || 'কাস্টম প্রডাক্ট';
-    const cleanStrength = (params.strength || '').trim();
-    const cleanForm = (params.dosageForm || 'Tablet').trim();
-    const cleanGeneric = (params.genericName || cleanBrand).trim();
+    const rawBrand = params.brandName.trim() || 'কাস্টম প্রডাক্ট';
+    const isDue = isDueEntryItem({ brandName: rawBrand, dosageForm: params.dosageForm });
+    const cleanBrand = isDue ? 'Due' : rawBrand;
+    const cleanStrength = isDue ? '' : (params.strength || '').trim();
+    const cleanForm = isDue ? 'Due' : (params.dosageForm || 'Tablet').trim();
+    const cleanGeneric = isDue ? '' : (params.genericName || cleanBrand).trim();
     const cleanCompany = (params.companyName || 'Custom / General').trim();
     const unitPrice = Math.max(0.01, Number(params.unitPrice) || 10);
-    const purchasePrice =
-      typeof params.purchasePrice === 'number' && params.purchasePrice > 0
-        ? params.purchasePrice
-        : Number((unitPrice * 0.88).toFixed(2));
-    const qty = Math.max(1, Math.round(Number(params.qty) || 1));
+    const purchasePrice = isDue
+      ? 0
+      : typeof params.purchasePrice === 'number' && params.purchasePrice > 0
+      ? params.purchasePrice
+      : Number((unitPrice * 0.88).toFixed(2));
+    const qty = isDue ? 1 : Math.max(1, Math.round(Number(params.qty) || 1));
 
     const slug = `${cleanBrand}-${cleanStrength}-${cleanForm}`
       .toLowerCase()
       .replace(/[^a-z0-9\u0980-\u09ff]+/g, '-')
       .replace(/^-|-$/g, '')
       .slice(0, 40);
-    const customMedId = `custom_sale_${slug || Date.now()}`;
+    const customMedId = isDue
+      ? `due_sale_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+      : `custom_sale_${slug || Date.now()}`;
 
-    const invMatch = findMatchingInventoryRecord(inventory, {
-      medicineId: customMedId,
-      brandName: cleanBrand,
-      strength: cleanStrength,
-      dosageForm: cleanForm,
-    });
-    const currentStock = invMatch ? invMatch.stockQty : 100;
+    const invMatch = isDue
+      ? undefined
+      : findMatchingInventoryRecord(inventory, {
+          medicineId: customMedId,
+          brandName: cleanBrand,
+          strength: cleanStrength,
+          dosageForm: cleanForm,
+        });
+    const currentStock = invMatch ? invMatch.stockQty : 0;
 
-    const existingCatalogForSale = fullCatalog.find(
-      (m) =>
-        m.brandName.trim().toLowerCase() === cleanBrand.toLowerCase() &&
-        m.strength.trim().toLowerCase() === cleanStrength.toLowerCase() &&
-        m.dosageForm.trim().toLowerCase() === cleanForm.toLowerCase()
-    );
-    const resolvedSaleCompany = resolveCanonicalMedicineCompany({
-      catalog: fullCatalog,
-      medicineId: existingCatalogForSale?.id,
-      brandName: cleanBrand,
-      strength: cleanStrength,
-      dosageForm: cleanForm,
-      candidateCompany: existingCatalogForSale?.companyName || cleanCompany,
-      invoiceSupplierCompany: cleanCompany,
-    });
+    const existingCatalogForSale = isDue
+      ? undefined
+      : fullCatalog.find(
+          (m) =>
+            m.brandName.trim().toLowerCase() === cleanBrand.toLowerCase() &&
+            m.strength.trim().toLowerCase() === cleanStrength.toLowerCase() &&
+            m.dosageForm.trim().toLowerCase() === cleanForm.toLowerCase()
+        );
+    const resolvedSaleCompany = isDue
+      ? cleanCompany
+      : resolveCanonicalMedicineCompany({
+          catalog: fullCatalog,
+          medicineId: existingCatalogForSale?.id,
+          brandName: cleanBrand,
+          strength: cleanStrength,
+          dosageForm: cleanForm,
+          candidateCompany: existingCatalogForSale?.companyName || cleanCompany,
+          invoiceSupplierCompany: cleanCompany,
+        });
 
     setPosCart((prev) => {
-      const existing = prev.find(
-        (item) =>
-          item.medicineId === customMedId ||
-          (item.brandName.trim().toLowerCase() === cleanBrand.toLowerCase() &&
-            item.strength.trim().toLowerCase() === cleanStrength.toLowerCase() &&
-            item.dosageForm.trim().toLowerCase() === cleanForm.toLowerCase())
-      );
-      const next = existing
+      const existing = isDue
+        ? undefined
+        : prev.find(
+            (item) =>
+              item.medicineId === customMedId ||
+              (item.brandName.trim().toLowerCase() === cleanBrand.toLowerCase() &&
+                item.strength.trim().toLowerCase() === cleanStrength.toLowerCase() &&
+                item.dosageForm.trim().toLowerCase() === cleanForm.toLowerCase())
+          );
+      const rawNext = existing
         ? prev.map((item) =>
             item.medicineId === existing.medicineId
               ? {
@@ -4067,15 +4115,22 @@ export default function App() {
               purchasePrice,
               originalPurchasePrice: purchasePrice,
               qty,
-              availableStock: currentStock > 0 ? currentStock : 100,
-              updateStock: params.updateStock !== undefined ? params.updateStock : true,
+              availableStock: isDue ? 0 : currentStock > 0 ? currentStock : 100,
+              updateStock: isDue ? false : params.updateStock !== undefined ? params.updateStock : true,
+              ...(isDue
+                ? {
+                    reconcilePreviousInvoices: params.reconcilePreviousInvoices !== false,
+                    reconcileInvoiceIds: params.reconcileInvoiceIds,
+                  }
+                : {}),
             },
           ];
+      const next = orderCartItemsWithDueLast(rawNext);
       saveLocal(STORAGE_KEYS.POS_CART, next);
       return next;
     });
 
-    if (params.saveToCatalog) {
+    if (params.saveToCatalog && !isDue) {
       await handleSaveMedicineCatalog(
         {
           brandName: cleanBrand,
@@ -4095,7 +4150,9 @@ export default function App() {
     }
 
     showToast(
-      `কাস্টম প্রডাক্ট "${cleanBrand}${cleanStrength ? ` ${cleanStrength}` : ''}" (${qty} পিস · দর ৳${formatCleanMoney(unitPrice)}) বিক্রয় বিলে যুক্ত হয়েছে!`
+      isDue
+        ? `পূর্বের বকেয়া (Due ৳${formatCleanMoney(unitPrice)}) বিক্রয় বিলে যুক্ত হয়েছে!`
+        : `কাস্টম প্রডাক্ট "${cleanBrand}${cleanStrength ? ` ${cleanStrength}` : ''}" (${qty} পিস · দর ৳${formatCleanMoney(unitPrice)}) বিক্রয় বিলে যুক্ত হয়েছে!`
     );
   };
 
@@ -4136,52 +4193,54 @@ export default function App() {
 
     setPurchaseCart((prev) => {
       const existing = prev.find((item) => item.medicineId === med.id);
-      const next = existing
-        ? prev.map((item) =>
-            item.medicineId === med.id
-              ? {
-                  ...item,
-                  qty: item.qty + qty,
-                  availableStock: currentStock,
-                  purchasePrice: costPrice,
-                  updateStock,
-                  packUnit: packOpts?.packUnit || item.packUnit,
-                  packCount: packOpts?.packCount ? (item.packCount || 0) + packOpts.packCount : item.packCount,
-                  unitsPerPack: packOpts?.unitsPerPack || item.unitsPerPack,
-                  packRate: packOpts?.packRate || item.packRate,
-                  packDetailFormula: packOpts?.packDetailFormula || item.packDetailFormula,
-                  stripsPerBox: packOpts?.stripsPerBox || item.stripsPerBox,
-                  pcsPerStrip: packOpts?.pcsPerStrip || item.pcsPerStrip,
-                }
-              : item
-          )
-        : [
-            ...prev,
-            {
-              medicineId: med.id,
-              inventoryId: invMatch?.id,
-              brandName: med.brandName,
-              genericName: med.genericName,
-              companyName: med.companyName,
-              strength: med.strength,
-              dosageForm: med.dosageForm,
-              packSize: med.packSize || '10 × 10',
-              purchasePrice: costPrice,
-              unitPrice: retailMrp,
-              qty,
-              batchNo: invMatch?.batchNo || `B-${Math.floor(1000 + Math.random() * 9000)}`,
-              expiryDate: invMatch?.expiryDate || '2028-06-30',
-              availableStock: currentStock,
-              updateStock,
-              packUnit: packOpts?.packUnit || 'piece',
-              packCount: packOpts?.packCount || 1,
-              unitsPerPack: packOpts?.unitsPerPack,
-              packRate: packOpts?.packRate,
-              packDetailFormula: packOpts?.packDetailFormula,
-              stripsPerBox: packOpts?.stripsPerBox,
-              pcsPerStrip: packOpts?.pcsPerStrip,
-            },
-          ];
+      const next = orderCartItemsWithDueLast(
+        existing
+          ? prev.map((item) =>
+              item.medicineId === med.id
+                ? {
+                    ...item,
+                    qty: item.qty + qty,
+                    availableStock: currentStock,
+                    purchasePrice: costPrice,
+                    updateStock,
+                    packUnit: packOpts?.packUnit || item.packUnit,
+                    packCount: packOpts?.packCount ? (item.packCount || 0) + packOpts.packCount : item.packCount,
+                    unitsPerPack: packOpts?.unitsPerPack || item.unitsPerPack,
+                    packRate: packOpts?.packRate || item.packRate,
+                    packDetailFormula: packOpts?.packDetailFormula || item.packDetailFormula,
+                    stripsPerBox: packOpts?.stripsPerBox || item.stripsPerBox,
+                    pcsPerStrip: packOpts?.pcsPerStrip || item.pcsPerStrip,
+                  }
+                : item
+            )
+          : [
+              ...prev,
+              {
+                medicineId: med.id,
+                inventoryId: invMatch?.id,
+                brandName: med.brandName,
+                genericName: med.genericName,
+                companyName: med.companyName,
+                strength: med.strength,
+                dosageForm: med.dosageForm,
+                packSize: med.packSize || '10 × 10',
+                purchasePrice: costPrice,
+                unitPrice: retailMrp,
+                qty,
+                batchNo: invMatch?.batchNo || `B-${Math.floor(1000 + Math.random() * 9000)}`,
+                expiryDate: invMatch?.expiryDate || '2028-06-30',
+                availableStock: currentStock,
+                updateStock,
+                packUnit: packOpts?.packUnit || 'piece',
+                packCount: packOpts?.packCount || 1,
+                unitsPerPack: packOpts?.unitsPerPack,
+                packRate: packOpts?.packRate,
+                packDetailFormula: packOpts?.packDetailFormula,
+                stripsPerBox: packOpts?.stripsPerBox,
+                pcsPerStrip: packOpts?.pcsPerStrip,
+              },
+            ]
+      );
       saveLocal(STORAGE_KEYS.PURCHASE_CART, next);
       return next;
     });
@@ -4212,6 +4271,8 @@ export default function App() {
     packSize?: string;
     stripsPerBox?: number;
     pcsPerStrip?: number;
+    reconcilePreviousInvoices?: boolean;
+    reconcileInvoiceIds?: string[];
   }) => {
     const isBlank = !params.brandName.trim();
     const cleanBrand = params.brandName.trim();
@@ -4344,6 +4405,12 @@ export default function App() {
         packDetailFormula: isDue ? '' : params.packDetailFormula,
         stripsPerBox: isDue ? undefined : params.stripsPerBox,
         pcsPerStrip: isDue ? undefined : params.pcsPerStrip,
+        ...(isDue
+          ? {
+              reconcilePreviousInvoices: params.reconcilePreviousInvoices !== false,
+              reconcileInvoiceIds: params.reconcileInvoiceIds,
+            }
+          : {}),
       };
 
       if (existing) {
@@ -4376,6 +4443,7 @@ export default function App() {
         }
       }
 
+      next = orderCartItemsWithDueLast(next);
       saveLocal(STORAGE_KEYS.PURCHASE_CART, next);
       return next;
     });
@@ -4442,8 +4510,8 @@ export default function App() {
     updates: Partial<PurchaseCartItem>
   ) => {
     setPurchaseCart((prev) => {
-      const next = prev.map((item) =>
-        item.medicineId === medId ? { ...item, ...updates } : item
+      const next = orderCartItemsWithDueLast(
+        prev.map((item) => (item.medicineId === medId ? { ...item, ...updates } : item))
       );
       saveLocal(STORAGE_KEYS.PURCHASE_CART, next);
       return next;
@@ -4508,7 +4576,9 @@ export default function App() {
   // Start editing an existing Sale or Purchase invoice using the full New-Invoice Creation Builder
   const handleStartEditInvoice = (tx: Transaction) => {
     if (tx.txType === 'sale') {
-      const saleItems = buildSaleCartFromTransaction(tx, fullCatalog, inventory);
+      const saleItems = orderCartItemsWithDueLast(
+        buildSaleCartFromTransaction(tx, fullCatalog, inventory)
+      );
       setPosCart(saleItems);
       saveLocal(STORAGE_KEYS.POS_CART, saleItems);
       setEditingInvoiceTx(tx);
@@ -4518,7 +4588,9 @@ export default function App() {
         `বিক্রয় ইনভয়েস (${tx.invoiceNo}) নতুন ইনভয়েস তৈরির প্যানেলে এডিটের জন্য লোড হয়েছে!`
       );
     } else if (tx.txType === 'purchase') {
-      const purItems = buildPurchaseCartFromTransaction(tx, fullCatalog, inventory);
+      const purItems = orderCartItemsWithDueLast(
+        buildPurchaseCartFromTransaction(tx, fullCatalog, inventory)
+      );
       setPurchaseCart(purItems);
       saveLocal(STORAGE_KEYS.PURCHASE_CART, purItems);
       setEditingInvoiceTx(tx);
@@ -4570,6 +4642,7 @@ export default function App() {
     if (params.syncModifiedPricesToCatalog) {
       const catalogUpdates: Promise<void>[] = [];
       for (const item of posCart) {
+        if (isDueEntryItem(item)) continue;
         const catMed = fullCatalog.find((m) => m.id === item.medicineId);
         const unitChanged =
           item.originalUnitPrice !== undefined &&
@@ -4624,16 +4697,23 @@ export default function App() {
       posCart.reduce((acc, i) => acc + i.unitPrice * i.qty, 0)
     );
     const totalPurchaseCost = sanitizeNumber(
-      posCart.reduce((acc, i) => acc + (Number(i.purchasePrice) || 0) * (Number(i.qty) || 0), 0)
+      posCart.reduce(
+        (acc, i) =>
+          acc + (isDueEntryItem(i) ? 0 : (Number(i.purchasePrice) || 0) * (Number(i.qty) || 0)),
+        0
+      )
     );
     const discount = sanitizeNumber(params.discount, 0, subTotal);
     const grandTotal = sanitizeNumber(subTotal - discount);
     const paidAmount = sanitizeNumber(params.paidAmount, 0, grandTotal);
     const dueAmount = sanitizeNumber(grandTotal - paidAmount);
-    const totalCount = posCart.reduce((acc, i) => acc + i.qty, 0);
+    const totalCount = posCart
+      .filter((i) => !isDueEntryItem(i))
+      .reduce((acc, i) => acc + i.qty, 0);
 
+    const orderedSaleCart = orderCartItemsWithDueLast(posCart);
     const summaryText = sanitizeString(
-      posCart
+      orderedSaleCart
         .map((i, idx) => formatCartItemInvoiceLine(i, idx))
         .join('\n'),
       50000
@@ -4780,15 +4860,41 @@ export default function App() {
       }
     }
 
-    unmarkDeletedId(txId);
-    setTransactions((prev) => {
-      const next = existingEditedTx
-        ? prev.map((t) => (getCanonicalDocId(t.id, effectiveShopId) === txId ? newTx : t))
-        : [newTx, ...prev];
-      saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
-      saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), next);
-      return next;
+    const saleReconcile = reconcilePreviousInvoicesForOrder({
+      transactions,
+      dueCartItems: posCart,
+      targetType: 'sale',
+      newTxId: txId,
+      newInvoiceNo: invoiceNo,
+      partyMatcher: (t) =>
+        matchesSaleInvoiceParty(
+          t,
+          {
+            customerId: params.customerId,
+            customerName: params.customerName,
+            customerPhone: params.customerPhone,
+          },
+          effectiveShopId
+        ),
+      existingEditedTx,
+      shopId: effectiveShopId,
+      nowMs,
     });
+
+    if (saleReconcile.reconciledTotal > 0) {
+      newTx.reconciledDueAmount = saleReconcile.reconciledTotal;
+      newTx.reconciledFromInvoices = saleReconcile.reconciledRefs;
+    }
+
+    unmarkDeletedId(txId);
+    const nextSaleTransactions = existingEditedTx
+      ? saleReconcile.nextTransactions.map((t) =>
+          getCanonicalDocId(t.id, effectiveShopId) === txId ? newTx : t
+        )
+      : [newTx, ...saleReconcile.nextTransactions];
+    setTransactions(nextSaleTransactions);
+    saveLocal(STORAGE_KEYS.TRANSACTIONS, nextSaleTransactions);
+    saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), nextSaleTransactions);
 
     setInventory(nextInventoryList);
     saveLocal(STORAGE_KEYS.INVENTORY, nextInventoryList);
@@ -4816,15 +4922,17 @@ export default function App() {
           let due = c.totalDue;
 
           if (existingEditedTx && canonCId === oldCustId) {
-            purchased = Math.max(0, purchased - existingEditedTx.grandTotal);
+            const oldRec = existingEditedTx.reconciledDueAmount || 0;
+            purchased = Math.max(0, purchased - Math.max(0, existingEditedTx.grandTotal - oldRec));
             paid = Math.max(0, paid - existingEditedTx.paidAmount);
-            due = Math.max(0, due - existingEditedTx.dueAmount);
+            due = Math.max(0, due + oldRec - existingEditedTx.dueAmount);
           }
 
           if (canonCId === newCustId) {
-            purchased += grandTotal;
+            const newRec = saleReconcile.reconciledTotal || 0;
+            purchased += Math.max(0, grandTotal - newRec);
             paid += paidAmount;
-            due += dueAmount;
+            due = Math.max(0, due - newRec + dueAmount);
           }
 
           const updatedC: Customer = {
@@ -4855,6 +4963,17 @@ export default function App() {
           operationType: OperationType.WRITE,
           path: `transactions/${txId}`,
         },
+        ...saleReconcile.modifiedOldInvoices.map((oldInv) => {
+          const canonOldId = getCanonicalDocId(oldInv.id, effectiveShopId);
+          return {
+            promise: setDoc(
+              doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, canonOldId)),
+              buildTransactionCloudPayload(oldInv, effectiveCloudUid, effectiveShopId)
+            ),
+            operationType: OperationType.UPDATE,
+            path: `transactions/${canonOldId}`,
+          };
+        }),
         ...Array.from(modifiedInvMap.values()).map((invItem) => {
           const canonInvId = getCanonicalDocId(invItem.id, effectiveShopId);
           return {
@@ -4885,15 +5004,19 @@ export default function App() {
     saveLocal(STORAGE_KEYS.POS_CART, []);
     setEditingInvoiceTx(null);
     const soldStockCount = posCart
-      .filter((i) => i.updateStock !== false)
+      .filter((i) => !isDueEntryItem(i) && i.updateStock !== false)
       .reduce((acc, i) => acc + i.qty, 0);
-    const nonStockSoldCount = posCart.filter((i) => i.updateStock === false).length;
+    const nonStockSoldCount = posCart.filter((i) => !isDueEntryItem(i) && i.updateStock === false).length;
+    const recSaleNote =
+      saleReconcile.reconciledTotal > 0
+        ? ` ও পূর্বের ${saleReconcile.reconciledRefs.length}টি ইনভয়েসের ৳${formatCleanMoney(saleReconcile.reconciledTotal)} সমন্বয় হয়েছে`
+        : '';
     showToast(
       existingEditedTx
-        ? `বিক্রয় ইনভয়েস (${invoiceNo}) সফলভাবে এডিট হয়েছে!`
+        ? `বিক্রয় ইনভয়েস (${invoiceNo}) সফলভাবে এডিট হয়েছে${recSaleNote}!`
         : soldStockCount > 0
-        ? `বিক্রয় ইনভয়েস (${invoiceNo}) তৈরি হয়েছে ও স্টক থেকে -${soldStockCount} পিস কমানো হয়েছে${nonStockSoldCount > 0 ? ` (${nonStockSoldCount}টি নন-স্টক আইটেম)` : ''}!`
-        : `বিক্রয় ইনভয়েস (${invoiceNo}) তৈরি হয়েছে (শুধু ইনভয়েস, স্টক অপরিবর্তিত)!`
+        ? `বিক্রয় ইনভয়েস (${invoiceNo}) তৈরি হয়েছে ও স্টক থেকে -${soldStockCount} পিস কমানো হয়েছে${nonStockSoldCount > 0 ? ` (${nonStockSoldCount}টি নন-স্টক আইটেম)` : ''}${recSaleNote}!`
+        : `বিক্রয় ইনভয়েস (${invoiceNo}) তৈরি হয়েছে${recSaleNote}!`
     );
     return newTx;
   };
@@ -4913,8 +5036,8 @@ export default function App() {
     editingTxId?: string;
     syncModifiedPricesToCatalog?: boolean;
   }): Promise<Transaction | null> => {
-    const validPurchaseCart = purchaseCart.filter(
-      (i) => i.brandName && i.brandName.trim().length > 0
+    const validPurchaseCart = orderCartItemsWithDueLast(
+      purchaseCart.filter((i) => i.brandName && i.brandName.trim().length > 0)
     );
     if (validPurchaseCart.length === 0) return null;
 
@@ -5220,15 +5343,33 @@ export default function App() {
       await Promise.allSettled(purchaseCatalogSyncPromises);
     }
 
-    unmarkDeletedId(txId);
-    setTransactions((prev) => {
-      const next = existingEditedTx
-        ? prev.map((t) => (getCanonicalDocId(t.id, effectiveShopId) === txId ? newTx : t))
-        : [newTx, ...prev];
-      saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
-      saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), next);
-      return next;
+    const purReconcile = reconcilePreviousInvoicesForOrder({
+      transactions,
+      dueCartItems: validPurchaseCart,
+      targetType: 'purchase',
+      newTxId: txId,
+      newInvoiceNo: invoiceNo,
+      partyMatcher: (t) =>
+        normalizeSupplierPartyName(t.partyName) === normalizeSupplierPartyName(params.supplierCompany),
+      existingEditedTx,
+      shopId: effectiveShopId,
+      nowMs,
     });
+
+    if (purReconcile.reconciledTotal > 0) {
+      newTx.reconciledDueAmount = purReconcile.reconciledTotal;
+      newTx.reconciledFromInvoices = purReconcile.reconciledRefs;
+    }
+
+    unmarkDeletedId(txId);
+    const nextPurTransactions = existingEditedTx
+      ? purReconcile.nextTransactions.map((t) =>
+          getCanonicalDocId(t.id, effectiveShopId) === txId ? newTx : t
+        )
+      : [newTx, ...purReconcile.nextTransactions];
+    setTransactions(nextPurTransactions);
+    saveLocal(STORAGE_KEYS.TRANSACTIONS, nextPurTransactions);
+    saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), nextPurTransactions);
 
     setInventory(nextInventoryList);
     saveLocal(STORAGE_KEYS.INVENTORY, nextInventoryList);
@@ -5244,6 +5385,17 @@ export default function App() {
           operationType: OperationType.WRITE,
           path: `transactions/${txId}`,
         },
+        ...purReconcile.modifiedOldInvoices.map((oldInv) => {
+          const canonOldId = getCanonicalDocId(oldInv.id, effectiveShopId);
+          return {
+            promise: setDoc(
+              doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, canonOldId)),
+              buildTransactionCloudPayload(oldInv, effectiveCloudUid, effectiveShopId)
+            ),
+            operationType: OperationType.UPDATE,
+            path: `transactions/${canonOldId}`,
+          };
+        }),
         ...Array.from(changedInvMap.values()).map((invItem) => {
           const canonInvId = getCanonicalDocId(invItem.id, effectiveShopId);
           return {
@@ -5263,18 +5415,22 @@ export default function App() {
     saveLocal(STORAGE_KEYS.PURCHASE_CART, []);
     setEditingInvoiceTx(null);
     const addedStockCount = purchaseCart
-      .filter((i) => i.updateStock !== false)
+      .filter((i) => !isDueEntryItem(i) && i.updateStock !== false)
       .reduce((acc, i) => acc + i.qty + (i.bonusQty || 0), 0);
     const totalBonusCount = purchaseCart
-      .filter((i) => i.updateStock !== false)
+      .filter((i) => !isDueEntryItem(i) && i.updateStock !== false)
       .reduce((acc, i) => acc + (i.bonusQty || 0), 0);
-    const nonStockPurCount = purchaseCart.filter((i) => i.updateStock === false).length;
+    const nonStockPurCount = purchaseCart.filter((i) => !isDueEntryItem(i) && i.updateStock === false).length;
+    const recPurNote =
+      purReconcile.reconciledTotal > 0
+        ? ` ও পূর্বের ${purReconcile.reconciledRefs.length}টি ইনভয়েসের ৳${formatCleanMoney(purReconcile.reconciledTotal)} বকেয়া সমন্বয় হয়েছে`
+        : '';
     showToast(
       existingEditedTx
-        ? `ক্রয় ইনভয়েস (${invoiceNo}) সফলভাবে এডিট হয়েছে${totalBonusCount > 0 ? ` (বোনাস +${totalBonusCount} পিস সহ)` : ''}!`
+        ? `ক্রয় ইনভয়েস (${invoiceNo}) সফলভাবে এডিট হয়েছে${totalBonusCount > 0 ? ` (বোনাস +${totalBonusCount} পিস সহ)` : ''}${recPurNote}!`
         : addedStockCount > 0
-        ? `ক্রয় ইনভয়েস (${invoiceNo}) তৈরি হয়েছে ও স্টকে +${addedStockCount} পিস যুক্ত হয়েছে${totalBonusCount > 0 ? ` (বোনাস +${totalBonusCount} পিস ফ্রি)` : ''}${nonStockPurCount > 0 ? ` (${nonStockPurCount}টি নন-স্টক আইটেম)` : ''}!`
-        : `ক্রয় ইনভয়েস (${invoiceNo}) তৈরি হয়েছে (শুধু ইনভয়েস, স্টক অপরিবর্তিত)!`
+        ? `ক্রয় ইনভয়েস (${invoiceNo}) তৈরি হয়েছে ও স্টকে +${addedStockCount} পিস যুক্ত হয়েছে${totalBonusCount > 0 ? ` (বোনাস +${totalBonusCount} পিস ফ্রি)` : ''}${nonStockPurCount > 0 ? ` (${nonStockPurCount}টি নন-স্টক আইটেম)` : ''}${recPurNote}!`
+        : `ক্রয় ইনভয়েস (${invoiceNo}) তৈরি হয়েছে${recPurNote}!`
     );
     return newTx;
   };
@@ -5490,12 +5646,61 @@ export default function App() {
     const scopedTxId = getScopedFirestoreDocId(effectiveShopId, canonTxId);
     const nowMs = Date.now();
     markDeletedIds([tx.id, canonTxId, scopedTxId]);
-    setTransactions((prev) => {
-      const next = prev.filter((t) => getCanonicalDocId(t.id, effectiveShopId) !== canonTxId);
-      saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
-      saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), next);
-      return next;
+
+    const restored = restoreReconciledInvoicesOnDelete({
+      transactions,
+      deletedTx: tx,
+      shopId: effectiveShopId,
+      nowMs,
     });
+    setTransactions(restored.nextTransactions);
+    saveLocal(STORAGE_KEYS.TRANSACTIONS, restored.nextTransactions);
+    saveLocal(
+      getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId),
+      restored.nextTransactions
+    );
+
+    const restoredOldWrites = restored.modifiedSourceInvoices.map((srcTx) => {
+      const canonSrcId = getCanonicalDocId(srcTx.id, effectiveShopId);
+      return {
+        promise: setDoc(
+          doc(db, 'transactions', getScopedFirestoreDocId(effectiveShopId, canonSrcId)),
+          buildTransactionCloudPayload(srcTx, effectiveCloudUid, effectiveShopId)
+        ),
+        operationType: OperationType.UPDATE,
+        path: `transactions/${canonSrcId}`,
+      };
+    });
+
+    // Reverse customer ledger impact when deleting a linked customer sale invoice
+    const updatedCustomersOnDelete: Customer[] = [];
+    if (tx.txType === 'sale' && tx.partyId && tx.partyId !== 'walk-in') {
+      const targetCustId = getCanonicalDocId(tx.partyId, effectiveShopId);
+      setCustomers((prev) => {
+        const nextCusts = prev.map((c) => {
+          const cCanon = getCanonicalDocId(c.id, effectiveShopId);
+          if (cCanon !== targetCustId) return c;
+          const recAmt = tx.reconciledDueAmount || 0;
+          const nextPurchased = Math.max(0, c.totalPurchased - Math.max(0, tx.grandTotal - recAmt));
+          const nextPaid = Math.max(0, c.totalPaid - tx.paidAmount);
+          const nextDue = Math.max(0, c.totalDue + recAmt - tx.dueAmount);
+          const updC: Customer = {
+            ...c,
+            id: cCanon,
+            shopId: effectiveShopId,
+            totalPurchased: sanitizeNumber(nextPurchased),
+            totalPaid: sanitizeNumber(nextPaid),
+            totalDue: sanitizeNumber(nextDue),
+            updatedAtMs: nowMs,
+          };
+          updatedCustomersOnDelete.push(updC);
+          return updC;
+        });
+        saveLocal(STORAGE_KEYS.CUSTOMERS, nextCusts);
+        saveLocal(getScopedStorageKey(STORAGE_KEYS.CUSTOMERS, effectiveShopId), nextCusts);
+        return nextCusts;
+      });
+    }
 
     // Reverse stock impact when deleting a sale or purchase invoice
     if (tx.txType === 'sale' || tx.txType === 'purchase') {
@@ -5504,6 +5709,9 @@ export default function App() {
       const modifiedInv: InventoryItem[] = [];
 
       for (const pItem of parsedItems) {
+        if (pItem.tailText?.includes('নন-স্টক') || pItem.formPrefix === 'due') {
+          continue;
+        }
         const matched = findMatchingInventoryRecord(nextInv, {
           medicineId: pItem.matchedMedicine?.id,
           brandName: pItem.matchedMedicine?.brandName || pItem.brandAndStrength,
@@ -5523,7 +5731,9 @@ export default function App() {
         }
       }
 
-      const deleteWrites: Array<{ promise: Promise<unknown>; operationType: OperationType; path: string | null }> = [];
+      const deleteWrites: Array<{ promise: Promise<unknown>; operationType: OperationType; path: string | null }> = [
+        ...restoredOldWrites,
+      ];
       if (modifiedInv.length > 0) {
         setInventory(nextInv);
         saveLocal(STORAGE_KEYS.INVENTORY, nextInv);
@@ -5542,6 +5752,17 @@ export default function App() {
         }
       }
       if (user || isCloudLoggedIn) {
+        for (const cObj of updatedCustomersOnDelete) {
+          const canonCustId = getCanonicalDocId(cObj.id, effectiveShopId);
+          deleteWrites.push({
+            promise: setDoc(
+              doc(db, 'customers', getScopedFirestoreDocId(effectiveShopId, canonCustId)),
+              buildCustomerCloudPayload(cObj, effectiveCloudUid, effectiveShopId)
+            ),
+            operationType: OperationType.UPDATE,
+            path: `customers/${canonCustId}`,
+          });
+        }
         for (const delId of Array.from(new Set([scopedTxId, canonTxId, tx.id]))) {
           deleteWrites.push({
             promise: deleteDoc(doc(db, 'transactions', delId)),
@@ -5553,15 +5774,22 @@ export default function App() {
       }
     } else if (user || isCloudLoggedIn) {
       await fireAndRaceFirestoreWrites(
-        Array.from(new Set([scopedTxId, canonTxId, tx.id])).map((delId) => ({
-          promise: deleteDoc(doc(db, 'transactions', delId)),
-          operationType: OperationType.DELETE,
-          path: `transactions/${delId}`,
-        })),
+        [
+          ...restoredOldWrites,
+          ...Array.from(new Set([scopedTxId, canonTxId, tx.id])).map((delId) => ({
+            promise: deleteDoc(doc(db, 'transactions', delId)),
+            operationType: OperationType.DELETE,
+            path: `transactions/${delId}`,
+          })),
+        ],
         1200
       );
     }
-    showToast(`লেনদেন (${tx.invoiceNo}) ডিলিট করা হয়েছে এবং স্টক সমন্বয় হয়েছে`);
+    showToast(
+      restored.modifiedSourceInvoices.length > 0
+        ? `লেনদেন (${tx.invoiceNo}) ডিলিট করা হয়েছে এবং ${restored.modifiedSourceInvoices.length}টি পূর্বের ইনভয়েসের বকেয়া ও স্টক পূর্বাবস্থায় ফিরেছে`
+        : `লেনদেন (${tx.invoiceNo}) ডিলিট করা হয়েছে এবং স্টক সমন্বয় হয়েছে`
+    );
   };
 
   // Single-item fallback Record Company Purchase & Stock-In
