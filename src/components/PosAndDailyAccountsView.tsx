@@ -52,6 +52,7 @@ import {
   numberToBanglaWords,
   parseTransactionItemsDetailed,
   resolveCanonicalMedicineCompany,
+  roundFinalBillAmount,
   searchAndRankMedicines,
   searchCatalogVariantsForInvoice,
 } from '../data/bdMedicines';
@@ -836,14 +837,14 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
   }, [posCart]);
 
   const discountVal = Math.max(0, parseFloat(discountStr) || 0);
-  const grandTotal = Math.max(0, cartSubTotal - discountVal);
+  const grandTotal = roundFinalBillAmount(Math.max(0, cartSubTotal - discountVal));
 
   const effectivePaidAmount =
     paidAmountStr.trim() === ''
       ? grandTotal
       : Math.max(0, Math.min(grandTotal, parseFloat(paidAmountStr) || 0));
 
-  const dueAmount = Math.max(0, grandTotal - effectivePaidAmount);
+  const dueAmount = Math.max(0, Number((grandTotal - effectivePaidAmount).toFixed(2)));
 
   // Purchase Invoice calculations (Unified with PurchaseStepWizard & handleCompletePurchaseInvoice)
   const purDiscountVal = Math.max(0, parseFloat(purDiscountStr) || 0);
@@ -1126,9 +1127,9 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     try {
       const sub = Math.max(0, parseFloat(editSubTotal) || 0);
       const disc = Math.max(0, Math.min(sub, parseFloat(editDiscount) || 0));
-      const grand = Math.max(0, sub - disc);
+      const grand = roundFinalBillAmount(Math.max(0, sub - disc));
       const paid = Math.max(0, Math.min(grand, parseFloat(editPaidAmount) || 0));
-      const due = Math.max(0, grand - paid);
+      const due = Math.max(0, Number((grand - paid).toFixed(2)));
 
       await onEditTransaction(editingTx.id, {
         dateStr: editDateStr.trim() || editingTx.dateStr,

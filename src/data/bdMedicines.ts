@@ -5407,6 +5407,19 @@ export function computePurchaseItemMetrics(item: {
   };
 }
 
+/**
+ * Rounds final invoice grand total to the nearest integer with exact half-up threshold:
+ * < x.5 => x (floor), >= x.5 => x + 1 (ceil).
+ * Uses 6-decimal cleanup first to eliminate IEEE-754 binary float noise.
+ */
+export function roundFinalBillAmount(amount: number): number {
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  const clean = Number(amount.toFixed(6));
+  const whole = Math.floor(clean);
+  const frac = Number((clean - whole).toFixed(6));
+  return frac >= 0.5 ? whole + 1 : whole;
+}
+
 export function computePurchaseCartTotals(
   cart: Array<{
     brandName?: string;
@@ -5455,7 +5468,7 @@ export function computePurchaseCartTotals(
     : itemsVatTotal;
 
   const discount = Number(Math.max(0, Math.min(subTotalTp + totalVat, opts.discount || 0)).toFixed(2));
-  const grandTotal = Number(Math.max(0, subTotalTp + totalVat - discount).toFixed(2));
+  const grandTotal = roundFinalBillAmount(Math.max(0, subTotalTp + totalVat - discount));
 
   const paidAmount =
     opts.paidAmountStr !== undefined

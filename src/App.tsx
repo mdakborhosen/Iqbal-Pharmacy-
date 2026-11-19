@@ -98,6 +98,7 @@ import {
   isValidMedexCompanyName,
   parseTransactionItemsDetailed,
   resolveCanonicalMedicineCompany,
+  roundFinalBillAmount,
 } from './data/bdMedicines';
 import {
   DEFAULT_SHOP_PROFILE,
@@ -4704,7 +4705,7 @@ export default function App() {
       )
     );
     const discount = sanitizeNumber(params.discount, 0, subTotal);
-    const grandTotal = sanitizeNumber(subTotal - discount);
+    const grandTotal = roundFinalBillAmount(Math.max(0, subTotal - discount));
     const paidAmount = sanitizeNumber(params.paidAmount, 0, grandTotal);
     const dueAmount = sanitizeNumber(grandTotal - paidAmount);
     const totalCount = posCart

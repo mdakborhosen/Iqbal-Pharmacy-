@@ -1955,6 +1955,9 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                     <div className="text-lg font-black font-mono tabular-nums text-slate-900 mt-1">
                       ৳{cartSubTotal.toFixed(2)}
                     </div>
+                    <div className="text-[11px] font-bold font-mono text-teal-800 mt-0.5">
+                      চূড়ান্ত বিল: ৳{grandTotal.toFixed(0)}
+                    </div>
                   </div>
 
                   <div>
