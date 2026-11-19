@@ -650,21 +650,55 @@ export const InvoiceVerificationModal: React.FC<InvoiceVerificationModalProps> =
                       <span className="font-mono">৳{formatCleanMoney(activeInvoice.paidAmount ?? 0)}</span>
                     </div>
                     <div className="flex justify-between font-bold border-t border-slate-200 pt-0.5">
-                      <span className={Number(activeInvoice.dueAmount || 0) > 0 ? 'text-rose-700' : 'text-emerald-700'}>
-                        {Number(activeInvoice.dueAmount || 0) > 0 ? 'বকেয়া (DUE):' : 'স্ট্যাটাস:'}
+                      <span
+                        className={
+                          Number(activeInvoice.dueAmount || 0) > 0
+                            ? 'text-rose-700'
+                            : activeInvoice.reconciledIntoInvoiceNo
+                            ? 'text-indigo-700'
+                            : 'text-emerald-700'
+                        }
+                      >
+                        {Number(activeInvoice.dueAmount || 0) > 0
+                          ? 'বকেয়া (DUE):'
+                          : activeInvoice.reconciledIntoInvoiceNo
+                          ? 'বকেয়া (Due):'
+                          : 'স্ট্যাটাস:'}
                       </span>
                       <span
                         className={`font-mono ${
                           Number(activeInvoice.dueAmount || 0) > 0
                             ? 'text-rose-700 font-black'
+                            : activeInvoice.reconciledIntoInvoiceNo
+                            ? 'text-indigo-700 font-bold'
                             : 'text-emerald-700 font-bold'
                         }`}
                       >
                         {Number(activeInvoice.dueAmount || 0) > 0
                           ? `৳${formatCleanMoney(activeInvoice.dueAmount ?? 0)}`
+                          : activeInvoice.reconciledIntoInvoiceNo
+                          ? '৳0.00 (বাদ দেওয়া হয়েছে)'
                           : 'সম্পূর্ণ পরিশোধিত (PAID)'}
                       </span>
                     </div>
+                    {activeInvoice.reconciledIntoInvoiceNo && (
+                      <div className="mt-1.5 p-1.5 rounded bg-indigo-50 border border-indigo-200 text-indigo-900 font-sans font-bold text-[10.5px] text-left">
+                        ✓ সমন্বয় করা হয়েছে{' '}
+                        <span className="font-mono">{activeInvoice.reconciledIntoInvoiceNo}</span>{' '}
+                        নাম্বার ইনভয়েস এ
+                      </div>
+                    )}
+                    {activeInvoice.reconciledFromInvoices &&
+                      activeInvoice.reconciledFromInvoices.length > 0 && (
+                        <div className="mt-1 p-1.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-900 font-sans font-bold text-[10.5px] text-left">
+                          ✓ পূর্বের ইনভয়েস সমন্বয়:{' '}
+                          <span className="font-mono">
+                            {activeInvoice.reconciledFromInvoices
+                              .map((r) => `${r.invoiceNo} (৳${formatCleanMoney(r.amount)})`)
+                              .join(', ')}
+                          </span>
+                        </div>
+                      )}
                   </div>
                 </div>
 
@@ -792,10 +826,16 @@ export const InvoiceVerificationModal: React.FC<InvoiceVerificationModalProps> =
                           className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-block ${
                             inv.dueAmount > 0
                               ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                              : inv.reconciledIntoInvoiceNo
+                              ? 'bg-indigo-50 text-indigo-800 border border-indigo-200'
                               : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                           }`}
                         >
-                          {inv.dueAmount > 0 ? `বকেয়া ৳${formatCleanMoney(inv.dueAmount)}` : 'পরিশোধিত (PAID)'}
+                          {inv.dueAmount > 0
+                            ? `বকেয়া ৳${formatCleanMoney(inv.dueAmount)}`
+                            : inv.reconciledIntoInvoiceNo
+                            ? `সমন্বয় করা হয়েছে ${inv.reconciledIntoInvoiceNo} নাম্বার ইনভয়েস এ`
+                            : 'পরিশোধিত (PAID)'}
                         </span>
                       </div>
                       <button

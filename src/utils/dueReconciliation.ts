@@ -304,12 +304,14 @@ export function reconcilePreviousInvoicesForOrder(params: {
   let reconciledTotal = 0;
 
   if (remainingBudget > 0) {
-    // Gather eligible unpaid invoices
+    const preferredIdSet = new Set(preferredIds);
+    // Gather eligible unpaid invoices (explicitly selected IDs OR matching party)
     const eligible = cloned.filter((tx) => {
       if (tx.txType !== targetType) return false;
       if ((tx.dueAmount || 0) <= 0.009) return false;
-      if (getCanonicalDocIdSimple(tx.id, shopId) === newCanonId) return false;
-      return partyMatcher(tx);
+      const txCanon = getCanonicalDocIdSimple(tx.id, shopId);
+      if (txCanon === newCanonId) return false;
+      return preferredIdSet.has(txCanon) || partyMatcher(tx);
     });
 
     // Prioritize explicitly selected invoice IDs first, then remaining oldest-first (FIFO)
@@ -335,7 +337,8 @@ export function reconcilePreviousInvoicesForOrder(params: {
       const deduct = Number(Math.min(remainingBudget, availDue).toFixed(2));
       if (deduct <= 0) continue;
 
-      oldTx.dueAmount = Math.max(0, Number((availDue - deduct).toFixed(2)));
+      const nextDueRaw = Number((availDue - deduct).toFixed(2));
+      oldTx.dueAmount = nextDueRaw < 0.01 ? 0 : nextDueRaw;
       oldTx.reconciledDueAmount = Number(((oldTx.reconciledDueAmount || 0) + deduct).toFixed(2));
       oldTx.reconciledIntoInvoiceNo = newInvoiceNo;
       oldTx.reconciledIntoTxId = newCanonId;

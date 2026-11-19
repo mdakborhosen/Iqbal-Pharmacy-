@@ -830,6 +830,8 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
         packRate: dueAmt,
         packDetailFormula: '',
         packSize: '',
+        reconcilePreviousInvoices: true,
+        reconcileInvoiceIds: activeSupplierDueInvoices.map((inv) => inv.id),
       });
       setCustomBrand('');
       setCustomGeneric('');
@@ -1961,16 +1963,19 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                             </div>
                             <div className="text-[10.5px] text-teal-800">
                               {item.companyName}
-                              {isDue && item.reconcilePreviousInvoices !== false && activeSupplierDueInvoices.length > 0 && (
-                                <span className="ml-1.5 inline-block px-1.5 py-0.2 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded font-semibold">
-                                  সমন্বয় হবে: {(item.reconcileInvoiceIds?.length
-                                    ? activeSupplierDueInvoices.filter((t) => item.reconcileInvoiceIds!.includes(t.id))
-                                    : activeSupplierDueInvoices
-                                  )
-                                    .map((t) => t.invoiceNo)
-                                    .join(', ')}
-                                </span>
-                              )}
+                              {isDue &&
+                                item.reconcilePreviousInvoices !== false &&
+                                (() => {
+                                  const matched = item.reconcileInvoiceIds?.length
+                                    ? transactions.filter((t) => item.reconcileInvoiceIds!.includes(t.id))
+                                    : activeSupplierDueInvoices;
+                                  if (matched.length === 0) return null;
+                                  return (
+                                    <span className="ml-1.5 inline-block px-1.5 py-0.2 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded font-semibold">
+                                      সমন্বয় হবে: {matched.map((t) => t.invoiceNo).join(', ')}
+                                    </span>
+                                  );
+                                })()}
                             </div>
                           </td>
                           <td className="py-2 px-2 text-center text-slate-600 font-mono">
@@ -2841,16 +2846,19 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
                           </div>
                           <div className="text-[10.5px] text-teal-800">
                             {item.companyName}
-                            {isDue && item.reconcilePreviousInvoices !== false && activeSupplierDueInvoices.length > 0 && (
-                              <span className="ml-1.5 inline-block px-1.5 py-0.2 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded font-semibold">
-                                সমন্বয় হবে: {(item.reconcileInvoiceIds?.length
-                                  ? activeSupplierDueInvoices.filter((t) => item.reconcileInvoiceIds!.includes(t.id))
-                                  : activeSupplierDueInvoices
-                                )
-                                  .map((t) => t.invoiceNo)
-                                  .join(', ')}
-                              </span>
-                            )}
+                            {isDue &&
+                              item.reconcilePreviousInvoices !== false &&
+                              (() => {
+                                const matched = item.reconcileInvoiceIds?.length
+                                  ? transactions.filter((t) => item.reconcileInvoiceIds!.includes(t.id))
+                                  : activeSupplierDueInvoices;
+                                if (matched.length === 0) return null;
+                                return (
+                                  <span className="ml-1.5 inline-block px-1.5 py-0.2 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded font-semibold">
+                                    সমন্বয় হবে: {matched.map((t) => t.invoiceNo).join(', ')}
+                                  </span>
+                                );
+                              })()}
                           </div>
                         </td>
                         <td className="py-2 px-2 text-center font-mono font-bold text-slate-900">
@@ -3066,17 +3074,37 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
           </div>
 
           {/* Reconciled Previous Invoices Note in Step 3 */}
-          {dueAlreadyInCart > 0 && activeSupplierDueInvoices.length > 0 && (
-            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-950 flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <strong>✓ পূর্বের ইনভয়েস সমন্বয় সক্রিয়:</strong> এই চালান সম্পন্ন হলে{' '}
-                <span className="font-mono font-bold">
-                  {activeSupplierDueInvoices.map((t) => `${t.invoiceNo} (৳${formatCleanMoney(t.dueAmount)})`).join(', ')}
-                </span>{' '}
-                থেকে ক্রমানুসারে ৳{formatCleanMoney(Math.min(dueAlreadyInCart, activeSupplierTotalDue))} বকেয়া সমন্বয় হবে।
-              </div>
-            </div>
-          )}
+          {dueAlreadyInCart > 0 &&
+            (() => {
+              const dueItems = purchaseCart.filter(
+                (i) => isDueEntryItem(i) && i.reconcilePreviousInvoices !== false
+              );
+              if (dueItems.length === 0) return null;
+              const explicitIds = Array.from(
+                new Set(dueItems.flatMap((i) => i.reconcileInvoiceIds || []))
+              );
+              const targetInvs =
+                explicitIds.length > 0
+                  ? transactions.filter((t) => explicitIds.includes(t.id) && (t.dueAmount || 0) > 0)
+                  : activeSupplierDueInvoices;
+              if (targetInvs.length === 0) return null;
+              const targetTotal = targetInvs.reduce((s, t) => s + (t.dueAmount || 0), 0);
+              return (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-950 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <strong>✓ পূর্বের ইনভয়েস সমন্বয় সক্রিয়:</strong> এই চালান সম্পন্ন হলে{' '}
+                    <span className="font-mono font-bold">
+                      {targetInvs.map((t) => `${t.invoiceNo} (৳${formatCleanMoney(t.dueAmount)})`).join(', ')}
+                    </span>{' '}
+                    থেকে ৳{formatCleanMoney(Math.min(dueAlreadyInCart, targetTotal))} বকেয়া সমন্বয় হয়ে ঐ ইনভয়েসগুলোর Due বাদ যাবে এবং লেখা থাকবে{' '}
+                    <span className="font-bold text-indigo-900">
+                      &ldquo;সমন্বয় করা হয়েছে {purInvoiceNo} নাম্বার ইনভয়েস এ&rdquo;
+                    </span>
+                    ।
+                  </div>
+                </div>
+              );
+            })()}
 
           {/* Final Financial Settlement & Checkout Form */}
           <form

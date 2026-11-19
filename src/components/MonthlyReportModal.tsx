@@ -794,7 +794,12 @@ export const MonthlyReportModal: React.FC<MonthlyReportModalProps> = ({
                             ৳{(tx.paidAmount || 0).toFixed(0)}
                           </td>
                           <td className="p-2 sm:p-2.5 text-right text-amber-700 font-bold">
-                            {(tx.dueAmount || 0) > 0 ? `৳${tx.dueAmount?.toFixed(0)}` : '-'}
+                            <div>{(tx.dueAmount || 0) > 0 ? `৳${tx.dueAmount?.toFixed(0)}` : '-'}</div>
+                            {tx.reconciledIntoInvoiceNo && (
+                              <div className="text-[9.5px] font-sans font-bold text-indigo-700 mt-0.5">
+                                সমন্বয় করা হয়েছে {tx.reconciledIntoInvoiceNo} নাম্বার ইনভয়েস এ
+                              </div>
+                            )}
                           </td>
                           <td className="p-2 sm:p-2.5 text-center font-sans text-[10.5px]">
                             {tx.paymentMethod === 'cash' ? 'নগদ' : tx.paymentMethod || 'ক্যাশ'}

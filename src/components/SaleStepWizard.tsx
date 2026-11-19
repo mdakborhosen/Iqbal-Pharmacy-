@@ -1913,17 +1913,37 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                 )}
               </div>
 
-              {dueAlreadyInCart > 0 && customerDueSummary.invoices.length > 0 && (
-                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-950">
-                  <strong>✓ পূর্বের ইনভয়েস সমন্বয় সক্রিয়:</strong> এই ইনভয়েস সম্পন্ন হলে{' '}
-                  <span className="font-mono font-bold">
-                    {customerDueSummary.invoices
-                      .map((t) => `${t.invoiceNo} (৳${formatCleanMoney(t.dueAmount)})`)
-                      .join(', ')}
-                  </span>{' '}
-                  থেকে ক্রমানুসারে ৳{formatCleanMoney(Math.min(dueAlreadyInCart, customerDueSummary.totalDueFromInvoices))} বকেয়া সমন্বয় হবে।
-                </div>
-              )}
+              {dueAlreadyInCart > 0 &&
+                (() => {
+                  const dueItems = posCart.filter(
+                    (i) => isDueEntryItem(i) && i.reconcilePreviousInvoices !== false
+                  );
+                  if (dueItems.length === 0) return null;
+                  const explicitIds = Array.from(
+                    new Set(dueItems.flatMap((i) => i.reconcileInvoiceIds || []))
+                  );
+                  const targetInvs =
+                    explicitIds.length > 0
+                      ? transactions.filter((t) => explicitIds.includes(t.id) && (t.dueAmount || 0) > 0)
+                      : customerDueSummary.invoices;
+                  if (targetInvs.length === 0) return null;
+                  const targetTotal = targetInvs.reduce((s, t) => s + (t.dueAmount || 0), 0);
+                  return (
+                    <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-950">
+                      <strong>✓ পূর্বের ইনভয়েস সমন্বয় সক্রিয়:</strong> এই ইনভয়েস সম্পন্ন হলে{' '}
+                      <span className="font-mono font-bold">
+                        {targetInvs
+                          .map((t) => `${t.invoiceNo} (৳${formatCleanMoney(t.dueAmount)})`)
+                          .join(', ')}
+                      </span>{' '}
+                      থেকে ক্রমানুসারে ৳{formatCleanMoney(Math.min(dueAlreadyInCart, targetTotal))} বকেয়া সমন্বয় হয়ে ঐ ইনভয়েসগুলোর Due বাদ যাবে এবং লেখা থাকবে{' '}
+                      <span className="font-bold text-indigo-900">
+                        &ldquo;সমন্বয় করা হয়েছে {saleInvoiceNo} নাম্বার ইনভয়েস এ&rdquo;
+                      </span>
+                      ।
+                    </div>
+                  );
+                })()}
 
               {/* Financial Totals Calculation Box */}
               <form onSubmit={handleSaleSubmit} className="space-y-4">

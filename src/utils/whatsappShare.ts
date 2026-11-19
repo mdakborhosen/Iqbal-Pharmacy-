@@ -532,6 +532,9 @@ export function buildTransactionInvoiceWhatsAppText(
   lines.push(`মোট: ${formatMoneyTaka(tx.grandTotal)}`);
   lines.push(`পরিশোধিত: ${formatMoneyTaka(tx.paidAmount)}`);
   lines.push(`বাকী: ${formatMoneyTaka(tx.dueAmount)}`);
+  if (tx.reconciledIntoInvoiceNo) {
+    lines.push(`সমন্বয় করা হয়েছে ${tx.reconciledIntoInvoiceNo} নাম্বার ইনভয়েস এ`);
+  }
 
   return lines.join('\n');
 }

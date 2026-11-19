@@ -2301,20 +2301,32 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                               <span>{tx.txType === 'purchase' ? 'বকেয়া পরিশোধ' : 'বকেয়া আদায়'}</span>
                             </button>
                           </div>
-                        ) : tx.reconciledIntoInvoiceNo ? (
-                          <div className="flex flex-col items-end gap-0.5">
-                            <span className="text-slate-400">৳0.00</span>
-                            <span className="px-1.5 py-0.5 text-[9.5px] font-sans font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 rounded whitespace-nowrap">
-                              সমন্বিত ➜ {tx.reconciledIntoInvoiceNo}
-                            </span>
-                          </div>
                         ) : (
-                          <span className="text-slate-400">৳0.00</span>
+                          <span className="text-slate-400">
+                            ৳0.00
+                            {tx.reconciledIntoInvoiceNo ? (
+                              <span className="ml-1 text-[10px] font-sans font-semibold text-indigo-700">
+                                (Due বাদ)
+                              </span>
+                            ) : null}
+                          </span>
+                        )}
+                        {tx.reconciledIntoInvoiceNo && (
+                          <div className="mt-1 flex flex-col items-end gap-0.5">
+                            <span className="px-1.5 py-0.5 text-[9.5px] font-sans font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 rounded whitespace-nowrap">
+                              সমন্বয় করা হয়েছে {tx.reconciledIntoInvoiceNo} নাম্বার ইনভয়েস এ
+                            </span>
+                            {tx.reconciledDueAmount !== undefined && tx.reconciledDueAmount > 0 && (
+                              <span className="text-[9.5px] font-sans text-slate-500">
+                                পূর্বের ৳{formatCleanMoney(tx.reconciledDueAmount)} Due বাদ
+                              </span>
+                            )}
+                          </div>
                         )}
                         {tx.reconciledFromInvoices && tx.reconciledFromInvoices.length > 0 && (
                           <div className="mt-1 flex justify-end">
                             <span className="px-1.5 py-0.5 text-[9.5px] font-sans font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded whitespace-nowrap">
-                              সমন্বয়: {tx.reconciledFromInvoices.map((r) => r.invoiceNo).join(', ')} (৳{formatCleanMoney(tx.reconciledDueAmount || 0)})
+                              পূর্বের সমন্বয়: {tx.reconciledFromInvoices.map((r) => r.invoiceNo).join(', ')} (৳{formatCleanMoney(tx.reconciledDueAmount || 0)})
                             </span>
                           </div>
                         )}
@@ -2899,8 +2911,20 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                           </span>
                           <span className="font-mono font-bold text-emerald-800 block text-[11px]">
                             {previewInvoice.paymentMethod.toUpperCase()} ·{' '}
-                            <span className={previewInvoice.dueAmount > 0 ? 'text-red-600' : 'text-emerald-700'}>
-                              {previewInvoice.dueAmount > 0 ? 'কোম্পানি বাকি (DUE)' : 'পরিশোধিত (PAID)'}
+                            <span
+                              className={
+                                previewInvoice.dueAmount > 0
+                                  ? 'text-red-600'
+                                  : previewInvoice.reconciledIntoInvoiceNo
+                                  ? 'text-indigo-700 font-sans'
+                                  : 'text-emerald-700'
+                              }
+                            >
+                              {previewInvoice.dueAmount > 0
+                                ? 'কোম্পানি বাকি (DUE)'
+                                : previewInvoice.reconciledIntoInvoiceNo
+                                ? `সমন্বয় করা হয়েছে ${previewInvoice.reconciledIntoInvoiceNo} নাম্বার ইনভয়েস এ (Due বাদ)`
+                                : 'পরিশোধিত (PAID)'}
                             </span>
                           </span>
                         </div>
@@ -2966,8 +2990,20 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                           ) : (
                             <span className="font-mono font-bold text-emerald-800 block text-[11px]">
                               {previewInvoice.paymentMethod.toUpperCase()} ·{' '}
-                              <span className={previewInvoice.dueAmount > 0 ? 'text-red-600' : 'text-emerald-700'}>
-                                {previewInvoice.dueAmount > 0 ? 'বকেয়া (DUE)' : 'পরিশোধিত (PAID)'}
+                              <span
+                                className={
+                                  previewInvoice.dueAmount > 0
+                                    ? 'text-red-600'
+                                    : previewInvoice.reconciledIntoInvoiceNo
+                                    ? 'text-indigo-700 font-sans'
+                                    : 'text-emerald-700'
+                                }
+                              >
+                                {previewInvoice.dueAmount > 0
+                                  ? 'বকেয়া (DUE)'
+                                  : previewInvoice.reconciledIntoInvoiceNo
+                                  ? `সমন্বয় করা হয়েছে ${previewInvoice.reconciledIntoInvoiceNo} নাম্বার ইনভয়েস এ (Due বাদ)`
+                                  : 'পরিশোধিত (PAID)'}
                               </span>
                             </span>
                           )}
@@ -3333,7 +3369,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                             <span>৳{previewInvoice.paidAmount.toFixed(2)}</span>
                           </div>
 
-                          {previewInvoice.dueAmount > 0 && (
+                          {previewInvoice.dueAmount > 0 ? (
                             <div className="flex justify-between text-red-600 font-bold items-center pt-0.5">
                               <span>
                                 {previewInvoice.txType === 'purchase'
@@ -3342,12 +3378,30 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
                               </span>
                               <span className="text-sm">৳{previewInvoice.dueAmount.toFixed(2)}</span>
                             </div>
-                          )}
+                          ) : previewInvoice.reconciledIntoInvoiceNo ? (
+                            <div className="flex justify-between text-slate-600 font-bold items-center pt-0.5">
+                              <span>
+                                {previewInvoice.txType === 'purchase'
+                                  ? 'কোম্পানি বাকি (Supplier Due):'
+                                  : 'বকেয়া বিল (Customer Due):'}
+                              </span>
+                              <span className="text-xs font-sans text-indigo-800">
+                                ৳0.00 <span className="text-[10px]">(বাদ দেওয়া হয়েছে)</span>
+                              </span>
+                            </div>
+                          ) : null}
 
                           {previewInvoice.reconciledIntoInvoiceNo && (
-                            <div className="pt-1 border-t border-slate-200 text-[10.5px] font-sans font-bold text-indigo-800">
-                              ✓ পূর্বের বকেয়া সমন্বিত হয়েছে ➜{' '}
-                              <span className="font-mono">{previewInvoice.reconciledIntoInvoiceNo}</span>
+                            <div className="mt-1 p-2 rounded bg-indigo-50 border border-indigo-200 text-[10.5px] font-sans font-bold text-indigo-900">
+                              ✓ সমন্বয় করা হয়েছে{' '}
+                              <span className="font-mono underline">{previewInvoice.reconciledIntoInvoiceNo}</span>{' '}
+                              নাম্বার ইনভয়েস এ
+                              {previewInvoice.reconciledDueAmount !== undefined &&
+                              previewInvoice.reconciledDueAmount > 0 ? (
+                                <div className="text-[10px] font-normal text-indigo-800 mt-0.5">
+                                  পূর্বের ৳{formatCleanMoney(previewInvoice.reconciledDueAmount)} বকেয়া (Due) এই ইনভয়েস থেকে বাদ দেওয়া হয়েছে।
+                                </div>
+                              ) : null}
                             </div>
                           )}
 

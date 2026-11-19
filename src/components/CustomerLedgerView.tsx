@@ -526,8 +526,24 @@ export const CustomerLedgerView: React.FC<CustomerLedgerViewProps> = ({
                           <td className="py-2.5 px-3 text-right font-mono tabular-nums text-xs font-semibold text-emerald-700">
                             ৳{tx.paidAmount.toFixed(2)}
                           </td>
-                          <td className="py-2.5 px-3 text-right font-mono tabular-nums text-xs font-semibold text-red-600">
-                            {tx.dueAmount > 0 ? `৳${tx.dueAmount.toFixed(2)}` : '৳0.00'}
+                          <td className="py-2.5 px-3 text-right font-mono tabular-nums text-xs font-semibold">
+                            <div className={tx.dueAmount > 0 ? 'text-red-600' : 'text-slate-400'}>
+                              {tx.dueAmount > 0 ? `৳${tx.dueAmount.toFixed(2)}` : '৳0.00'}
+                            </div>
+                            {tx.reconciledIntoInvoiceNo && (
+                              <div className="mt-1 flex justify-end">
+                                <span className="px-1.5 py-0.5 text-[9.5px] font-sans font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 rounded whitespace-nowrap">
+                                  সমন্বয় করা হয়েছে {tx.reconciledIntoInvoiceNo} নাম্বার ইনভয়েস এ
+                                </span>
+                              </div>
+                            )}
+                            {tx.reconciledFromInvoices && tx.reconciledFromInvoices.length > 0 && (
+                              <div className="mt-1 flex justify-end">
+                                <span className="px-1.5 py-0.5 text-[9.5px] font-sans font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded whitespace-nowrap">
+                                  পূর্বের সমন্বয়: {tx.reconciledFromInvoices.map((r) => r.invoiceNo).join(', ')}
+                                </span>
+                              </div>
+                            )}
                           </td>
                           <td className="py-2.5 px-4 text-right">
                             <div className="flex items-center justify-end gap-1">
