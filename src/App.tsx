@@ -40,15 +40,16 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  Home,
   Key,
   LayoutDashboard,
   Link2,
-  ListFilter,
   Lock,
   LogIn,
   LogOut,
   Menu,
   Package,
+  Pill,
   RefreshCw,
   Settings,
   Unlock,
@@ -1182,6 +1183,30 @@ export default function App() {
 
   // Active POS / Daily Accounts tab controlled across the application
   const [posActiveTab, setPosActiveTab] = useState<'sale_pos' | 'purchase_entry'>('sale_pos');
+  const [posFocusMode, setPosFocusMode] = useState<'pos' | 'ledger'>('pos');
+  const navigateToSection = (
+    sec: any,
+    subTab?: string,
+    scrollTargetId?: string
+  ) => {
+    setActiveSection(sec);
+    if (subTab === 'sale_pos' || subTab === 'purchase_entry') {
+      setPosActiveTab(subTab);
+    }
+    setPosFocusMode(scrollTargetId === 'daily-accounts-ledger' ? 'ledger' : 'pos');
+    if (typeof window !== 'undefined') {
+      if (scrollTargetId) {
+        window.setTimeout(() => {
+          const el = document.getElementById(scrollTargetId);
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }, 70);
+      } else {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    }
+  };
   const autoSignInAttemptedRef = useRef(false);
   const shopProfileRef = useRef(shopProfile);
   useEffect(() => {
@@ -8858,6 +8883,7 @@ export default function App() {
           )}
 
           {/* Active View Render */}
+              <div key={activeSection} className="animate-view-enter">
               {activeSection === 'dashboard' && (
                 <DashboardView
                   transactions={transactions}
@@ -8867,10 +8893,7 @@ export default function App() {
                   posCart={posCart}
                   purchaseCart={purchaseCart}
                   shopProfile={shopProfile}
-                  onNavigate={(sec, subTab) => {
-                    setActiveSection(sec);
-                    if (subTab) setPosActiveTab(subTab as any);
-                  }}
+                  onNavigate={navigateToSection}
                   onOpenScanner={() => setShowScannerModal(true)}
                   onUpdateNotice={handleUpdateNotice}
                   onQuickRestock={handleQuickRestock}
@@ -9006,6 +9029,7 @@ export default function App() {
                   onCreateShopAccountByAdmin={handleCreateShopAccountByAdmin}
                 />
               )}
+              </div>
         </main>
       </div>
 
@@ -9379,88 +9403,86 @@ export default function App() {
         </div>
       )}
 
-      {/* Mobile Fixed Bottom Navigation Bar matching user mockup ("ড্যাশবোর্ড", "তালিকা", "বিক্রি", "প্রতিবেদন", "একাউন্ট") */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200 py-1.5 px-3 flex items-center justify-around shadow-lg no-print select-none">
-        {/* 1. ড্যাশবোর্ড */}
+      {/* Mobile Fixed Bottom Navigation Bar (হোম, বিক্রি, ওষুধ, কাস্টমার, হিসাব) */}
+      <nav
+        aria-label="প্রধান মোবাইল নেভিগেশন"
+        className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 px-2 py-1.5 grid grid-cols-5 items-center shadow-sm no-print select-none"
+      >
+        {/* 1. হোম */}
         <button
           type="button"
-          onClick={() => setActiveSection('dashboard')}
-          className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-lg cursor-pointer transition-colors ${
+          onClick={() => navigateToSection('dashboard')}
+          className={`min-h-[44px] flex flex-col items-center justify-center py-1 px-1.5 rounded-xl cursor-pointer transition-all active:scale-95 ${
             activeSection === 'dashboard'
-              ? 'text-sky-600 font-bold'
+              ? 'bg-emerald-50 text-emerald-800 font-bold'
               : 'text-slate-500 hover:text-slate-800'
           }`}
         >
-          <LayoutDashboard className="w-5 h-5 mb-0.5" />
-          <span className="text-[10px] leading-tight">ড্যাশবোর্ড</span>
+          <Home className="w-5 h-5 mb-0.5" />
+          <span className="text-[11px] leading-tight whitespace-nowrap">হোম</span>
         </button>
 
-        {/* 2. তালিকা */}
+        {/* 2. বিক্রি */}
         <button
           type="button"
-          onClick={() => setActiveSection('compare')}
-          className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-lg cursor-pointer transition-colors ${
-            activeSection === 'compare'
-              ? 'text-sky-600 font-bold'
-              : 'text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          <ListFilter className="w-5 h-5 mb-0.5" />
-          <span className="text-[10px] leading-tight">তালিকা</span>
-        </button>
-
-        {/* 3. বিক্রি (with Cart Badge & Cart Icon) */}
-        <button
-          type="button"
-          onClick={() => {
-            setActiveSection('pos_accounts');
-            setPosActiveTab('sale_pos');
-          }}
-          className={`relative flex flex-col items-center justify-center py-1 px-2.5 rounded-lg cursor-pointer transition-colors ${
-            activeSection === 'pos_accounts' && posActiveTab === 'sale_pos'
-              ? 'text-sky-600 font-bold'
+          onClick={() => navigateToSection('pos_accounts', 'sale_pos')}
+          className={`relative min-h-[44px] flex flex-col items-center justify-center py-1 px-1.5 rounded-xl cursor-pointer transition-all active:scale-95 ${
+            activeSection === 'pos_accounts' && posFocusMode !== 'ledger'
+              ? 'bg-emerald-50 text-emerald-800 font-bold'
               : 'text-slate-500 hover:text-slate-800'
           }`}
         >
           <div className="relative">
             <ShoppingCart className="w-5 h-5 mb-0.5" />
             {posCart.length > 0 && (
-              <span className="absolute -top-1.5 -right-2 px-1 py-0.2 rounded-full text-[9px] font-mono font-bold bg-emerald-600 text-white min-w-3 text-center leading-tight">
+              <span className="absolute -top-1.5 -right-2 px-1 py-0.2 rounded-full text-[9px] font-mono tabular-nums font-bold bg-emerald-600 text-white min-w-3.5 text-center leading-tight">
                 {posCart.length}
               </span>
             )}
           </div>
-          <span className="text-[10px] leading-tight">বিক্রি</span>
+          <span className="text-[11px] leading-tight whitespace-nowrap">বিক্রি</span>
         </button>
 
-        {/* 4. প্রতিবেদন / কাস্টমার ও বিক্রয় লেজার */}
+        {/* 3. ওষুধ */}
         <button
           type="button"
-          onClick={() => {
-            setActiveSection('customer_ledger');
-          }}
-          className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-lg cursor-pointer transition-colors ${
-            activeSection === 'customer_ledger'
-              ? 'text-sky-600 font-bold'
+          onClick={() => navigateToSection('compare')}
+          className={`min-h-[44px] flex flex-col items-center justify-center py-1 px-1.5 rounded-xl cursor-pointer transition-all active:scale-95 ${
+            activeSection === 'compare' || activeSection === 'inventory'
+              ? 'bg-emerald-50 text-emerald-800 font-bold'
               : 'text-slate-500 hover:text-slate-800'
           }`}
         >
-          <BarChart3 className="w-5 h-5 mb-0.5" />
-          <span className="text-[10px] leading-tight">প্রতিবেদন</span>
+          <Pill className="w-5 h-5 mb-0.5" />
+          <span className="text-[11px] leading-tight whitespace-nowrap">ওষুধ</span>
         </button>
 
-        {/* 5. একাউন্ট */}
+        {/* 4. কাস্টমার */}
         <button
           type="button"
-          onClick={() => setActiveSection('staff_shop')}
-          className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-lg cursor-pointer transition-colors ${
-            activeSection === 'staff_shop'
-              ? 'text-sky-600 font-bold'
+          onClick={() => navigateToSection('customer_ledger')}
+          className={`min-h-[44px] flex flex-col items-center justify-center py-1 px-1.5 rounded-xl cursor-pointer transition-all active:scale-95 ${
+            activeSection === 'customer_ledger'
+              ? 'bg-emerald-50 text-emerald-800 font-bold'
               : 'text-slate-500 hover:text-slate-800'
           }`}
         >
           <Users className="w-5 h-5 mb-0.5" />
-          <span className="text-[10px] leading-tight">একাউন্ট</span>
+          <span className="text-[11px] leading-tight whitespace-nowrap">কাস্টমার</span>
+        </button>
+
+        {/* 5. হিসাব */}
+        <button
+          type="button"
+          onClick={() => navigateToSection('pos_accounts', 'sale_pos', 'daily-accounts-ledger')}
+          className={`min-h-[44px] flex flex-col items-center justify-center py-1 px-1.5 rounded-xl cursor-pointer transition-all active:scale-95 ${
+            activeSection === 'pos_accounts' && posFocusMode === 'ledger'
+              ? 'bg-emerald-50 text-emerald-800 font-bold'
+              : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <BarChart3 className="w-5 h-5 mb-0.5" />
+          <span className="text-[11px] leading-tight whitespace-nowrap">হিসাব</span>
         </button>
       </nav>
 

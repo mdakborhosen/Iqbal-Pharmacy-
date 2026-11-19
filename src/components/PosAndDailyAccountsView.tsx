@@ -1960,7 +1960,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
       </div>
 
       {/* Daily Purchase & Sales Accounting Dashboard */}
-      <div className="bg-white border border-slate-200 rounded-lg overflow-hidden no-print">
+      <div id="daily-accounts-ledger" className="scroll-mt-20 bg-white border border-slate-200 rounded-lg overflow-hidden no-print">
         <div className="p-5 border-b border-slate-200 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div>
             <h2 className="text-lg font-bold text-slate-900">
