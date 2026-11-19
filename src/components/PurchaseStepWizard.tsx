@@ -940,8 +940,9 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
         shopName,
         supplierCompany,
         dateStr: purDateStr,
+        catalog,
       }),
-    [purchaseCart, shopName, supplierCompany, purDateStr]
+    [purchaseCart, shopName, supplierCompany, purDateStr, catalog]
   );
 
   const cartWhatsAppHref = useMemo(
@@ -959,6 +960,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
         discount: Math.max(0, parseFloat(purDiscountStr) || 0),
         vatOverrideStr: purVatStr,
         paidAmountStr: purPaidStr,
+        catalog,
       }),
     [
       purchaseCart,
@@ -969,6 +971,7 @@ export const PurchaseStepWizard: React.FC<PurchaseStepWizardProps> = ({
       purDiscountStr,
       purVatStr,
       purPaidStr,
+      catalog,
     ]
   );
 

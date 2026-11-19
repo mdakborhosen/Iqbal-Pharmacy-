@@ -1,9 +1,11 @@
 import {
+  BD_MEDICINES_CATALOG,
   computePurchaseCartTotals,
   computePurchaseItemMetrics,
   dosageFormFromInvoicePrefix,
   formatCleanMoney,
   getInvoiceFormPrefix,
+  getShortDosageForm,
   parseTransactionItemsDetailed,
 } from '../data/bdMedicines';
 import {
@@ -181,9 +183,13 @@ function normalizeStrengthToken(rawStrength: string): string {
   return token;
 }
 
-function extractLiquidVolumeMl(packSize?: string): string {
-  if (!packSize) return '';
-  const norm = normalizeDigitsToEnglish(packSize);
+function extractLiquidVolumeMl(text?: string): string {
+  if (!text) return '';
+  const norm = normalizeDigitsToEnglish(text)
+    // Remove parenthesized concentration ratios like (10/5ml) or (10 mg/5 ml)
+    .replace(/\([^)]*\/[^)]*\)/g, ' ')
+    // Remove per-volume denominators like /5 ml
+    .replace(/\/\s*\d+(?:\.\d+)?\s*ml\b/gi, ' ');
   const mlMatch = norm.match(/(\d+(?:\.\d+)?)\s*ml\b/i);
   return mlMatch ? `${mlMatch[1]}ml` : '';
 }
@@ -200,70 +206,232 @@ function isLiquidDosageForm(dosageForm?: string): boolean {
   );
 }
 
+const KNOWN_MULTI_STRENGTH_BRANDS = new Set([
+  'osartil plus',
+  'osartil',
+  'voltalin',
+  'seclo',
+  'sergel',
+  'maxpro',
+  'losectil',
+  'exium',
+  'monas',
+  'fexo',
+  'telfast',
+  'amdocal',
+  'bizoran',
+  'camlo',
+  'camlosart',
+  'angilock',
+  'angilock plus',
+  'telmilok',
+  'telmilok plus',
+  'atova',
+  'rosuva',
+  'anzitor',
+  'ecosprin',
+  'thyrox',
+  'thyronor',
+  'comet',
+  'amaril',
+  'clopid',
+  'ciprocin',
+  'filmet',
+  'amodis',
+]);
+
+function extractCleanBrandAndStrength(
+  rawBrandInput: string,
+  strength?: string,
+  dosageForm?: string
+): { baseName: string; embeddedStrength: string } {
+  let working = normalizeDigitsToEnglish(rawBrandInput || 'Custom Product').trim();
+  // Remove leading dosage prefix like "Syp. " / "Tab. "
+  working = working
+    .replace(/^(?:tab|cap|syp|susp|supp|inj|drops|eye\s*drop|ear\s*drop|nasal\s*drop|inhaler|sachet|gel)\.\s+/i, '')
+    .trim();
+
+  let embeddedStrength = '';
+
+  // 1. Strip embedded "<ShortForm> <strength/volume>" appended by buildDefaultVariantName (e.g. "Omidon Syp 60ml (10/5ml)")
+  const formTagMatch = working.match(
+    /^(.+?)\s+(?:Syp|Susp|Tab|Cap|Supp|Inj|Gel|Cream|Oint|Drops?|Eye\s*Drop|Ear\s*Drop|Nasal\s*Drop|Inhaler|Sachet)\b(?:\s+([0-9].*))?$/i
+  );
+  if (formTagMatch && formTagMatch[1].trim().length >= 2) {
+    const rest = (formTagMatch[2] || '').trim();
+    const matchesForm =
+      !dosageForm ||
+      working.toLowerCase().includes(` ${getShortDosageForm(dosageForm).toLowerCase()}`);
+    if (matchesForm && (rest || working.toLowerCase() !== formTagMatch[1].trim().toLowerCase())) {
+      working = formTagMatch[1].trim();
+      if (rest) {
+        embeddedStrength = normalizeStrengthToken(rest);
+      }
+    }
+  }
+
+  // 2. Strip trailing strength token from rawBrand (e.g. "Voltalin-50", "Napa Extra-500+65", "Burnsil-25")
+  const split = splitCombinedNameAndStrength(working);
+  if (split.strengthToken && split.base !== working) {
+    const cleanExpected = strength !== undefined ? normalizeStrengthToken(strength) : '';
+    const sTokLow = split.strengthToken.toLowerCase();
+    const expLow = cleanExpected.toLowerCase();
+    const sNumMatch = sTokLow.match(/^(\d+(?:\.\d+)?)/);
+    const eNumMatch = expLow.match(/^(\d+(?:\.\d+)?)/);
+    const matchesProvidedStrength =
+      !cleanExpected ||
+      expLow === sTokLow ||
+      expLow.startsWith(sTokLow) ||
+      sTokLow.startsWith(expLow) ||
+      Boolean(sNumMatch && eNumMatch && sNumMatch[1] === eNumMatch[1]);
+
+    if (matchesProvidedStrength) {
+      working = split.base;
+      if (!embeddedStrength) {
+        embeddedStrength = split.strengthToken;
+      }
+    }
+  }
+
+  return { baseName: working || 'Custom Product', embeddedStrength };
+}
+
+function normalizeStrengthKey(raw: string): string {
+  const norm = normalizeStrengthToken(raw).toLowerCase();
+  if (!norm) return '';
+  // Collapse "(500ml)" or extra spaces for comparison
+  return norm.replace(/\(.*?\)/g, '').trim() || norm;
+}
+
+function shouldIncludeStrengthForWhatsApp(
+  baseName: string,
+  compactStr: string,
+  dosageForm: string | undefined,
+  catalog: MedicineCatalogItem[]
+): boolean {
+  if (!compactStr) return false;
+  const baseLow = baseName.trim().toLowerCase();
+  if (!baseLow) return false;
+
+  if (KNOWN_MULTI_STRENGTH_BRANDS.has(baseLow)) {
+    return true;
+  }
+
+  const targetShortForm = dosageForm ? getShortDosageForm(dosageForm).toLowerCase() : '';
+  const distinctStrengths = new Set<string>();
+  const key = normalizeStrengthKey(compactStr);
+  if (key) distinctStrengths.add(key);
+
+  const sourceCatalog = catalog.length > 0 ? catalog : BD_MEDICINES_CATALOG;
+  const isSachetOrTopical =
+    targetShortForm === 'sachet' ||
+    targetShortForm === 'gel' ||
+    targetShortForm === 'cream' ||
+    targetShortForm === 'ointment';
+
+  for (const m of sourceCatalog) {
+    const mClean = extractCleanBrandAndStrength(m.brandName, m.strength, m.dosageForm);
+    if (mClean.baseName.trim().toLowerCase() !== baseLow) continue;
+
+    const mShortForm = getShortDosageForm(m.dosageForm).toLowerCase();
+    if (targetShortForm && mShortForm && mShortForm !== targetShortForm) {
+      // Also inspect explicit variants if parent holds mixed forms
+      if (m.variants && m.variants.length > 0) {
+        for (const v of m.variants) {
+          const vForm = getShortDosageForm(String(v.dosageForm || m.dosageForm)).toLowerCase();
+          if (vForm === targetShortForm) {
+            const vk = normalizeStrengthKey(v.strength || m.strength || '');
+            if (vk) distinctStrengths.add(vk);
+          }
+        }
+      }
+      continue;
+    }
+
+    const mk = normalizeStrengthKey(m.strength || mClean.embeddedStrength || '');
+    if (mk) distinctStrengths.add(mk);
+
+    if (m.variants && m.variants.length > 0) {
+      for (const v of m.variants) {
+        const vForm = getShortDosageForm(String(v.dosageForm || m.dosageForm)).toLowerCase();
+        if (!targetShortForm || vForm === targetShortForm) {
+          const vk = normalizeStrengthKey(v.strength || '');
+          if (vk) distinctStrengths.add(vk);
+        }
+      }
+    }
+
+    // For Tablet / Capsule / Suppository / Injection / Inhaler, also inspect availableDosages for multiple same-form strengths
+    if (!isSachetOrTopical && m.availableDosages) {
+      const parts = m.availableDosages.split(',').map((p) => p.trim()).filter(Boolean);
+      for (const part of parts) {
+        const pLow = part.toLowerCase();
+        const mentionsOtherForm =
+          /\b(syrup|syp|susp|suspension|drops?|sachet|gel|cream|ointment|inj|vial|infusion|inhaler|supp|suppository)\b/i.test(
+            pLow
+          ) && (!dosageForm || !pLow.includes(dosageForm.toLowerCase()) && !pLow.includes(targetShortForm));
+        if (mentionsOtherForm) continue;
+        const pk = normalizeStrengthKey(part.replace(/\b(tablet|capsule|cap|tab|actizorb|film coated|chewable)\b/gi, ''));
+        if (pk && /^\d/.test(pk)) {
+          distinctStrengths.add(pk);
+        }
+      }
+    }
+
+    if (distinctStrengths.size > 1) {
+      return true;
+    }
+  }
+
+  return distinctStrengths.size > 1;
+}
+
 /**
  * Formats medicine name concisely with optional dosage form prefix for WhatsApp sharing, e.g.:
- * - ("Napa Extra", "", "Tablet") -> "Tab. Napa Extra"
+ * - ("Omidon Syp 60ml (10/5ml)", "60 ml (10 mg/5 ml)", "Syrup") -> "Syp. Omidon 60ml"
+ * - ("Napa Rapid", "500 mg", "Tablet") -> "Tab. Napa Rapid"
+ * - ("Osartil Plus", "50 mg", "Tablet") -> "Tab. Osartil Plus-50"
  * - ("Voltalin", "50 mg", "Suppository") -> "Supp. Voltalin-50"
- * - ("Omidon", "60 ml (10 mg/5 ml)", "Syrup") -> "Syp. Omidon-60ml(10/5ml)"
- * - ("Omidon", "10 mg/5 ml", "Syrup", "60 ml Bottle") -> "Syp. Omidon-60ml(10/5ml)"
+ * - ("Burnsil", "25 mg", "Gel") -> "Gel. Burnsil"
+ * - ("Orsaline-N", "10.25 g Sachet (500 ml)", "Sachet") -> "Sachet. Orsaline-N"
  */
 export function formatCompactProductName(
   brandOrCombined: string,
   strength?: string,
   dosageForm?: string,
-  packSize?: string
+  packSize?: string,
+  catalog: MedicineCatalogItem[] = BD_MEDICINES_CATALOG
 ): string {
-  const rawBrand = (brandOrCombined || 'Custom Product').trim();
   const prefix = dosageForm ? formatDosagePrefixLabel(dosageForm) : '';
+  const { baseName, embeddedStrength } = extractCleanBrandAndStrength(
+    brandOrCombined,
+    strength,
+    dosageForm
+  );
 
-  let compactStr = strength !== undefined ? normalizeStrengthToken(strength) : '';
-  let baseName = rawBrand;
-
-  if (strength !== undefined) {
-    const bLow = rawBrand.toLowerCase();
-    const sLow = (strength || '').trim().toLowerCase();
-    const cLow = compactStr.toLowerCase();
-
-    if (
-      compactStr &&
-      (bLow.endsWith(`-${cLow}`) ||
-        bLow.endsWith(` ${cLow}`) ||
-        (sLow && (bLow.endsWith(sLow) || bLow.includes(sLow))))
-    ) {
-      // Split out already-included strength so we can apply liquid pack ml cleanly if needed
-      const extracted = splitCombinedNameAndStrength(rawBrand);
-      baseName = extracted.base;
-      compactStr = extracted.strengthToken || compactStr;
-    } else if (!compactStr) {
-      const extracted = splitCombinedNameAndStrength(rawBrand);
-      baseName = extracted.base;
-      compactStr = extracted.strengthToken;
-    }
-  } else {
-    const extracted = splitCombinedNameAndStrength(rawBrand);
-    baseName = extracted.base;
-    compactStr = extracted.strengthToken;
-  }
-
-  // For liquid forms (Syp/Susp/Drops), if bottle volume (e.g. 60ml) is in packSize and not yet in strength:
+  // Liquids (Syrup / Suspension / Drops / Solution): only show bottle volume (e.g. "Syp. Omidon 60ml"), never "(10/5ml)" or duplicated form word
   if (isLiquidDosageForm(dosageForm)) {
-    const volMl = extractLiquidVolumeMl(packSize);
-    if (volMl) {
-      const hasLeadingVolume = /^\d+(?:\.\d+)?ml\b/i.test(compactStr);
-      if (!hasLeadingVolume) {
-        if (compactStr) {
-          const inner = compactStr.startsWith('(') && compactStr.endsWith(')')
-            ? compactStr
-            : `(${compactStr})`;
-          compactStr = `${volMl}${inner}`;
-        } else {
-          compactStr = volMl;
-        }
-      }
+    const volMl =
+      extractLiquidVolumeMl(packSize) ||
+      extractLiquidVolumeMl(strength) ||
+      extractLiquidVolumeMl(brandOrCombined);
+    const body = volMl ? `${baseName} ${volMl}` : baseName;
+    if (prefix && !body.toLowerCase().startsWith(prefix.toLowerCase())) {
+      return `${prefix} ${body}`;
     }
+    return body;
   }
 
-  const nameWithStrength = compactStr ? `${baseName}-${compactStr}` : baseName;
+  const rawCompactStr =
+    strength !== undefined ? normalizeStrengthToken(strength) || embeddedStrength : embeddedStrength;
+  const keepStrength = shouldIncludeStrengthForWhatsApp(
+    baseName,
+    rawCompactStr,
+    dosageForm,
+    catalog
+  );
+
+  const nameWithStrength = keepStrength && rawCompactStr ? `${baseName}-${rawCompactStr}` : baseName;
   if (prefix && !nameWithStrength.toLowerCase().startsWith(prefix.toLowerCase())) {
     return `${prefix} ${nameWithStrength}`;
   }
@@ -324,10 +492,11 @@ export function getWhatsAppShareHref(text: string): string {
  */
 export function buildPurchaseCartWhatsAppText(
   purchaseCart: PurchaseCartItem[],
-  _opts?: {
+  opts?: {
     shopName?: string;
     supplierCompany?: string;
     dateStr?: string;
+    catalog?: MedicineCatalogItem[];
   }
 ): string {
   const validItems = orderCartItemsWithDueLast(
@@ -343,7 +512,8 @@ export function buildPurchaseCartWhatsAppText(
         item.brandName,
         item.strength,
         item.dosageForm,
-        item.packSize
+        item.packSize,
+        opts?.catalog || BD_MEDICINES_CATALOG
       );
       const qtyLabel = formatPurchaseQtyLabel(item);
       return `${idx + 1}. ${productName} — ${qtyLabel}`;
@@ -366,6 +536,7 @@ export function buildPurchaseInvoiceWhatsAppTextFromCart(
     discount?: number;
     vatOverrideStr?: string;
     paidAmountStr?: string;
+    catalog?: MedicineCatalogItem[];
   }
 ): string {
   const validItems = orderCartItemsWithDueLast(
@@ -387,7 +558,8 @@ export function buildPurchaseInvoiceWhatsAppTextFromCart(
       item.brandName,
       item.strength,
       item.dosageForm,
-      item.packSize
+      item.packSize,
+      opts.catalog || BD_MEDICINES_CATALOG
     );
     const qtyLabel = formatPurchaseQtyLabel(item);
 
@@ -468,9 +640,10 @@ export function buildTransactionInvoiceWhatsAppText(
       : pItem.matchedMedicine?.dosageForm;
     const productName = formatCompactProductName(
       rawName,
-      undefined,
-      pItem.formPrefix === 'item' ? undefined : dosageForm,
-      pItem.matchedMedicine?.packSize
+      pItem.matchedMedicine?.strength,
+      pItem.formPrefix === 'item' ? pItem.matchedMedicine?.dosageForm : dosageForm,
+      pItem.matchedMedicine?.packSize,
+      catalog
     );
 
     let qtyLabel = `${Math.max(1, pItem.qty || 1)} Pcs`;
