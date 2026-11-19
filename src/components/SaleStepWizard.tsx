@@ -1,7 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Activity,
-  ArrowDownRight,
   Camera,
   Clock,
   FileText,
@@ -18,7 +17,8 @@ import {
   Zap,
 } from 'lucide-react';
 import { formatCleanMoney } from '../data/bdMedicines';
-import { orderCartItemsWithDueLast } from '../utils/whatsappShare';
+import { getCustomerDueSummary } from '../utils/dueReconciliation';
+import { isDueEntryItem, orderCartItemsWithDueLast } from '../utils/whatsappShare';
 import {
   CartItem,
   Customer,
@@ -121,6 +121,8 @@ export interface SaleStepWizardProps {
     purchasePrice?: number;
     qty: number;
     saveToCatalog?: boolean;
+    reconcilePreviousInvoices?: boolean;
+    reconcileInvoiceIds?: string[];
   }) => Promise<void>;
   onUpdateCartItemDetails: (medId: string, updates: Partial<CartItem>) => void;
   onUpdateCartUnitPrice: (medId: string, price: number) => void;
@@ -136,6 +138,8 @@ export interface SaleStepWizardProps {
   submitSaleWithMode: (forceNew?: boolean) => Promise<void>;
   onPreviewCurrentSaleInvoice: (withPrice?: boolean) => void;
   activeStaff: StaffMember;
+  transactions?: Transaction[];
+  editingTxId?: string;
 }
 
 export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
@@ -145,6 +149,8 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
   setSaleWorkflowMode,
   walkInName,
   setWalkInName,
+  walkInPhone,
+  setWalkInPhone,
   patientAge,
   setPatientAge,
   patientSex,
@@ -218,6 +224,8 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
   submitSaleWithMode,
   onPreviewCurrentSaleInvoice,
   activeStaff,
+  transactions = [],
+  editingTxId,
 }) => {
   const hasAnyClinicalData = useMemo(() => {
     if (selectedSeal === 'iqbal_pharmacy') {
@@ -225,6 +233,139 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
     }
     return Object.values(dentalFindings).some((v) => v && v.trim().length > 0);
   }, [selectedSeal, pharmacyFindings, dentalFindings]);
+
+  const selectedCustomerObj = useMemo(
+    () => (selectedCustomerId !== 'walk-in' ? customers.find((c) => c.id === selectedCustomerId) : undefined),
+    [customers, selectedCustomerId]
+  );
+
+  const customerDueSummary = useMemo(
+    () =>
+      getCustomerDueSummary(
+        transactions,
+        {
+          customerId: selectedCustomerId,
+          customerName: selectedCustomerObj?.name || walkInName,
+          customerPhone: selectedCustomerObj?.phone || walkInPhone,
+          ledgerTotalDue: selectedCustomerObj?.totalDue || 0,
+        },
+        editingTxId
+      ),
+    [transactions, selectedCustomerId, selectedCustomerObj, walkInName, walkInPhone, editingTxId]
+  );
+
+  const dueAlreadyInCart = useMemo(
+    () =>
+      posCart
+        .filter((i) => isDueEntryItem(i))
+        .reduce((sum, i) => sum + i.unitPrice * Math.max(1, i.qty || 1), 0),
+    [posCart]
+  );
+
+  const remainingSuggestedDue = useMemo(
+    () => Math.max(0, Number((customerDueSummary.suggestedDue - dueAlreadyInCart).toFixed(2))),
+    [customerDueSummary.suggestedDue, dueAlreadyInCart]
+  );
+
+  const customersWithDue = useMemo(() => {
+    return customers
+      .filter((c) => (c.totalDue || 0) > 0.009)
+      .sort((a, b) => (b.totalDue || 0) - (a.totalDue || 0));
+  }, [customers]);
+
+  // Due (বকেয়া) Amount Entry Popup Modal State (amount starts strictly empty)
+  const [showDueModal, setShowDueModal] = useState(false);
+  const [dueAmountInput, setDueAmountInput] = useState('');
+  const [editingDueMedId, setEditingDueMedId] = useState<string | null>(null);
+  const [dueReconcileEnabled, setDueReconcileEnabled] = useState(true);
+  const [dueSelectedInvoiceIds, setDueSelectedInvoiceIds] = useState<string[]>([]);
+
+  const openDueModal = (existingDueItem?: CartItem) => {
+    if (existingDueItem) {
+      const amt = Number((existingDueItem.unitPrice * Math.max(1, existingDueItem.qty || 1)).toFixed(2));
+      setEditingDueMedId(existingDueItem.medicineId);
+      setDueAmountInput(amt > 0 ? String(amt) : '');
+      setDueReconcileEnabled(existingDueItem.reconcilePreviousInvoices !== false);
+      setDueSelectedInvoiceIds(
+        existingDueItem.reconcileInvoiceIds || customerDueSummary.invoices.map((t) => t.id)
+      );
+    } else {
+      setEditingDueMedId(null);
+      setDueAmountInput('');
+      setDueReconcileEnabled(true);
+      setDueSelectedInvoiceIds([]);
+    }
+    setShowDueModal(true);
+  };
+
+  const handleQuickAddPreviousDue = async (specificInvoice?: Transaction, explicitAmount?: number) => {
+    const targetInvoices = specificInvoice ? [specificInvoice] : customerDueSummary.invoices;
+    const amt =
+      explicitAmount !== undefined
+        ? explicitAmount
+        : specificInvoice
+        ? Number((specificInvoice.dueAmount || 0).toFixed(2))
+        : remainingSuggestedDue;
+    if (amt <= 0) return;
+
+    await onAddCustomToCart({
+      brandName: 'Due',
+      genericName: '',
+      companyName: '',
+      strength: '',
+      dosageForm: 'Due',
+      unitPrice: amt,
+      purchasePrice: 0,
+      qty: 1,
+      saveToCatalog: false,
+      reconcilePreviousInvoices: true,
+      reconcileInvoiceIds: targetInvoices.map((inv) => inv.id),
+    });
+  };
+
+  const handleDueModalSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const parsedAmt = parseFloat(dueAmountInput);
+    if (!Number.isFinite(parsedAmt) || parsedAmt <= 0) return;
+
+    const effectiveInvoiceIds =
+      dueSelectedInvoiceIds.length > 0
+        ? dueSelectedInvoiceIds
+        : customerDueSummary.invoices.map((t) => t.id);
+
+    if (editingDueMedId) {
+      onUpdateCartItemDetails(editingDueMedId, {
+        brandName: 'Due',
+        genericName: '',
+        strength: '',
+        dosageForm: 'Due',
+        unitPrice: parsedAmt,
+        purchasePrice: 0,
+        qty: 1,
+        updateStock: false,
+        reconcilePreviousInvoices: dueReconcileEnabled,
+        reconcileInvoiceIds: effectiveInvoiceIds,
+      });
+    } else {
+      await onAddCustomToCart({
+        brandName: 'Due',
+        genericName: '',
+        companyName: '',
+        strength: '',
+        dosageForm: 'Due',
+        unitPrice: parsedAmt,
+        purchasePrice: 0,
+        qty: 1,
+        saveToCatalog: false,
+        reconcilePreviousInvoices: dueReconcileEnabled,
+        reconcileInvoiceIds: effectiveInvoiceIds,
+      });
+    }
+    setShowDueModal(false);
+    setDueAmountInput('');
+    setEditingDueMedId(null);
+    setDueSelectedInvoiceIds([]);
+  };
 
   return (
     <div className="bg-slate-50/50">
@@ -507,6 +648,73 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* Customer Previous Due Auto-Suggestion & Reconciliation Banner */}
+              {customerDueSummary.suggestedDue > 0 && (
+                <div className="p-3 bg-rose-50/90 border border-rose-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
+                  <div className="space-y-1">
+                    <div className="font-bold text-rose-950 flex flex-wrap items-center gap-1.5">
+                      <span>
+                        ⚠️ {selectedCustomerObj?.name || walkInName || 'ক্রেতা'}-এর পূর্বের বকেয়া রয়েছে:{' '}
+                        <span className="font-mono text-rose-700">
+                          ৳{formatCleanMoney(customerDueSummary.suggestedDue)}
+                        </span>
+                      </span>
+                      {dueAlreadyInCart > 0 && (
+                        <span className="px-1.5 py-0.5 text-[10.5px] bg-emerald-100 text-emerald-900 rounded font-mono">
+                          কার্টে যুক্ত: ৳{formatCleanMoney(dueAlreadyInCart)}
+                        </span>
+                      )}
+                    </div>
+                    {customerDueSummary.invoices.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-rose-800">
+                        {customerDueSummary.invoices.map((inv) => (
+                          <button
+                            key={inv.id}
+                            type="button"
+                            onClick={() => handleQuickAddPreviousDue(inv)}
+                            className="px-2 py-0.5 bg-white hover:bg-rose-100 border border-rose-300 rounded font-mono text-[10.5px] text-rose-900 cursor-pointer"
+                            title="এই একটি ইনভয়েসের বকেয়া কার্টে যোগ ও সমন্বয় করুন"
+                          >
+                            {inv.invoiceNo} ({inv.dateStr}) · ৳{formatCleanMoney(inv.dueAmount)} +
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {remainingSuggestedDue > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => handleQuickAddPreviousDue()}
+                      className="px-3.5 py-2 text-xs font-bold text-white bg-rose-700 hover:bg-rose-800 rounded-lg shadow-2xs cursor-pointer whitespace-nowrap shrink-0"
+                    >
+                      + পূর্বের Due (৳{formatCleanMoney(remainingSuggestedDue)}) যোগ ও সমন্বয় করুন
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {customerDueSummary.suggestedDue === 0 && customersWithDue.length > 0 && (
+                <div className="p-2.5 bg-amber-50/70 border border-amber-200 rounded-xl flex flex-wrap items-center gap-2 text-xs">
+                  <span className="font-bold text-amber-950 text-[11px]">
+                    পূর্বের বকেয়া থাকা ক্রেতা (ক্লিক করে নির্বাচন করুন):
+                  </span>
+                  {customersWithDue.slice(0, 6).map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setSelectedCustomerId(c.id)}
+                      className="px-2.5 py-1 bg-white hover:bg-amber-100 border border-amber-300 rounded-md text-[11px] font-semibold text-amber-950 cursor-pointer flex items-center gap-1.5"
+                    >
+                      <span>{c.name}</span>
+                      <span className="font-mono font-bold text-rose-700">
+                        — ৳{formatCleanMoney(c.totalDue)} Due
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {/* Patient Name, Age, Sex (Pink / Rose Theme matching Screenshot 1) */}
               <div className="p-4 bg-pink-50/70 border border-pink-200 rounded-xl space-y-3">
@@ -902,6 +1110,14 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openDueModal()}
+                      className="px-3 py-1 bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 font-bold text-xs rounded-full cursor-pointer"
+                      title="পূর্বের বকেয়া (Due) টাকা যোগ করুন"
+                    >
+                      + বকেয়া (Due) যোগ করুন
+                    </button>
                     <span className="px-3 py-1 bg-teal-100 text-teal-900 font-bold text-xs rounded-full font-mono">
                       {posCart.length}টি ওষুধ নির্বাচিত
                     </span>
@@ -915,6 +1131,32 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                     const name = saleCustomName.trim();
                     if (!name) {
                       saleCustomNameInputRef.current?.focus();
+                      return;
+                    }
+                    if (isDueEntryItem({ brandName: name, dosageForm: saleCustomForm })) {
+                      const dueAmt = parseFloat(saleCustomUnitPrice) || 0;
+                      if (dueAmt <= 0) {
+                        openDueModal();
+                        return;
+                      }
+                      await onAddCustomToCart({
+                        brandName: 'Due',
+                        genericName: '',
+                        companyName: '',
+                        strength: '',
+                        dosageForm: 'Due',
+                        unitPrice: dueAmt,
+                        purchasePrice: 0,
+                        qty: 1,
+                        saveToCatalog: false,
+                        reconcilePreviousInvoices: true,
+                        reconcileInvoiceIds: customerDueSummary.invoices.map((inv) => inv.id),
+                      });
+                      setSaleCustomName('');
+                      setSaleCustomStrength('');
+                      setSaleCustomUnitPrice('');
+                      setSaleCustomPurPrice('');
+                      setSaleCustomQty('1');
                       return;
                     }
                     const unitPrice = Math.max(0.1, parseFloat(saleCustomUnitPrice) || 10);
@@ -963,84 +1205,111 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                         required
                         placeholder="যেমন: Napa Extra, Seclo"
                         value={saleCustomName}
-                        onChange={(e) => setSaleCustomName(e.target.value)}
+                        onChange={(e) => {
+                          const nextName = e.target.value;
+                          setSaleCustomName(nextName);
+                          if (isDueEntryItem({ brandName: nextName })) {
+                            setSaleCustomStrength('');
+                            setSaleCustomUnitPrice('');
+                            setSaleCustomPurPrice('');
+                            setSaleCustomQty('1');
+                          }
+                        }}
                         className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded focus:border-teal-600 focus:outline-none"
                       />
                     </div>
 
-                    <div className="sm:col-span-2">
-                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                        শক্তি/সাইজ
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="যেমন: 500mg"
-                        value={saleCustomStrength}
-                        onChange={(e) => setSaleCustomStrength(e.target.value)}
-                        className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded focus:border-teal-600 focus:outline-none"
-                      />
-                    </div>
+                    {!isDueEntryItem({ brandName: saleCustomName, dosageForm: saleCustomForm }) && (
+                      <>
+                        <div className="sm:col-span-2">
+                          <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                            শক্তি/সাইজ
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="যেমন: 500mg"
+                            value={saleCustomStrength}
+                            onChange={(e) => setSaleCustomStrength(e.target.value)}
+                            className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded focus:border-teal-600 focus:outline-none"
+                          />
+                        </div>
+
+                        <div className="sm:col-span-2">
+                          <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                            ধরন / Form
+                          </label>
+                          <select
+                            value={saleCustomForm}
+                            onChange={(e) => setSaleCustomForm(e.target.value)}
+                            className="w-full px-2 py-1.5 text-xs bg-white border border-slate-300 rounded focus:border-teal-600 focus:outline-none"
+                          >
+                            {customProductForms.map((f) => (
+                              <option key={f.value} value={f.value}>
+                                {f.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </>
+                    )}
 
                     <div className="sm:col-span-2">
                       <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                        ধরন / Form
-                      </label>
-                      <select
-                        value={saleCustomForm}
-                        onChange={(e) => setSaleCustomForm(e.target.value)}
-                        className="w-full px-2 py-1.5 text-xs bg-white border border-slate-300 rounded focus:border-teal-600 focus:outline-none"
-                      >
-                        {customProductForms.map((f) => (
-                          <option key={f.value} value={f.value}>
-                            {f.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="sm:col-span-2">
-                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                        বিক্রয় দর (৳) *
+                        {isDueEntryItem({ brandName: saleCustomName, dosageForm: saleCustomForm })
+                          ? 'বকেয়া টাকার পরিমাণ (৳)'
+                          : 'বিক্রয় দর (৳) *'}
                       </label>
                       <input
                         ref={saleCustomPriceInputRef}
                         type="number"
                         step="any"
                         min="0.1"
-                        required
-                        placeholder="12.00"
+                        required={!isDueEntryItem({ brandName: saleCustomName, dosageForm: saleCustomForm })}
+                        placeholder={
+                          isDueEntryItem({ brandName: saleCustomName, dosageForm: saleCustomForm })
+                            ? 'খালি রাখলে পপআপ আসবে'
+                            : '12.00'
+                        }
                         value={saleCustomUnitPrice}
                         onChange={(e) => setSaleCustomUnitPrice(e.target.value)}
                         className="w-full px-2.5 py-1.5 text-xs font-mono bg-white border border-slate-300 rounded focus:border-teal-600 focus:outline-none"
                       />
                     </div>
 
-                    <div className="sm:col-span-2">
-                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                        পরিমাণ (পিস) *
-                      </label>
-                      <input
-                        type="number"
-                        min="1"
-                        step="1"
-                        required
-                        value={saleCustomQty}
-                        onChange={(e) => setSaleCustomQty(e.target.value)}
-                        className="w-full px-2.5 py-1.5 text-xs font-mono bg-white border border-slate-300 rounded focus:border-teal-600 focus:outline-none"
-                      />
-                    </div>
+                    {!isDueEntryItem({ brandName: saleCustomName, dosageForm: saleCustomForm }) && (
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                          পরিমাণ (পিস) *
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          required
+                          value={saleCustomQty}
+                          onChange={(e) => setSaleCustomQty(e.target.value)}
+                          className="w-full px-2.5 py-1.5 text-xs font-mono bg-white border border-slate-300 rounded focus:border-teal-600 focus:outline-none"
+                        />
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                    <label className="inline-flex items-center gap-1.5 text-[11px] text-teal-900 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={saleCustomSaveCatalog}
-                        onChange={(e) => setSaleCustomSaveCatalog(e.target.checked)}
-                        className="rounded border-teal-400 text-teal-700"
-                      />
-                      <span>ক্যাটালগ ও স্টকেও সংরক্ষণ করুন</span>
-                    </label>
+                    {!isDueEntryItem({ brandName: saleCustomName, dosageForm: saleCustomForm }) ? (
+                      <label className="inline-flex items-center gap-1.5 text-[11px] text-teal-900 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={saleCustomSaveCatalog}
+                          onChange={(e) => setSaleCustomSaveCatalog(e.target.checked)}
+                          className="rounded border-teal-400 text-teal-700"
+                        />
+                        <span>ক্যাটালগ ও স্টকেও সংরক্ষণ করুন</span>
+                      </label>
+                    ) : (
+                      <span className="text-[11px] text-rose-800 font-medium">
+                        Due আইটেম একদম নিচে যোগ হবে (কোনো mg/ml বা স্টক কাটবে না)
+                      </span>
+                    )}
 
                     <button
                       type="submit"
@@ -1197,7 +1466,49 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {orderCartItemsWithDueLast(posCart).map((item, idx) => (
+                    {orderCartItemsWithDueLast(posCart).map((item, idx) => {
+                      const isDue = isDueEntryItem(item);
+                      if (isDue) {
+                        return (
+                          <div
+                            key={item.medicineId}
+                            className="p-3 bg-rose-50/80 border border-rose-200 rounded-lg flex flex-wrap items-center justify-between gap-2"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-xs font-bold text-rose-900 bg-rose-100 w-5 h-5 rounded-full flex items-center justify-center">
+                                {idx + 1}
+                              </span>
+                              <span className="text-xs font-bold text-rose-950">Due</span>
+                              <span className="text-xs font-mono font-bold text-rose-800">
+                                ৳{formatCleanMoney(item.unitPrice * Math.max(1, item.qty || 1))}
+                              </span>
+                              {item.reconcilePreviousInvoices !== false && customerDueSummary.suggestedDue > 0 && (
+                                <span className="text-[10.5px] px-1.5 py-0.5 bg-emerald-100 text-emerald-900 rounded font-medium">
+                                  পূর্বের বকেয়া সমন্বয় হবে
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => openDueModal(item)}
+                                className="px-2 py-0.5 text-[11px] font-semibold text-rose-800 bg-white hover:bg-rose-100 border border-rose-300 rounded cursor-pointer"
+                              >
+                                ✏️ টাকা সংশোধন
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onRemoveFromCart(item.medicineId)}
+                                className="text-xs text-red-600 hover:underline cursor-pointer"
+                              >
+                                বাদ দিন ✕
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      }
+                      return (
                       <div
                         key={item.medicineId}
                         className="p-3 bg-rose-50/50 border border-rose-200 rounded-lg space-y-2"
@@ -1300,7 +1611,8 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                           </div>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1400,14 +1712,62 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                     </thead>
                     <tbody className="divide-y divide-slate-200 text-sm">
                       {orderCartItemsWithDueLast(posCart).map((item, idx) => {
+                        const isDue = isDueEntryItem(item);
                         const priceChanged =
+                          !isDue &&
                           item.originalUnitPrice !== undefined &&
                           Math.abs(item.unitPrice - item.originalUnitPrice) > 0.001;
                         const lineTotal = item.unitPrice * item.qty;
-                        const rawCurrentStock = getStockForMed(item);
-                        const oldEditedQty = isEditingSale ? getOldEditedQtyForMed(item) : 0;
+                        const rawCurrentStock = isDue ? 0 : getStockForMed(item);
+                        const oldEditedQty = !isDue && isEditingSale ? getOldEditedQtyForMed(item) : 0;
                         const currentStock = rawCurrentStock + oldEditedQty;
                         const remainingStock = Math.max(0, currentStock - item.qty);
+
+                        if (isDue) {
+                          return (
+                            <tr key={item.medicineId} className="bg-rose-50/40 hover:bg-rose-50/70">
+                              <td className="py-2.5 px-3">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className="font-mono text-xs font-bold text-rose-700">
+                                    {idx + 1}.
+                                  </span>
+                                  <span className="font-bold text-xs text-rose-950">Due</span>
+                                  {item.reconcilePreviousInvoices !== false && customerDueSummary.suggestedDue > 0 && (
+                                    <span className="text-[10px] px-1.5 py-0.5 bg-emerald-100 text-emerald-900 rounded font-medium">
+                                      পূর্বের বকেয়া সমন্বয়
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-2 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => openDueModal(item)}
+                                  className="px-2.5 py-1 text-xs font-mono font-bold text-rose-900 bg-white border border-rose-300 hover:bg-rose-100 rounded cursor-pointer"
+                                  title="ক্লিক করে Due টাকা পরিবর্তন করুন"
+                                >
+                                  ৳{formatCleanMoney(item.unitPrice)}
+                                </button>
+                              </td>
+                              <td className="py-2.5 px-2 text-center text-xs font-mono text-slate-400">
+                                —
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono tabular-nums font-bold text-rose-950 text-xs">
+                                ৳{formatCleanMoney(lineTotal)}
+                              </td>
+                              <td className="py-2.5 px-2 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => onRemoveFromCart(item.medicineId)}
+                                  className="p-1 text-slate-400 hover:text-red-600 cursor-pointer"
+                                  title="আইটেম মুছুন"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        }
 
                         return (
                           <tr key={item.medicineId} className="hover:bg-slate-50/60">
@@ -1552,6 +1912,18 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                   </table>
                 )}
               </div>
+
+              {dueAlreadyInCart > 0 && customerDueSummary.invoices.length > 0 && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-950">
+                  <strong>✓ পূর্বের ইনভয়েস সমন্বয় সক্রিয়:</strong> এই ইনভয়েস সম্পন্ন হলে{' '}
+                  <span className="font-mono font-bold">
+                    {customerDueSummary.invoices
+                      .map((t) => `${t.invoiceNo} (৳${formatCleanMoney(t.dueAmount)})`)
+                      .join(', ')}
+                  </span>{' '}
+                  থেকে ক্রমানুসারে ৳{formatCleanMoney(Math.min(dueAlreadyInCart, customerDueSummary.totalDueFromInvoices))} বকেয়া সমন্বয় হবে।
+                </div>
+              )}
 
               {/* Financial Totals Calculation Box */}
               <form onSubmit={handleSaleSubmit} className="space-y-4">
@@ -1700,6 +2072,32 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                   saleCustomNameInputRef.current?.focus();
                   return;
                 }
+                if (isDueEntryItem({ brandName: name, dosageForm: saleCustomForm })) {
+                  const dueAmt = parseFloat(saleCustomUnitPrice) || 0;
+                  if (dueAmt <= 0) {
+                    openDueModal();
+                    return;
+                  }
+                  await onAddCustomToCart({
+                    brandName: 'Due',
+                    genericName: '',
+                    companyName: '',
+                    strength: '',
+                    dosageForm: 'Due',
+                    unitPrice: dueAmt,
+                    purchasePrice: 0,
+                    qty: 1,
+                    saveToCatalog: false,
+                    reconcilePreviousInvoices: true,
+                    reconcileInvoiceIds: customerDueSummary.invoices.map((inv) => inv.id),
+                  });
+                  setSaleCustomName('');
+                  setSaleCustomStrength('');
+                  setSaleCustomUnitPrice('');
+                  setSaleCustomPurPrice('');
+                  setSaleCustomQty('1');
+                  return;
+                }
                 const unitPrice = Math.max(0.1, parseFloat(saleCustomUnitPrice) || 10);
                 const purchasePrice =
                   saleCustomPurPrice.trim() !== ''
@@ -1735,6 +2133,13 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                     <span>কাস্টম প্রডাক্ট, দাম ও পরিমাণ দিয়ে বিক্রয় বিল তৈরি</span>
                   </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => openDueModal()}
+                  className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 font-bold text-[11px] rounded cursor-pointer whitespace-nowrap"
+                >
+                  + বকেয়া (Due)
+                </button>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
@@ -1748,87 +2153,110 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                     required
                     placeholder="যেমন: Napa Extra, Seclo 20"
                     value={saleCustomName}
-                    onChange={(e) => setSaleCustomName(e.target.value)}
+                    onChange={(e) => {
+                      const nextName = e.target.value;
+                      setSaleCustomName(nextName);
+                      if (isDueEntryItem({ brandName: nextName })) {
+                        setSaleCustomStrength('');
+                        setSaleCustomUnitPrice('');
+                        setSaleCustomPurPrice('');
+                        setSaleCustomQty('1');
+                      }
+                    }}
                     className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded focus:border-teal-600 focus:outline-none"
                   />
                 </div>
 
-                <div className="sm:col-span-3">
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                    শক্তি/সাইজ
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="যেমন: 500mg"
-                    value={saleCustomStrength}
-                    onChange={(e) => setSaleCustomStrength(e.target.value)}
-                    className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded focus:border-teal-600 focus:outline-none"
-                  />
-                </div>
+                {!isDueEntryItem({ brandName: saleCustomName, dosageForm: saleCustomForm }) && (
+                  <>
+                    <div className="sm:col-span-3">
+                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                        শক্তি/সাইজ
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="যেমন: 500mg"
+                        value={saleCustomStrength}
+                        onChange={(e) => setSaleCustomStrength(e.target.value)}
+                        className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded focus:border-teal-600 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-4">
+                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                        ধরন / Form
+                      </label>
+                      <select
+                        value={saleCustomForm}
+                        onChange={(e) => setSaleCustomForm(e.target.value)}
+                        className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded focus:border-teal-600 focus:outline-none"
+                      >
+                        {customProductForms.map((f) => (
+                          <option key={f.value} value={f.value}>
+                            {f.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </>
+                )}
 
                 <div className="sm:col-span-4">
                   <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                    ধরন / Form
-                  </label>
-                  <select
-                    value={saleCustomForm}
-                    onChange={(e) => setSaleCustomForm(e.target.value)}
-                    className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded focus:border-teal-600 focus:outline-none"
-                  >
-                    {customProductForms.map((f) => (
-                      <option key={f.value} value={f.value}>
-                        {f.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="sm:col-span-4">
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                    বিক্রয় দর (৳) *
+                    {isDueEntryItem({ brandName: saleCustomName, dosageForm: saleCustomForm })
+                      ? 'বকেয়া টাকার পরিমাণ (৳)'
+                      : 'বিক্রয় দর (৳) *'}
                   </label>
                   <input
                     ref={saleCustomPriceInputRef}
                     type="number"
                     step="any"
                     min="0.1"
-                    required
-                    placeholder="12.00"
+                    required={!isDueEntryItem({ brandName: saleCustomName, dosageForm: saleCustomForm })}
+                    placeholder={
+                      isDueEntryItem({ brandName: saleCustomName, dosageForm: saleCustomForm })
+                        ? 'খালি রাখলে পপআপ আসবে'
+                        : '12.00'
+                    }
                     value={saleCustomUnitPrice}
                     onChange={(e) => setSaleCustomUnitPrice(e.target.value)}
                     className="w-full px-2.5 py-1.5 text-xs font-mono bg-white border border-slate-200 rounded focus:border-teal-600 focus:outline-none"
                   />
                 </div>
 
-                <div className="sm:col-span-4">
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                    ক্রয় দর (৳)
-                  </label>
-                  <input
-                    type="number"
-                    step="any"
-                    min="0.01"
-                    placeholder="১০.৫৬"
-                    value={saleCustomPurPrice}
-                    onChange={(e) => setSaleCustomPurPrice(e.target.value)}
-                    className="w-full px-2.5 py-1.5 text-xs font-mono bg-white border border-slate-200 rounded focus:border-teal-600 focus:outline-none"
-                  />
-                </div>
+                {!isDueEntryItem({ brandName: saleCustomName, dosageForm: saleCustomForm }) && (
+                  <>
+                    <div className="sm:col-span-4">
+                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                        ক্রয় দর (৳)
+                      </label>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0.01"
+                        placeholder="১০.৫৬"
+                        value={saleCustomPurPrice}
+                        onChange={(e) => setSaleCustomPurPrice(e.target.value)}
+                        className="w-full px-2.5 py-1.5 text-xs font-mono bg-white border border-slate-200 rounded focus:border-teal-600 focus:outline-none"
+                      />
+                    </div>
 
-                <div className="sm:col-span-4">
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                    পরিমাণ (পিস) *
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    step="1"
-                    required
-                    value={saleCustomQty}
-                    onChange={(e) => setSaleCustomQty(e.target.value)}
-                    className="w-full px-2.5 py-1.5 text-xs font-mono bg-white border border-slate-200 rounded focus:border-teal-600 focus:outline-none"
-                  />
-                </div>
+                    <div className="sm:col-span-4">
+                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                        পরিমাণ (পিস) *
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        required
+                        value={saleCustomQty}
+                        onChange={(e) => setSaleCustomQty(e.target.value)}
+                        className="w-full px-2.5 py-1.5 text-xs font-mono bg-white border border-slate-200 rounded focus:border-teal-600 focus:outline-none"
+                      />
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
@@ -2020,36 +2448,48 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                     </thead>
                     <tbody className="divide-y divide-slate-200 text-sm">
                       {orderCartItemsWithDueLast(posCart).map((item, idx) => {
-                        const purPriceVal =
-                          typeof item.purchasePrice === 'number' && item.purchasePrice > 0
-                            ? item.purchasePrice
-                            : Number((item.unitPrice * 0.88).toFixed(2));
+                        const isDue = isDueEntryItem(item);
+                        const purPriceVal = isDue
+                          ? 0
+                          : typeof item.purchasePrice === 'number' && item.purchasePrice > 0
+                          ? item.purchasePrice
+                          : Number((item.unitPrice * 0.88).toFixed(2));
                         const lineTotal = item.unitPrice * item.qty;
                         return (
-                          <tr key={item.medicineId}>
+                          <tr key={item.medicineId} className={isDue ? 'bg-rose-50/40' : ''}>
                             <td className="py-2 px-3">
                               <div className="flex flex-wrap items-center gap-1">
                                 <span className="font-mono text-xs font-bold text-slate-500">
                                   {idx + 1}.
                                 </span>
-                                <span className="font-semibold text-xs text-slate-900">
-                                  {item.brandName} {item.strength}
+                                <span className={`font-semibold text-xs ${isDue ? 'text-rose-950 font-bold' : 'text-slate-900'}`}>
+                                  {isDue ? 'Due' : `${item.brandName} ${item.strength}`}
                                 </span>
                               </div>
-                              {(item.dosageSchedule || item.dosageDuration) && (
+                              {!isDue && (item.dosageSchedule || item.dosageDuration) && (
                                 <div className="text-[10px] font-mono text-rose-800">
                                   ডোজ: {item.dosageSchedule || ''} {item.dosageDuration || ''}
                                 </div>
                               )}
                             </td>
                             <td className="py-2 px-1.5 text-center text-xs font-mono">
-                              ৳{formatCleanMoney(purPriceVal)}
+                              {isDue ? '—' : `৳${formatCleanMoney(purPriceVal)}`}
                             </td>
                             <td className="py-2 px-1.5 text-center text-xs font-mono font-bold">
-                              ৳{formatCleanMoney(item.unitPrice)}
+                              {isDue ? (
+                                <button
+                                  type="button"
+                                  onClick={() => openDueModal(item)}
+                                  className="underline decoration-dotted text-rose-800 cursor-pointer"
+                                >
+                                  ৳{formatCleanMoney(item.unitPrice)}
+                                </button>
+                              ) : (
+                                `৳${formatCleanMoney(item.unitPrice)}`
+                              )}
                             </td>
                             <td className="py-2 px-2 text-center text-xs font-mono">
-                              {item.qty}
+                              {isDue ? '—' : item.qty}
                             </td>
                             <td className="py-2 px-3 text-right font-mono tabular-nums font-semibold text-slate-900 text-xs">
                               {formatCleanMoney(lineTotal)}
@@ -2167,6 +2607,165 @@ export const SaleStepWizard: React.FC<SaleStepWizardProps> = ({
                       : `বিক্রয় ইনভয়েস সম্পন্ন ও স্টক কমান (-${totalSaleUnits} পিস) ✓`}
                   </button>
                 </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Due (বকেয়া) Amount Entry Popup Modal */}
+      {showDueModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-5 space-y-4 border border-rose-200 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
+              <h3 className="text-sm font-bold text-rose-950">
+                {editingDueMedId ? 'বকেয়া (Due) টাকা সংশোধন করুন' : 'বকেয়া (Due) টাকা যোগ করুন'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDueModal(false);
+                  setDueAmountInput('');
+                  setEditingDueMedId(null);
+                  setDueSelectedInvoiceIds([]);
+                }}
+                className="text-slate-400 hover:text-slate-700 p-1 rounded cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleDueModalSubmit} className="space-y-3 text-xs">
+              {(selectedCustomerObj || walkInName.trim()) && (
+                <div className="text-[11px] text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded border border-slate-200">
+                  ক্রেতা: <strong className="text-slate-900">{selectedCustomerObj?.name || walkInName}</strong>
+                </div>
+              )}
+
+              {customerDueSummary.suggestedDue > 0 ? (
+                <div className="p-2.5 bg-rose-50/80 border border-rose-200 rounded-lg space-y-2">
+                  <div className="text-[11px] font-bold text-rose-950">
+                    পূর্বের বকেয়া সাজেস্ট (ক্লিক করলে টাকার অংকে বসবে):
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDueAmountInput(String(customerDueSummary.suggestedDue));
+                      setDueSelectedInvoiceIds(customerDueSummary.invoices.map((t) => t.id));
+                    }}
+                    className="w-full text-left px-2.5 py-1.5 bg-white hover:bg-rose-100 border border-rose-300 rounded font-bold text-rose-900 cursor-pointer flex items-center justify-between"
+                  >
+                    <span>
+                      মোট পূর্বের বকেয়া{' '}
+                      {customerDueSummary.invoices.length > 0
+                        ? `(${customerDueSummary.invoices.length}টি ইনভয়েস)`
+                        : '(লেজার)'}
+                    </span>
+                    <span className="font-mono">৳{formatCleanMoney(customerDueSummary.suggestedDue)}</span>
+                  </button>
+                  {customerDueSummary.invoices.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {customerDueSummary.invoices.map((inv) => (
+                        <button
+                          key={inv.id}
+                          type="button"
+                          onClick={() => {
+                            setDueAmountInput(String(inv.dueAmount));
+                            setDueSelectedInvoiceIds([inv.id]);
+                          }}
+                          className="px-2 py-1 bg-white hover:bg-rose-100 border border-rose-200 rounded font-mono text-[10.5px] text-slate-800 cursor-pointer"
+                        >
+                          {inv.invoiceNo} ({inv.dateStr}) · ৳{formatCleanMoney(inv.dueAmount)}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                customersWithDue.length > 0 && (
+                  <div className="p-2.5 bg-amber-50/80 border border-amber-200 rounded-lg space-y-1.5">
+                    <div className="text-[11px] font-bold text-amber-950">
+                      পূর্বের বকেয়া থাকা ক্রেতা (ক্লিক করলে ক্রেতা ও টাকা সেট হবে):
+                    </div>
+                    <div className="flex flex-col gap-1.5 max-h-36 overflow-y-auto">
+                      {customersWithDue.map((c) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedCustomerId(c.id);
+                            setDueAmountInput(String(c.totalDue));
+                          }}
+                          className="w-full text-left px-2.5 py-1.5 bg-white hover:bg-amber-100 border border-amber-300 rounded text-[11px] font-semibold text-slate-900 cursor-pointer flex items-center justify-between gap-2"
+                        >
+                          <span className="truncate">{c.name}</span>
+                          <span className="font-mono font-bold text-rose-700 shrink-0">
+                            ৳{formatCleanMoney(c.totalDue)}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )
+              )}
+
+              <div>
+                <label className="block font-bold text-slate-800 mb-1">
+                  টাকার পরিমাণ (৳) *
+                </label>
+                <input
+                  type="number"
+                  step="any"
+                  min="0.01"
+                  required
+                  autoFocus
+                  value={dueAmountInput}
+                  onChange={(e) => setDueAmountInput(e.target.value)}
+                  placeholder="টাকার পরিমাণ লিখুন"
+                  className="w-full px-3 py-2 border border-rose-300 rounded-lg bg-white font-mono font-bold text-base text-slate-900 focus:outline-none focus:border-rose-600"
+                />
+              </div>
+
+              {customerDueSummary.invoices.length > 0 && (
+                <label className="flex items-start gap-2 p-2 bg-emerald-50/70 border border-emerald-200 rounded-lg cursor-pointer select-none text-[11px] text-emerald-950">
+                  <input
+                    type="checkbox"
+                    checked={dueReconcileEnabled}
+                    onChange={(e) => setDueReconcileEnabled(e.target.checked)}
+                    className="mt-0.5 rounded text-emerald-700 focus:ring-emerald-600"
+                  />
+                  <span>
+                    <strong>পূর্বের ইনভয়েস সহ সমন্বয় করুন</strong> (
+                    {(dueSelectedInvoiceIds.length > 0
+                      ? customerDueSummary.invoices.filter((t) => dueSelectedInvoiceIds.includes(t.id))
+                      : customerDueSummary.invoices
+                    )
+                      .map((t) => t.invoiceNo)
+                      .join(', ')}
+                    ) — ইনভয়েস সম্পন্ন হলে পূর্বের বকেয়া স্বয়ংক্রিয়ভাবে সমন্বিত হবে।
+                  </span>
+                </label>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowDueModal(false);
+                    setDueAmountInput('');
+                    setEditingDueMedId(null);
+                    setDueSelectedInvoiceIds([]);
+                  }}
+                  className="px-3.5 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-xs font-bold text-white bg-rose-700 hover:bg-rose-800 rounded-lg cursor-pointer shadow-xs"
+                >
+                  {editingDueMedId ? 'আপডেট করুন' : 'কার্টে যোগ করুন'}
+                </button>
               </div>
             </form>
           </div>

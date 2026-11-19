@@ -4782,8 +4782,8 @@ export default function App() {
         fullCatalog
       );
       for (const pItem of oldParsedItems) {
-        if (pItem.tailText?.includes('নন-স্টক')) {
-          continue; // Non-stock items never touched inventory; do not reverse
+        if (pItem.tailText?.includes('নন-স্টক') || pItem.formPrefix === 'due') {
+          continue; // Non-stock / Due items never touched inventory; do not reverse
         }
         const matchedOld = findMatchingInventoryRecord(nextInventoryList, {
           medicineId: pItem.matchedMedicine?.id,
@@ -4806,8 +4806,8 @@ export default function App() {
     }
 
     for (const cartItem of posCart) {
-      // If updateStock is explicitly false, do not change stock or inventory
-      if (cartItem.updateStock === false) {
+      // If Due item or updateStock is explicitly false, do not change stock or inventory
+      if (isDueEntryItem(cartItem) || cartItem.updateStock === false) {
         continue;
       }
 
@@ -5129,8 +5129,8 @@ export default function App() {
         fullCatalog
       );
       for (const pItem of oldParsedItems) {
-        if (pItem.tailText?.includes('নন-স্টক')) {
-          continue; // Non-stock items never touched inventory; do not reverse
+        if (pItem.tailText?.includes('নন-স্টক') || pItem.formPrefix === 'due') {
+          continue; // Non-stock / Due items never touched inventory; do not reverse
         }
         const matchedOld = findMatchingInventoryRecord(nextInventoryList, {
           medicineId: pItem.matchedMedicine?.id,
