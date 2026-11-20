@@ -17,7 +17,15 @@ import {
   AlertCircle,
   Download,
 } from 'lucide-react';
-import { Transaction, ShopProfile, InventoryItem, getDueTransactionKind } from '../types';
+import {
+  compareTransactionsByDate,
+  getDueTransactionKind,
+  InventoryItem,
+  normalizeTxDateKey,
+  parseTxDateMs,
+  ShopProfile,
+  Transaction,
+} from '../types';
 
 export const toBengaliDigits = (num: number | string): string => {
   const bnDigits = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
@@ -99,12 +107,15 @@ export const MonthlyReportModal: React.FC<MonthlyReportModalProps> = ({
     setSelectedMonth(`${nextY}-${nextM}`);
   };
 
-  // Filter transactions for the selected month
+  // Filter and sort transactions for the selected month chronologically (newest date first)
   const monthTransactions = useMemo(() => {
-    return transactions.filter((tx) => {
-      if (!tx.dateStr) return false;
-      return tx.dateStr.startsWith(selectedMonth);
-    });
+    return transactions
+      .filter((tx) => {
+        const normDate = normalizeTxDateKey(tx.dateStr);
+        if (!normDate) return false;
+        return normDate.startsWith(selectedMonth);
+      })
+      .sort((a, b) => compareTransactionsByDate(a, b, 'desc'));
   }, [transactions, selectedMonth]);
 
   // Aggregate monthly stats
@@ -156,7 +167,7 @@ export const MonthlyReportModal: React.FC<MonthlyReportModalProps> = ({
     } = {};
 
     monthTransactions.forEach((tx) => {
-      const d = tx.dateStr || 'Unknown';
+      const d = normalizeTxDateKey(tx.dateStr) || tx.dateStr || 'Unknown';
       if (!dailyMap[d]) {
         dailyMap[d] = {
           dateStr: d,
@@ -231,8 +242,8 @@ export const MonthlyReportModal: React.FC<MonthlyReportModalProps> = ({
       }
     });
 
-    const sortedDailyList = Object.values(dailyMap).sort((a, b) =>
-      b.dateStr.localeCompare(a.dateStr)
+    const sortedDailyList = Object.values(dailyMap).sort(
+      (a, b) => parseTxDateMs(b.dateStr) - parseTxDateMs(a.dateStr)
     );
 
     const topSellingMedicines = Object.values(medicineSalesMap)

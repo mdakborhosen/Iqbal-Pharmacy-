@@ -1,5 +1,5 @@
 import { computePurchaseItemMetrics } from '../data/bdMedicines';
-import { ReconciledInvoiceRef, Transaction } from '../types';
+import { parseTxDateMs, ReconciledInvoiceRef, Transaction } from '../types';
 import { isDueEntryItem } from './whatsappShare';
 
 export interface SupplierDueSummary {
@@ -60,7 +60,7 @@ export function getUnpaidPurchaseInvoicesForSupplier(
       return normalizeSupplierPartyName(tx.partyName) === targetKey;
     })
     .sort((a, b) => {
-      const dateCmp = (a.dateStr || '').localeCompare(b.dateStr || '');
+      const dateCmp = parseTxDateMs(a.dateStr) - parseTxDateMs(b.dateStr);
       if (dateCmp !== 0) return dateCmp;
       return (a.updatedAtMs || 0) - (b.updatedAtMs || 0);
     });
@@ -106,7 +106,7 @@ export function getAllSupplierDueSummaries(
   const results = Array.from(map.values());
   for (const summary of results) {
     summary.invoices.sort((a, b) => {
-      const d = (a.dateStr || '').localeCompare(b.dateStr || '');
+      const d = parseTxDateMs(a.dateStr) - parseTxDateMs(b.dateStr);
       if (d !== 0) return d;
       return (a.updatedAtMs || 0) - (b.updatedAtMs || 0);
     });
@@ -162,7 +162,7 @@ export function getUnpaidSaleInvoicesForCustomer(
       return matchesSaleInvoiceParty(tx, opts, shopId);
     })
     .sort((a, b) => {
-      const dateCmp = (a.dateStr || '').localeCompare(b.dateStr || '');
+      const dateCmp = parseTxDateMs(a.dateStr) - parseTxDateMs(b.dateStr);
       if (dateCmp !== 0) return dateCmp;
       return (a.updatedAtMs || 0) - (b.updatedAtMs || 0);
     });
@@ -324,7 +324,7 @@ export function reconcilePreviousInvoicesForOrder(params: {
       const aPref = prefRank.has(aCanon) ? prefRank.get(aCanon)! : Number.MAX_SAFE_INTEGER;
       const bPref = prefRank.has(bCanon) ? prefRank.get(bCanon)! : Number.MAX_SAFE_INTEGER;
       if (aPref !== bPref) return aPref - bPref;
-      const d = (a.dateStr || '').localeCompare(b.dateStr || '');
+      const d = parseTxDateMs(a.dateStr) - parseTxDateMs(b.dateStr);
       if (d !== 0) return d;
       return (a.updatedAtMs || 0) - (b.updatedAtMs || 0);
     });

@@ -44,6 +44,7 @@ import {
   ShopProfile,
   ShopNotice,
   Transaction,
+  compareTransactionsByDate,
 } from '../types';
 
 interface DashboardViewProps {
@@ -490,16 +491,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       .sort((a, b) => a.daysLeft - b.daysLeft);
   }, [inventory]);
 
-  // Real Recent Sale Transactions (newest first, up to 6)
+  // Real Recent Sale Transactions (sorted strictly by invoice dateStr descending, up to 6)
   const recentSales = useMemo(() => {
-    return [...transactions]
+    return transactions
       .filter((t) => t.txType === 'sale')
-      .sort((a, b) => {
-        const tA = a.timestamp || a.updatedAtMs || 0;
-        const tB = b.timestamp || b.updatedAtMs || 0;
-        if (tA !== tB) return tB - tA;
-        return (b.dateStr || '').localeCompare(a.dateStr || '');
-      })
+      .sort((a, b) => compareTransactionsByDate(a, b, 'desc'))
       .slice(0, 6);
   }, [transactions]);
 

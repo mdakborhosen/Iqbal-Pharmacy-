@@ -153,6 +153,8 @@ import {
   ShopRegistration,
   StaffMember,
   Transaction,
+  compareTransactionsByDate,
+  sortTransactionsByDate,
 } from './types';
 import {
   downloadPharmacyBackupJson,
@@ -1062,7 +1064,7 @@ export default function App() {
         byId.set(canonId, formatted);
       }
     }
-    return Array.from(byId.values());
+    return sortTransactionsByDate(Array.from(byId.values()), 'desc');
   });
 
   const [staffList, setStaffList] = useState<StaffMember[]>(() => {
@@ -1316,7 +1318,10 @@ export default function App() {
             saveLocal(STORAGE_KEYS.CUSTOMERS, cleanCust);
           }
           if (Array.isArray(remote.transactions)) {
-            const cleanTx = mergeByUpdatedAt(remote.transactions, [], rDeletedSet, false, hydrateShopId);
+            const cleanTx = sortTransactionsByDate(
+              mergeByUpdatedAt(remote.transactions, [], rDeletedSet, false, hydrateShopId),
+              'desc'
+            );
             setTransactions(cleanTx);
             saveLocal(STORAGE_KEYS.TRANSACTIONS, cleanTx);
           }
@@ -1401,11 +1406,9 @@ export default function App() {
           }
           if (Array.isArray(remote.transactions)) {
             setTransactions((prev) => {
-              const next = mergeByUpdatedAt(remote.transactions, prev, mergedDeletedSet, false, hydrateShopId);
-              next.sort(
-                (a, b) =>
-                  (b.updatedAtMs || 0) - (a.updatedAtMs || 0) ||
-                  b.invoiceNo.localeCompare(a.invoiceNo)
+              const next = sortTransactionsByDate(
+                mergeByUpdatedAt(remote.transactions, prev, mergedDeletedSet, false, hydrateShopId),
+                'desc'
               );
               saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
               return next;
@@ -1670,7 +1673,7 @@ export default function App() {
         if (e.key === STORAGE_KEYS.SHOP) setShopProfile(JSON.parse(e.newValue));
         if (e.key === STORAGE_KEYS.INVENTORY) setInventory(JSON.parse(e.newValue));
         if (e.key === STORAGE_KEYS.CUSTOMERS) setCustomers(JSON.parse(e.newValue));
-        if (e.key === STORAGE_KEYS.TRANSACTIONS) setTransactions(JSON.parse(e.newValue));
+        if (e.key === STORAGE_KEYS.TRANSACTIONS) setTransactions(sortTransactionsByDate(JSON.parse(e.newValue), 'desc'));
         if (e.key === STORAGE_KEYS.STAFF) setStaffList(JSON.parse(e.newValue));
         if (e.key === STORAGE_KEYS.CUSTOM_MEDS) setCustomMedicines(JSON.parse(e.newValue));
         if (e.key === STORAGE_KEYS.PRICE_WATCHES) setPriceWatches(JSON.parse(e.newValue));
@@ -2096,7 +2099,7 @@ export default function App() {
 
         setTransactions((prev) => {
           const { merged, toUploadToCloud } = mergeCloudAndLocal(cloudItems, prev);
-          merged.sort((a, b) => (b.updatedAtMs || 0) - (a.updatedAtMs || 0) || b.invoiceNo.localeCompare(a.invoiceNo));
+          merged.sort((a, b) => compareTransactionsByDate(a, b, 'desc'));
           pendingUploads = toUploadToCloud;
           finalSnapshot = merged;
           saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), merged);
@@ -2820,8 +2823,7 @@ export default function App() {
           ).catch(() => {});
         }
       }
-      const mergedTxList = Array.from(txMap.values());
-      mergedTxList.sort((a, b) => (b.updatedAtMs || 0) - (a.updatedAtMs || 0) || b.invoiceNo.localeCompare(a.invoiceNo));
+      const mergedTxList = sortTransactionsByDate(Array.from(txMap.values()), 'desc');
       setTransactions(mergedTxList);
       saveLocal(STORAGE_KEYS.TRANSACTIONS, mergedTxList);
       saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, targetShopId), mergedTxList);
@@ -3133,9 +3135,12 @@ export default function App() {
             )
           );
           setTransactions(
-            loadLocal<Transaction[]>(
-              getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, targetShopId),
-              INITIAL_DEMO_TRANSACTIONS
+            sortTransactionsByDate(
+              loadLocal<Transaction[]>(
+                getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, targetShopId),
+                INITIAL_DEMO_TRANSACTIONS
+              ),
+              'desc'
             )
           );
           setCustomMedicines(
@@ -3247,7 +3252,10 @@ export default function App() {
                 }
                 if (Array.isArray(rem.transactions) && rem.transactions.length > 0) {
                   setTransactions((prev) => {
-                    const next = mergeEntityList(rem.transactions, prev, new Set(), false, targetShopId);
+                    const next = sortTransactionsByDate(
+                      mergeEntityList(rem.transactions, prev, new Set(), false, targetShopId),
+                      'desc'
+                    );
                     saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
                     saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, targetShopId), next);
                     return next;
@@ -3643,7 +3651,7 @@ export default function App() {
         }
         setInventory(loadLocal<InventoryItem[]>(getScopedStorageKey(STORAGE_KEYS.INVENTORY, resolvedTargetShopId), []));
         setCustomers(loadLocal<Customer[]>(getScopedStorageKey(STORAGE_KEYS.CUSTOMERS, resolvedTargetShopId), []));
-        setTransactions(loadLocal<Transaction[]>(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, resolvedTargetShopId), []));
+        setTransactions(sortTransactionsByDate(loadLocal<Transaction[]>(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, resolvedTargetShopId), []), 'desc'));
         setCustomMedicines(loadLocal<CustomMedicine[]>(getScopedStorageKey(STORAGE_KEYS.CUSTOM_MEDS, resolvedTargetShopId), []));
         setPriceWatches(loadLocal<PriceWatch[]>(getScopedStorageKey(STORAGE_KEYS.PRICE_WATCHES, resolvedTargetShopId), []));
         setPriceAlerts(loadLocal<PriceAlert[]>(getScopedStorageKey(STORAGE_KEYS.PRICE_ALERTS, resolvedTargetShopId), []));
@@ -3680,7 +3688,10 @@ export default function App() {
               }
               if (Array.isArray(rem.transactions) && rem.transactions.length > 0) {
                 setTransactions((prev) => {
-                  const next = mergeEntityList(rem.transactions, sameShop ? prev : [], new Set(), false, resolvedTargetShopId);
+                  const next = sortTransactionsByDate(
+                    mergeEntityList(rem.transactions, sameShop ? prev : [], new Set(), false, resolvedTargetShopId),
+                    'desc'
+                  );
                   saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
                   saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, resolvedTargetShopId), next);
                   return next;
@@ -3983,8 +3994,9 @@ export default function App() {
       saveLocal(STORAGE_KEYS.INVENTORY, parsed.inventory);
       setCustomers(parsed.customers);
       saveLocal(STORAGE_KEYS.CUSTOMERS, parsed.customers);
-      setTransactions(parsed.transactions);
-      saveLocal(STORAGE_KEYS.TRANSACTIONS, parsed.transactions);
+      const restoredTx = sortTransactionsByDate(parsed.transactions, 'desc');
+      setTransactions(restoredTx);
+      saveLocal(STORAGE_KEYS.TRANSACTIONS, restoredTx);
       if (parsed.staffList.length > 0) {
         setStaffList(parsed.staffList);
         saveLocal(STORAGE_KEYS.STAFF, parsed.staffList);
@@ -4989,11 +5001,14 @@ export default function App() {
     }
 
     unmarkDeletedId(txId);
-    const nextSaleTransactions = existingEditedTx
-      ? saleReconcile.nextTransactions.map((t) =>
-          getCanonicalDocId(t.id, effectiveShopId) === txId ? newTx : t
-        )
-      : [newTx, ...saleReconcile.nextTransactions];
+    const nextSaleTransactions = sortTransactionsByDate(
+      existingEditedTx
+        ? saleReconcile.nextTransactions.map((t) =>
+            getCanonicalDocId(t.id, effectiveShopId) === txId ? newTx : t
+          )
+        : [newTx, ...saleReconcile.nextTransactions],
+      'desc'
+    );
     setTransactions(nextSaleTransactions);
     saveLocal(STORAGE_KEYS.TRANSACTIONS, nextSaleTransactions);
     saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), nextSaleTransactions);
@@ -5464,11 +5479,14 @@ export default function App() {
     }
 
     unmarkDeletedId(txId);
-    const nextPurTransactions = existingEditedTx
-      ? purReconcile.nextTransactions.map((t) =>
-          getCanonicalDocId(t.id, effectiveShopId) === txId ? newTx : t
-        )
-      : [newTx, ...purReconcile.nextTransactions];
+    const nextPurTransactions = sortTransactionsByDate(
+      existingEditedTx
+        ? purReconcile.nextTransactions.map((t) =>
+            getCanonicalDocId(t.id, effectiveShopId) === txId ? newTx : t
+          )
+        : [newTx, ...purReconcile.nextTransactions],
+      'desc'
+    );
     setTransactions(nextPurTransactions);
     saveLocal(STORAGE_KEYS.TRANSACTIONS, nextPurTransactions);
     saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), nextPurTransactions);
@@ -5567,7 +5585,10 @@ export default function App() {
     };
 
     setTransactions((prev) => {
-      const next = prev.map((t) => (getCanonicalDocId(t.id, effectiveShopId) === canonTxId ? updatedTxObj : t));
+      const next = sortTransactionsByDate(
+        prev.map((t) => (getCanonicalDocId(t.id, effectiveShopId) === canonTxId ? updatedTxObj : t)),
+        'desc'
+      );
       saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
       saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), next);
       return next;
@@ -5678,10 +5699,13 @@ export default function App() {
     }
 
     setTransactions((prev) => {
-      const next = [
-        dueTx,
-        ...prev.map((t) => (getCanonicalDocId(t.id, effectiveShopId) === canonTxId ? updatedInvoice : t)),
-      ];
+      const next = sortTransactionsByDate(
+        [
+          dueTx,
+          ...prev.map((t) => (getCanonicalDocId(t.id, effectiveShopId) === canonTxId ? updatedInvoice : t)),
+        ],
+        'desc'
+      );
       saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
       saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), next);
       return next;
@@ -5755,11 +5779,12 @@ export default function App() {
       shopId: effectiveShopId,
       nowMs,
     });
-    setTransactions(restored.nextTransactions);
-    saveLocal(STORAGE_KEYS.TRANSACTIONS, restored.nextTransactions);
+    const sortedRestoredTx = sortTransactionsByDate(restored.nextTransactions, 'desc');
+    setTransactions(sortedRestoredTx);
+    saveLocal(STORAGE_KEYS.TRANSACTIONS, sortedRestoredTx);
     saveLocal(
       getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId),
-      restored.nextTransactions
+      sortedRestoredTx
     );
 
     const restoredOldWrites = restored.modifiedSourceInvoices.map((srcTx) => {
@@ -5984,7 +6009,7 @@ export default function App() {
     unmarkDeletedId(newInvId);
 
     setTransactions((prev) => {
-      const next = [newTx, ...prev];
+      const next = sortTransactionsByDate([newTx, ...prev], 'desc');
       saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
       saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), next);
       return next;
@@ -6339,7 +6364,7 @@ export default function App() {
     saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveShopId), nextInvList);
 
     setTransactions((prev) => {
-      const next = [newTx, ...prev];
+      const next = sortTransactionsByDate([newTx, ...prev], 'desc');
       saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
       saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), next);
       return next;
@@ -6476,7 +6501,7 @@ export default function App() {
     saveLocal(getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveShopId), nextInvList);
 
     setTransactions((prev) => {
-      const next = [newTx, ...prev];
+      const next = sortTransactionsByDate([newTx, ...prev], 'desc');
       saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
       saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), next);
       return next;
@@ -6735,7 +6760,7 @@ export default function App() {
 
     unmarkDeletedId(txId);
     setTransactions((prev) => {
-      const next = [dueTx, ...prev];
+      const next = sortTransactionsByDate([dueTx, ...prev], 'desc');
       saveLocal(STORAGE_KEYS.TRANSACTIONS, next);
       saveLocal(getScopedStorageKey(STORAGE_KEYS.TRANSACTIONS, effectiveShopId), next);
       return next;

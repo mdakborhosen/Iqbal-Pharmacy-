@@ -3,6 +3,7 @@ import QRCode from 'qrcode';
 import {
   Activity,
   ArrowDownRight,
+  ArrowUpDown,
   ArrowUpRight,
   Camera,
   Check,
@@ -59,6 +60,7 @@ import {
 import { getTodayDateStr } from '../data/demoSeedData';
 import {
   CartItem,
+  compareTransactionsByDate,
   Customer,
   DentalClinicalDetails,
   getDueTransactionKind,
@@ -66,6 +68,7 @@ import {
   InvoiceSealType,
   MedicineCatalogItem,
   MedicineVariant,
+  normalizeTxDateKey,
   PurchaseCartItem,
   PurchasePackUnit,
   ShopProfile,
@@ -539,6 +542,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     'ALL' | 'sale' | 'purchase' | 'due_collection' | 'due_payment'
   >('ALL');
   const [staffRoleFilter, setStaffRoleFilter] = useState<'ALL' | 'owner' | 'staff'>('ALL');
+  const [dateSortOrder, setDateSortOrder] = useState<'desc' | 'asc'>('desc');
   const [visibleTxCount, setVisibleTxCount] = useState<number>(40);
   const [previewInvoice, setPreviewInvoice] = useState<Transaction | null>(null);
   const [invoicePrintWithPrice, setInvoicePrintWithPrice] = useState<boolean>(true);
@@ -1213,7 +1217,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
 
   useEffect(() => {
     setVisibleTxCount(40);
-  }, [dateRangePreset, startDateFilter, endDateFilter, txTypeFilter, staffRoleFilter]);
+  }, [dateRangePreset, startDateFilter, endDateFilter, txTypeFilter, staffRoleFilter, dateSortOrder]);
 
   const dueTxKindMap = useMemo(() => {
     const map = new Map<string, ReturnType<typeof getDueTransactionKind>>();
@@ -1226,42 +1230,48 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     return map;
   }, [transactions]);
 
-  // Filtered Daily Transactions with Date Range presets & Custom range
+  // Filtered Daily Transactions with Date Range presets, normalized date matching & chronological date sorting
   const filteredTransactions = useMemo(() => {
     const todayStr = getTodayDateStr();
-    return transactions.filter((tx) => {
-      if (dateRangePreset === 'today') {
-        if (tx.dateStr !== todayStr) return false;
-      } else if (dateRangePreset === 'yesterday') {
-        const d = new Date();
-        d.setDate(d.getDate() - 1);
-        const yStr = d.toISOString().split('T')[0];
-        if (tx.dateStr !== yStr) return false;
-      } else if (dateRangePreset === 'this_week') {
-        const d = new Date();
-        d.setDate(d.getDate() - 7);
-        const start = d.toISOString().split('T')[0];
-        if (tx.dateStr < start || tx.dateStr > todayStr) return false;
-      } else if (dateRangePreset === 'this_month') {
-        const now = new Date();
-        const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-        if (tx.dateStr < start || tx.dateStr > todayStr) return false;
-      } else if (dateRangePreset === 'custom') {
-        if (startDateFilter && tx.dateStr < startDateFilter) return false;
-        if (endDateFilter && tx.dateStr > endDateFilter) return false;
-      }
+    const yesterdayDate = new Date();
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+    const yesterdayStr = yesterdayDate.toISOString().split('T')[0];
+    const weekStartDate = new Date();
+    weekStartDate.setDate(weekStartDate.getDate() - 7);
+    const weekStartStr = weekStartDate.toISOString().split('T')[0];
+    const now = new Date();
+    const monthStartStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+    const normStartFilter = startDateFilter ? normalizeTxDateKey(startDateFilter) || startDateFilter : '';
+    const normEndFilter = endDateFilter ? normalizeTxDateKey(endDateFilter) || endDateFilter : '';
 
-      if (txTypeFilter !== 'ALL') {
-        if (txTypeFilter === 'due_collection' || txTypeFilter === 'due_payment') {
-          if (dueTxKindMap.get(tx.id) !== txTypeFilter) return false;
-        } else if (tx.txType !== txTypeFilter) {
-          return false;
+    return transactions
+      .filter((tx) => {
+        const txDate = normalizeTxDateKey(tx.dateStr) || tx.dateStr || '';
+        if (dateRangePreset === 'today') {
+          if (txDate !== todayStr) return false;
+        } else if (dateRangePreset === 'yesterday') {
+          if (txDate !== yesterdayStr) return false;
+        } else if (dateRangePreset === 'this_week') {
+          if (txDate < weekStartStr || txDate > todayStr) return false;
+        } else if (dateRangePreset === 'this_month') {
+          if (txDate < monthStartStr || txDate > todayStr) return false;
+        } else if (dateRangePreset === 'custom') {
+          if (normStartFilter && txDate < normStartFilter) return false;
+          if (normEndFilter && txDate > normEndFilter) return false;
         }
-      }
-      if (staffRoleFilter !== 'ALL' && tx.staffRole !== staffRoleFilter) return false;
-      return true;
-    });
-  }, [transactions, dueTxKindMap, dateRangePreset, startDateFilter, endDateFilter, txTypeFilter, staffRoleFilter]);
+
+        if (txTypeFilter !== 'ALL') {
+          if (txTypeFilter === 'due_collection' || txTypeFilter === 'due_payment') {
+            if (dueTxKindMap.get(tx.id) !== txTypeFilter) return false;
+          } else if (tx.txType !== txTypeFilter) {
+            return false;
+          }
+        }
+        if (staffRoleFilter !== 'ALL' && tx.staffRole !== staffRoleFilter) return false;
+        return true;
+      })
+      .sort((a, b) => compareTransactionsByDate(a, b, dateSortOrder));
+  }, [transactions, dueTxKindMap, dateRangePreset, startDateFilter, endDateFilter, txTypeFilter, staffRoleFilter, dateSortOrder]);
 
   // Daily Accounting Summary Metrics (including Total Profit = Grand Total Sales Revenue - Total Purchase Cost)
   const dailyMetrics = useMemo(() => {
@@ -1350,7 +1360,7 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
     let todaySalesReconciledDue = 0;
     let todaySalesPurchaseCost = 0;
     for (const tx of transactions) {
-      if (tx.txType === 'sale' && tx.dateStr === todayStr) {
+      if (tx.txType === 'sale' && (normalizeTxDateKey(tx.dateStr) || tx.dateStr) === todayStr) {
         todaySalesRevenue += tx.grandTotal || 0;
         todaySalesReconciledDue += tx.reconciledDueAmount || 0;
         todaySalesPurchaseCost += computeSalePurchaseCost(tx);
@@ -2213,8 +2223,19 @@ export const PosAndDailyAccountsView: React.FC<PosAndDailyAccountsViewProps> = (
               </button>
             ))}
           </div>
-          <div className="text-xs text-slate-500">
-            মোট {filteredTransactions.length}টি ইনভয়েস এন্ট্রি
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setDateSortOrder((prev) => (prev === 'desc' ? 'asc' : 'desc'))}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-md border border-slate-200 bg-slate-50 hover:bg-teal-50 hover:border-teal-300 text-slate-700 hover:text-teal-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              title="তারিখ অনুযায়ী তালিকা সাজানোর ক্রম পরিবর্তন করুন"
+            >
+              <ArrowUpDown className="w-3.5 h-3.5 text-teal-700 shrink-0" />
+              <span>{dateSortOrder === 'desc' ? 'তারিখ: নতুন → পুরাতন' : 'তারিখ: পুরাতন → নতুন'}</span>
+            </button>
+            <div className="text-xs text-slate-500 whitespace-nowrap tabular-nums">
+              মোট {filteredTransactions.length}টি ইনভয়েস এন্ট্রি
+            </div>
           </div>
         </div>
 

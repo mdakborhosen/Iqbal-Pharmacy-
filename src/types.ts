@@ -242,6 +242,108 @@ export interface Transaction {
   updatedAtMs?: number;
 }
 
+const BN_TO_EN_DIGITS: Record<string, string> = {
+  '০': '0',
+  '১': '1',
+  '২': '2',
+  '৩': '3',
+  '৪': '4',
+  '৫': '5',
+  '৬': '6',
+  '৭': '7',
+  '৮': '8',
+  '৯': '9',
+};
+
+/**
+ * Normalizes transaction date strings such as `2026-11-20`, `01/11/2026` (DD/MM/YYYY),
+ * `01-05-2026` (DD-MM-YYYY), ISO timestamps, or Bengali digits into canonical `YYYY-MM-DD`.
+ */
+export function normalizeTxDateKey(dateStr?: string): string {
+  if (!dateStr) return '';
+  const cleaned = String(dateStr)
+    .trim()
+    .replace(/[০-৯]/g, (d) => BN_TO_EN_DIGITS[d] ?? d);
+  if (!cleaned) return '';
+
+  // 1. YYYY-MM-DD or YYYY/MM/DD (optionally followed by T... or space)
+  const ymdMatch = cleaned.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:$|[T\s])/);
+  if (ymdMatch) {
+    const y = Number(ymdMatch[1]);
+    const m = Number(ymdMatch[2]);
+    const d = Number(ymdMatch[3]);
+    if (y >= 1900 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    }
+  }
+
+  // 2. DD/MM/YYYY or DD-MM-YYYY (Bangladesh default day-first format, e.g. 01/11/2026 -> 2026-11-01)
+  const dmyMatch = cleaned.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:$|\s)/);
+  if (dmyMatch) {
+    const p1 = Number(dmyMatch[1]);
+    const p2 = Number(dmyMatch[2]);
+    const y = Number(dmyMatch[3]);
+    let day = p1;
+    let month = p2;
+    if (p2 > 12 && p1 <= 12) {
+      month = p1;
+      day = p2;
+    }
+    if (y >= 1900 && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${String(y).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+  }
+
+  // 3. Fallback Date.parse
+  const parsed = Date.parse(cleaned);
+  if (!Number.isNaN(parsed)) {
+    const dt = new Date(parsed);
+    return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+  }
+  return cleaned;
+}
+
+/**
+ * Converts a transaction `dateStr` into UTC epoch milliseconds for accurate chronological sorting.
+ */
+export function parseTxDateMs(dateStr?: string): number {
+  const norm = normalizeTxDateKey(dateStr);
+  const m = norm.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) {
+    return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  }
+  return 0;
+}
+
+/**
+ * Deterministic comparator that sorts transactions primarily by invoice `dateStr`
+ * (`desc` = newest date first, `asc` = oldest date first), tie-breaking by `timestamp`/`updatedAtMs` and `invoiceNo`.
+ */
+export function compareTransactionsByDate(
+  a: Pick<Transaction, 'dateStr' | 'timestamp' | 'updatedAtMs' | 'invoiceNo'>,
+  b: Pick<Transaction, 'dateStr' | 'timestamp' | 'updatedAtMs' | 'invoiceNo'>,
+  order: 'desc' | 'asc' = 'desc'
+): number {
+  const dir = order === 'asc' ? 1 : -1;
+  const dateA = parseTxDateMs(a.dateStr);
+  const dateB = parseTxDateMs(b.dateStr);
+  if (dateA !== dateB) {
+    return (dateA - dateB) * dir;
+  }
+  const tsA = a.timestamp || a.updatedAtMs || 0;
+  const tsB = b.timestamp || b.updatedAtMs || 0;
+  if (tsA !== tsB) {
+    return (tsA - tsB) * dir;
+  }
+  return (a.invoiceNo || '').localeCompare(b.invoiceNo || '') * dir;
+}
+
+export function sortTransactionsByDate<
+  T extends Pick<Transaction, 'dateStr' | 'timestamp' | 'updatedAtMs' | 'invoiceNo'>
+>(list: T[], order: 'desc' | 'asc' = 'desc'): T[] {
+  return [...list].sort((a, b) => compareTransactionsByDate(a, b, order));
+}
+
 /**
  * Classifies a due settlement transaction accurately:
  * - Sale invoice due received / customer ledger collection -> 'due_collection' (বকেয়া আদায়)
